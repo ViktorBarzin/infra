@@ -23,6 +23,7 @@ agent:
   # whitelist changes.
   podAnnotations:
     checksum/whitelist: "${whitelist_checksum}"
+    checksum/home-crawl: "${home_crawl_checksum}"
   # reboot-self-heal Phase 2: tolerate the GPU taint so the log-parsing agent
   # keeps a pod on k8s-node1 when nvidia.com/gpu flips to NoSchedule.
   tolerations:
@@ -156,6 +157,16 @@ agent:
     - name: whitelist
       mountPath: /etc/crowdsec/parsers/s02-enrich/whitelist.yaml
       subPath: "whitelist.yaml"
+      readonly: true
+    # The crawl scenarios log only for the home address; every other scenario
+    # may ban it (main.tf, crowdsec_home_crawl_yaml and its Range twin).
+    - name: whitelist
+      mountPath: /etc/crowdsec/postoverflows/s01-whitelist/home-crawl-log-only.yaml
+      subPath: "home-crawl-log-only.yaml"
+      readonly: true
+    - name: whitelist
+      mountPath: /etc/crowdsec/postoverflows/s00-enrich/home-crawl-log-only-range.yaml
+      subPath: "home-crawl-log-only-range.yaml"
       readonly: true
     - name: syslog-acquisition
       mountPath: /etc/crowdsec/acquis.d/syslog.yaml

@@ -13,6 +13,14 @@ variable "crowdsec_dash_machine_password" {
   sensitive = true
 }
 variable "tier" { type = string }
+variable "public_ip" {
+  type        = string
+  description = "The home WAN IPv4 (config.tfvars public_ip). The crawl scenarios log only for it; every other scenario may ban it."
+  validation {
+    condition     = can(regex("^\\d{1,3}(\\.\\d{1,3}){3}$", var.public_ip)) && can(cidrhost("${var.public_ip}/32", 0))
+    error_message = "public_ip must be one IPv4 address."
+  }
+}
 variable "slack_webhook_url" { type = string }
 variable "mysql_host" { type = string }
 variable "postgresql_host" { type = string }
@@ -322,19 +330,21 @@ locals {
     description: "Whitelist for trusted IPs that should never be blocked"
     whitelist:
       reason: "Trusted IP - never block"
-      ip:
-        - "176.12.22.76" # home / Sofia egress (origin)
-        # London is deliberately NOT listed (Viktor, 2026-10-02): its addresses
-        # are treated like any public IP. Since the Flint took the Hyperoptic
-        # line directly, the London IPv4 137.220.71.46 is a carrier-grade NAT
-        # address very likely shared with other Hyperoptic customers, and the
-        # IPv6 /56 2a01:4b00:ab23:1200::/56 is left unlisted too. Accepted
-        # risk: a ban on the IPv4 cuts off every device in the flat for its
-        # duration. If London reports being blocked, `cscli decisions list`
-        # and `cscli decisions delete --id` lift it in about 33 s. The path
-        # whitelists below (Nextcloud WebDAV, Immich assets, bouncer refusals)
-        # still cover the scenarios that caused the earlier false bans.
-        # Plan: docs/plans/2026-10-02-london-dns-block-monitoring.md.
+      # The home address is NOT listed since 2026-11-19 (Viktor's decision,
+      # Cloud Render-parity V8 follow-up): every scenario may ban it except the
+      # two crawl scenarios, which the postoverflow whitelist
+      # crowdsec_home_crawl_yaml below drops for it.
+      # London is deliberately NOT listed (Viktor, 2026-10-02): its addresses
+      # are treated like any public IP. Since the Flint took the Hyperoptic
+      # line directly, the London IPv4 137.220.71.46 is a carrier-grade NAT
+      # address very likely shared with other Hyperoptic customers, and the
+      # IPv6 /56 2a01:4b00:ab23:1200::/56 is left unlisted too. Accepted
+      # risk: a ban on the IPv4 cuts off every device in the flat for its
+      # duration. If London reports being blocked, `cscli decisions list`
+      # and `cscli decisions delete --id` lift it in about 33 s. The path
+      # whitelists below (Nextcloud WebDAV, Immich assets, bouncer refusals)
+      # still cover the scenarios that caused the earlier false bans.
+      # Plan: docs/plans/2026-10-02-london-dns-block-monitoring.md.
       cidr:
         # Meta CORPORATE egress, Viktor's work VPN. Added 2026-09-07 after
         # finding he was blocked from his own sites twice over whenever it was
@@ -536,6 +546,65 @@ locals {
   YAML
 }
 
+# The home address (Viktor's decision 2026-11-19, Cloud Render-parity V8
+# follow-up; docs/runbooks/cloud.md, "CrowdSec and the home address").
+# Cloud's Project pods leave through the home WAN, so a request from a Project
+# App to a homelab host through Cloudflare reaches Traefik with the household's
+# address. That address is in neither the parser whitelist nor the LAPI
+# allowlist any more, so every scenario may ban it, except the two crawl
+# scenarios: for them it stays log-only. Evidence: 3 days of a log-only shadow
+# instance (2026-11-16 to 11-19) showed 0 overflows for it (http-crawl-non_statics
+# 3,942 pours, distributed-crawl-range 154, http-probing 26).
+#
+# Mechanism: POSTOVERFLOW whitelists (docs.crowdsec.net, "Postoverflow
+# whitelists"), mounted on the cluster agents, the only ones that run these
+# scenarios. They run after a bucket overflows and before the agent sends the
+# alert, so the agent logs "Ban for <source> whitelisted, reason [...]" and
+# sends nothing: no alert, no decision, and no signal about the household to
+# the Central API. A LAPI profile without decisions would still store the
+# alert and share it with the Central API.
+#
+# distributed-crawl-range is Range-scoped: its source is the registered prefix,
+# and a ban on a prefix that contains the home address bans the household too.
+# So the expression matches any prefix that contains the address, as the LAPI
+# allowlist did for every scenario. http-crawl-non_statics is Ip-scoped and
+# matches the address itself.
+#
+# Two files, because a Range overflow never reaches stage s01-whitelist here:
+# the agent stops processing an overflow at the first postoverflow stage where
+# no node succeeds, and the hub's only s00-enrich node, crowdsecurity/rdns, accepts
+# Ip-scoped overflows only (tested on v1.8.1, 2026-11-20). So the Ip file sits
+# in s01-whitelist, after rdns, and the Range file sits in s00-enrich. The
+# Range file's filter is the whole match, so it touches only a crawl overflow
+# on a prefix that holds the home address; every other Range overflow stops at
+# s00-enrich as before. Neither depends on node order.
+#
+# If the expression fails to run, CrowdSec treats the overflow as not
+# whitelisted and bans, so var.public_ip is validated as an IPv4.
+locals {
+  home_crawl_scenarios = ["crowdsecurity/http-crawl-non_statics", "viktor/distributed-crawl-range"]
+  home_crawl_match     = "evt.Overflow.Alert.GetScenario() in ${jsonencode(local.home_crawl_scenarios)} && any(evt.Overflow.GetSources(), {# == \"${var.public_ip}\" || IpInRange(\"${var.public_ip}\", #)})"
+  home_crawl_whitelist = <<-YAML
+    whitelist:
+      reason: "home address, crawl scenario, log only (decision 2026-11-19)"
+      expression:
+        - '${local.home_crawl_match}'
+  YAML
+  # postoverflows/s01-whitelist: Ip-scoped overflows.
+  crowdsec_home_crawl_yaml = <<-YAML
+    name: viktor/home-crawl-log-only
+    description: "The home address: the crawl scenarios log only, every other scenario may ban it (Ip scope)"
+    ${chomp(local.home_crawl_whitelist)}
+  YAML
+  # postoverflows/s00-enrich: Range-scoped overflows.
+  crowdsec_home_crawl_range_yaml = <<-YAML
+    name: viktor/home-crawl-log-only-range
+    description: "The home address: the crawl scenarios log only, every other scenario may ban it (Range scope)"
+    filter: 'evt.Overflow.Alert.GetScope() == "Range" && ${local.home_crawl_match}'
+    ${chomp(local.home_crawl_whitelist)}
+  YAML
+}
+
 resource "kubernetes_config_map" "crowdsec_whitelist" {
   metadata {
     name      = "crowdsec-whitelist"
@@ -546,7 +615,18 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
   }
 
   data = {
-    "whitelist.yaml" = local.crowdsec_whitelist_yaml
+    "whitelist.yaml"                 = local.crowdsec_whitelist_yaml
+    "home-crawl-log-only.yaml"       = local.crowdsec_home_crawl_yaml
+    "home-crawl-log-only-range.yaml" = local.crowdsec_home_crawl_range_yaml
+  }
+
+  lifecycle {
+    # A renamed crawl scenario would silently stop matching and ban the
+    # household for a crawl.
+    precondition {
+      condition     = alltrue([for n in local.home_crawl_scenarios : strcontains(join("\n", values(kubernetes_config_map.crowdsec_custom_scenarios.data)), "name: ${n}\n")])
+      error_message = "Every scenario in local.home_crawl_scenarios must be defined in crowdsec_custom_scenarios."
+    }
   }
 }
 
@@ -636,7 +716,7 @@ resource "helm_release" "crowdsec" {
   repository = "https://crowdsecurity.github.io/helm-charts"
   chart      = "crowdsec"
 
-  values        = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host, FIREWALL_CROWDSEC_API_KEY = var.firewall_bouncer_key, TRAEFIK_CROWDSEC_API_KEY = var.traefik_bouncer_key, C2MIRROR_CROWDSEC_API_KEY = var.c2mirror_bouncer_key, whitelist_checksum = sha256(local.crowdsec_whitelist_yaml) })]
+  values        = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host, FIREWALL_CROWDSEC_API_KEY = var.firewall_bouncer_key, TRAEFIK_CROWDSEC_API_KEY = var.traefik_bouncer_key, C2MIRROR_CROWDSEC_API_KEY = var.c2mirror_bouncer_key, whitelist_checksum = sha256(local.crowdsec_whitelist_yaml), home_crawl_checksum = sha256(join("", [local.crowdsec_home_crawl_yaml, local.crowdsec_home_crawl_range_yaml])) })]
   timeout       = 1200
   wait          = true
   wait_for_jobs = true
@@ -1950,7 +2030,6 @@ resource "kubernetes_cron_job_v1" "crowdsec_ipv6_ban_widen" {
 # secret/opnsense crowdsec_agent_password).
 locals {
   lapi_allowlist = [
-    { value = "176.12.22.76", comment = "Sofia WAN (home egress)" },
     { value = "2620:10d:c090::/44", comment = "Meta corporate egress, Viktor's work VPN (v6)" },
     { value = "163.114.128.0/20", comment = "Meta corporate egress, v4" },
     { value = "199.201.64.0/22", comment = "Meta corporate egress, v4" },

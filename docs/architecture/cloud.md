@@ -343,8 +343,9 @@ denies the same ports. Project pods leave through the home WAN, SNATed to
 egress over IPv4 only. The console gets that address as
 `CLOUD_OUTBOUND_IPV4` (`deploy_rules.tf`) and shows it in `/help/apps`, the
 Connect dialog and `cloud help apps`. A new WAN address reaches Cloud with
-the next apply of `stacks/cloud`. CrowdSec still whitelists the home
-address (`docs/agents/security.md`, "Open risk").
+the next apply of `stacks/cloud`. Since 2026-11-19 CrowdSec may ban the
+home address for every scenario except the two crawl scenarios, which log
+only for it (`docs/agents/security.md`, "Open risk").
 
 ## A request to a Project App, and what admission allows
 

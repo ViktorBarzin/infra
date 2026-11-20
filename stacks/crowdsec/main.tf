@@ -5,8 +5,9 @@
 variable "tls_secret_name" { type = string }
 variable "mysql_host" { type = string }
 variable "postgresql_host" { type = string }
-# The home WAN IPv4 (config.tfvars), the only source the shadow instance
-# reads (modules/crowdsec/shadow.tf).
+# The home WAN IPv4 (config.tfvars): the crawl scenarios log only for it,
+# every other scenario may ban it (modules/crowdsec/main.tf,
+# crowdsec_home_crawl_yaml).
 variable "public_ip" { type = string }
 
 data "vault_kv_secret_v2" "secrets" {
