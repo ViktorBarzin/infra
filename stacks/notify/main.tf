@@ -2,7 +2,8 @@
 # (Home Assistant Companion push, email). Design and decisions:
 # docs/plans/2026-11-17-notify-pipe-design.md, docs/adr/0043-*.md.
 #
-#   Alertmanager --webhook--> notify-adapter --tags--> apprise-api --> HA push / email
+#   Alertmanager --every alert--> notify-adapter --tags--> apprise-api --> HA push / email
+#                                       \--chat.postMessage--> Slack (a DM or #alerts)
 #   person --> notify.viktorbarzin.me (adapter's page) --API--> Authentik user attributes
 #   Authentik (User model_updated) --webhook--> apprise-api /add/notify
 #
@@ -22,7 +23,10 @@ variable "tls_secret_name" {
 }
 
 locals {
-  adapter_files = ["adapter.py", "subs.py", "page.py", "preview.py"]
+  adapter_files = ["adapter.py", "subs.py", "page.py", "preview.py", "slack.py"]
+  # "true" once Alertmanager routes every alert here (plan step 4); before
+  # that the adapter only logs what it would post, so nothing posts twice.
+  slack_live = "false"
 }
 
 resource "kubernetes_namespace" "notify" {
@@ -258,6 +262,60 @@ resource "kubernetes_service" "apprise" {
   }
 }
 
+# The Slack bot (workspace viktorbarzin, user "claude"; scopes chat:write,
+# chat:write.public, im:write). The adapter posts each person's Slack
+# Channel with it: a DM, or #alerts for a Home Server Admin.
+resource "kubernetes_manifest" "slack_token" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "notify-slack"
+      namespace = kubernetes_namespace.notify.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "notify-slack"
+      }
+      data = [
+        {
+          secretKey = "token"
+          remoteRef = { key = "viktor", property = "slack_bot_token" }
+        },
+      ]
+    }
+  }
+}
+
+# The adapter's own state: the last copy of everyone's settings (used when
+# Authentik does not answer) and the alerts already reported as reaching
+# nobody. Local and encrypted, not NFS: it holds people's addresses, and an
+# NFS outage must not take the snapshot with it.
+resource "kubernetes_persistent_volume_claim" "adapter_state" {
+  wait_until_bound = false
+  metadata {
+    name      = "notify-adapter-state"
+    namespace = kubernetes_namespace.notify.metadata[0].name
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm-encrypted"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 resource "kubernetes_config_map" "adapter" {
   metadata {
     name      = "notify-adapter"
@@ -277,6 +335,11 @@ resource "kubernetes_deployment" "adapter" {
   }
   spec {
     replicas = 1
+    # The state volume is ReadWriteOnce, and one pod at a time also keeps
+    # two adapters from sending the same alert during a rollout.
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "notify-adapter"
@@ -333,6 +396,30 @@ resource "kubernetes_deployment" "adapter" {
             name  = "INGRESS_PROOF_FILE"
             value = "/secrets/proof/proof"
           }
+          env {
+            name  = "LOKI_URL"
+            value = "http://loki.monitoring.svc.cluster.local:3100"
+          }
+          env {
+            name  = "SLACK_TOKEN_FILE"
+            value = "/secrets/slack/token"
+          }
+          env {
+            name  = "SLACK_LIVE"
+            value = local.slack_live
+          }
+          env {
+            name  = "STATE_DIR"
+            value = "/state"
+          }
+          env {
+            name  = "UNROUTED_CHANNEL"
+            value = "#alerts"
+          }
+          env {
+            name  = "ADMIN_GROUP"
+            value = "Home Server Admins"
+          }
           env_from {
             secret_ref {
               name = kubernetes_secret.apprise_admin.metadata[0].name
@@ -354,6 +441,15 @@ resource "kubernetes_deployment" "adapter" {
             name       = "ingress-proof"
             mount_path = "/secrets/proof"
             read_only  = true
+          }
+          volume_mount {
+            name       = "slack-token"
+            mount_path = "/secrets/slack"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "state"
+            mount_path = "/state"
           }
           liveness_probe {
             http_get {
@@ -398,6 +494,18 @@ resource "kubernetes_deployment" "adapter" {
           name = "ingress-proof"
           secret {
             secret_name = kubernetes_secret.ingress_proof.metadata[0].name
+          }
+        }
+        volume {
+          name = "slack-token"
+          secret {
+            secret_name = "notify-slack"
+          }
+        }
+        volume {
+          name = "state"
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim.adapter_state.metadata[0].name
           }
         }
       }

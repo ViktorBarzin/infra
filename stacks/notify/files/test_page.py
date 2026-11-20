@@ -59,6 +59,15 @@ class StubApprise:
         return self.result
 
 
+class StubSlack:
+    def __init__(self):
+        self.sent = []
+
+    def post(self, target, body):
+        self.sent.append((target, body))
+        return "sent"
+
+
 class StubDirectory:
     def __init__(self):
         self.users = {
@@ -66,11 +75,12 @@ class StubDirectory:
                 "pk": 7,
                 "username": "me@example.com",
                 "email": "me@example.com",
-                "attributes": {"notify": {
+                "attributes": {"other": 1, "notify": {
                     "push_instance": "ha-london",
                     "push_service": "mobile_app_my_phone",
+                    "slack_target": "U01ABCDEF",
                     "groups": {"R730 Host": "push"},
-                    "alerts": {"SSDHighWriteRate": "off", "DevvmJournalSilent": "email"},
+                    "alerts": {"SSDHighWriteRate": "off", "DevvmJournalSilent": ["email", "slack"]},
                 }},
             }
         }
@@ -82,8 +92,19 @@ class StubDirectory:
             raise subs.Unavailable("down")
         return self.users.get(username)
 
-    def save(self, user, notify):
+    def update(self, username, change):
+        user = self.user(username)
+        if user is None:
+            raise subs.Invalid("No account found for %s." % username)
+        notify = change(user)
         self.saved.append((user["pk"], notify))
+        user["attributes"]["notify"] = notify
+        return notify
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args):
+        return None
 
 
 class PageTest(unittest.TestCase):
@@ -93,7 +114,9 @@ class PageTest(unittest.TestCase):
         os.close(fd)
         self.directory = StubDirectory()
         self.apprise = StubApprise()
-        self.server = page.make_server(("127.0.0.1", 0), self.directory, StubRules(), self.proof_file, URL, self.apprise, StubProm())
+        self.slack = StubSlack()
+        self.server = page.make_server(("127.0.0.1", 0), self.directory, StubRules(), self.proof_file, URL,
+                                       self.apprise, StubProm(), slack_client=self.slack)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.base = "http://127.0.0.1:%d" % self.server.server_port
 
@@ -102,7 +125,7 @@ class PageTest(unittest.TestCase):
         self.server.server_close()
         os.unlink(self.proof_file)
 
-    def request(self, path, data=None, proof="proof123", user="me@example.com", origin=URL):
+    def request(self, path, data=None, proof="proof123", user="me@example.com", origin=URL, groups=""):
         headers = {}
         if proof:
             headers["X-Notify-Ingress-Proof"] = proof
@@ -110,18 +133,17 @@ class PageTest(unittest.TestCase):
             headers["X-authentik-username"] = user
         if origin:
             headers["Origin"] = origin
+        if groups:
+            headers["X-authentik-groups"] = groups
         body = urllib.parse.urlencode(data).encode() if data is not None else None
         req = urllib.request.Request(self.base + path, body, headers)
-
-        class NoRedirect(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, *args):
-                return None
-
         try:
             resp = urllib.request.build_opener(NoRedirect).open(req)
             return resp.status, resp.read().decode(), resp.headers
         except urllib.error.HTTPError as e:
             return e.code, e.read().decode(), e.headers
+
+    # --- who may see it ---
 
     def test_without_ingress_proof_is_refused(self):
         self.assertEqual(self.request("/", proof=None)[0], 403)
@@ -133,45 +155,96 @@ class PageTest(unittest.TestCase):
     def test_unknown_account_is_refused(self):
         self.assertEqual(self.request("/", user="stranger@example.com")[0], 403)
 
-    def test_full_page_lists_groups_and_current_choices(self):
+    def test_authentik_down_is_503(self):
+        self.directory.down = True
+        self.assertEqual(self.request("/")[0], 503)
+
+    # --- what it shows ---
+
+    def test_full_page_rows_carry_their_stored_choice(self):
         status, html, _ = self.request("/")
         self.assertEqual(status, 200)
-        self.assertIn("R730 Host", html)
         self.assertIn("CPU &lt;hot&gt;", html)
         self.assertNotIn("CPU <hot>", html)
-        self.assertIn('name="g:R730 Host" value="push" checked', html)
-        self.assertIn('name="a:SSDHighWriteRate" value="off" checked', html)
-        self.assertIn('name="a:HighCPUTemperature" value="inherit" checked', html)
-        self.assertIn('value="mobile_app_my_phone"', html)
+        self.assertIn('name="g:R730 Host" value="push"', html)
+        self.assertIn('name="a:SSDHighWriteRate" value=""', html)
+        self.assertIn('name="a:HighCPUTemperature" value="inherit"', html)
+        self.assertIn('name="o:a:HighCPUTemperature" value="inherit"', html)
+        self.assertIn('name="default" value=""', html)
+        self.assertIn('value="U01ABCDEF"', html)
         self.assertIn('placeholder="me@example.com"', html)
+        self.assertEqual(html.count('data-ch="slack"'), html.count('data-ch="push"'))
 
-    def test_full_page_lists_chosen_alerts_outside_any_group(self):
+    def test_hidden_rows_stay_disabled_until_changed(self):
         _, html, _ = self.request("/")
-        self.assertIn('name="a:DevvmJournalSilent" value="email" checked', html)
+        self.assertIn('name="a:HighCPUTemperature" value="inherit" disabled', html)
 
-    def test_alert_page_offers_the_alert_and_its_group(self):
+    def test_chosen_alerts_outside_any_group_are_listed(self):
+        _, html, _ = self.request("/")
+        self.assertIn('name="a:DevvmJournalSilent" value="email,slack"', html)
+
+    def test_alert_page_shows_what_you_get_now_and_compares_with_what_is_stored(self):
         status, html, _ = self.request("/a/HighCPUTemperature")
         self.assertEqual(status, 200)
-        self.assertIn('name="a:HighCPUTemperature" value="push" checked', html)
-        self.assertIn('name="g:R730 Host" value="push" checked', html)
+        self.assertIn('name="a:HighCPUTemperature" value="push"', html)
+        self.assertIn('name="o:a:HighCPUTemperature" value="inherit"', html)
+        self.assertIn('name="g:R730 Host" value="push"', html)
         self.assertIn('name="next" value="/a/HighCPUTemperature"', html)
 
     def test_alert_page_for_an_alert_outside_any_group(self):
         status, html, _ = self.request("/a/SomeLokiAlert")
         self.assertEqual(status, 200)
-        self.assertIn('name="a:SomeLokiAlert" value="off" checked', html)
+        self.assertIn('name="a:SomeLokiAlert" value=""', html)
         self.assertNotIn('name="g:', html)
 
     def test_alert_page_refuses_a_bad_name(self):
         self.assertEqual(self.request("/a/%3Cscript%3E")[0], 404)
 
-    def test_save_writes_and_redirects(self):
-        status, _, headers = self.request("/save", {"a:PVFillingUp": "push", "next": "/a/PVFillingUp"})
+    def test_how_it_works(self):
+        status, html, _ = self.request("/how")
+        self.assertEqual(status, 200)
+        self.assertIn("<svg", html)
+        self.assertIn("NotifyPipeDown", html)
+        _, main, _ = self.request("/")
+        self.assertIn('href="/how"', main)
+
+    def test_slack_help_mentions_channels_for_admins_only(self):
+        _, html, _ = self.request("/")
+        self.assertNotIn("#alerts", html)
+        _, html, _ = self.request("/", groups="Home Users|Home Server Admins")
+        self.assertIn("#alerts", html)
+
+    def test_hidden_attribute_beats_display_rules(self):
+        _, html, _ = self.request("/")
+        self.assertIn("[hidden]{display:none!important}", html)
+
+    def test_saved_banner(self):
+        _, html, _ = self.request("/?saved=1")
+        self.assertIn("Saved.", html)
+
+    # --- saving ---
+
+    def test_save_writes_lists_and_redirects(self):
+        status, _, headers = self.request("/save", {"a:PVFillingUp": "push,slack", "o:a:PVFillingUp": "inherit", "next": "/a/PVFillingUp"})
         self.assertEqual(status, 303)
         self.assertEqual(headers["Location"], "/a/PVFillingUp?saved=1")
         pk, notify = self.directory.saved[0]
         self.assertEqual(pk, 7)
-        self.assertEqual(notify["alerts"], {"SSDHighWriteRate": "off", "DevvmJournalSilent": "email", "PVFillingUp": "push"})
+        self.assertEqual(notify["alerts"], {"SSDHighWriteRate": [], "DevvmJournalSilent": ["email", "slack"], "PVFillingUp": ["push", "slack"]})
+
+    def test_save_of_a_row_someone_changed_is_a_conflict(self):
+        status, html, _ = self.request("/save", {"a:SSDHighWriteRate": "push", "o:a:SSDHighWriteRate": "inherit", "next": "/"})
+        self.assertEqual(status, 409)
+        self.assertIn("SSDHighWriteRate changed since you opened the page", html)
+        self.assertEqual(self.directory.saved, [])
+
+    def test_slack_channel_only_for_admins(self):
+        status, html, _ = self.request("/save", {"slack_target": "#alerts", "next": "/"})
+        self.assertEqual(status, 400)
+        self.assertIn("Home Server Admins", html)
+        status, _, _ = self.request("/save", {"slack_target": "#alerts", "next": "/"}, groups="Home Server Admins")
+        self.assertEqual(status, 303)
+        self.assertEqual(self.directory.saved[0][1]["slack_target"], "#alerts")
 
     def test_save_from_another_site_is_refused(self):
         self.assertEqual(self.request("/save", {"a:PVFillingUp": "push"}, origin="https://evil.example")[0], 403)
@@ -189,56 +262,58 @@ class PageTest(unittest.TestCase):
         self.assertIn("Set up your phone first", html)
         self.assertEqual(self.directory.saved, [])
 
-    def test_authentik_down_is_503(self):
-        self.directory.down = True
-        self.assertEqual(self.request("/")[0], 503)
+    def test_diff_for_the_log(self):
+        self.assertEqual(
+            page.diff({"alerts": {"X": "push"}, "email": "a"}, {"alerts": {"X": ["push", "slack"]}, "email": "a"}),
+            {"a:X": ["push", "push,slack"]},
+        )
 
-    def test_hidden_attribute_beats_display_rules(self):
-        # Search hides rows with `hidden`; .row sets display:flex, which would win.
-        _, html, _ = self.request("/")
-        self.assertIn("[hidden]{display:none!important}", html)
+    # --- Test button ---
 
-    def test_rows_have_a_test_button(self):
+    def test_test_button_on_rows(self):
         _, html, _ = self.request("/")
         self.assertIn('data-alert="PVFillingUp"', html)
         _, html, _ = self.request("/a/PVFillingUp")
         self.assertIn('data-alert="PVFillingUp"', html)
 
-    def test_test_sends_a_production_like_notification_to_me_only(self):
-        status, body, _ = self.request("/test", {"alert": "PVFillingUp", "channel": "push"})
+    def test_test_sends_to_every_chosen_channel(self):
+        status, body, _ = self.request("/test", {"alert": "PVFillingUp", "channels": "push,slack"})
         self.assertEqual(status, 200)
         answer = json.loads(body)
         self.assertTrue(answer["ok"])
-        self.assertEqual(answer["source"], "made-up value on real labels")
+        self.assertIn("your phone and your Slack DMs", answer["message"])
         (n, tags), = self.apprise.sent
-        self.assertEqual(tags, ["u-me-example-com-push"])
-        self.assertEqual(n["title"], "Test: PV immich is 102% full")
-        self.assertEqual((n["body"], n["type"]), ("Grow it.", "warning"))
+        self.assertEqual((tags, n["title"]), (["u-me-example-com-push"], "Test: PV immich is 102% full"))
+        (target, msg), = self.slack.sent
+        self.assertEqual(target, "U01ABCDEF")
+        self.assertEqual(msg["attachments"][0]["title"], "Test: PV immich is 102% full")
 
     def test_test_email_carries_the_link_like_a_real_one(self):
-        self.request("/test", {"alert": "PVFillingUp", "channel": "email"})
+        self.request("/test", {"alert": "PVFillingUp", "channels": "email"})
         (n, tags), = self.apprise.sent
         self.assertEqual(tags, ["u-me-example-com-email"])
         self.assertEqual(n["body"], "Grow it.\n\nChange what you get: https://notify.example/a/PVFillingUp")
 
-    def test_test_without_a_channel_uses_the_phone_first(self):
-        self.request("/test", {"alert": "PVFillingUp", "channel": ""})
+    def test_test_never_posts_into_a_channel(self):
+        self.directory.users["me@example.com"]["attributes"]["notify"]["slack_target"] = "#alerts"
+        self.request("/test", {"alert": "PVFillingUp", "channels": "slack"})
+        self.assertEqual(self.slack.sent, [])
         self.assertEqual(self.apprise.sent[0][1], ["u-me-example-com-push"])
 
-    def test_test_falls_back_to_email_without_a_phone(self):
-        self.directory.users["me@example.com"]["attributes"]["notify"]["push_instance"] = "none"
-        self.request("/test", {"alert": "PVFillingUp", "channel": "push"})
-        self.assertEqual(self.apprise.sent[0][1], ["u-me-example-com-email"])
+    def test_test_without_channels_uses_the_phone_first(self):
+        self.request("/test", {"alert": "PVFillingUp", "channels": ""})
+        self.assertEqual(self.apprise.sent[0][1], ["u-me-example-com-push"])
 
     def test_test_without_any_channel_is_refused(self):
-        self.directory.users["me@example.com"]["attributes"]["notify"]["push_instance"] = "none"
+        notify = self.directory.users["me@example.com"]["attributes"]["notify"]
+        notify.update(push_instance="none", slack_target="")
         self.directory.users["me@example.com"]["email"] = ""
         status, body, _ = self.request("/test", {"alert": "PVFillingUp"})
         self.assertEqual(status, 400)
-        self.assertIn("phone or an email", json.loads(body)["message"])
+        self.assertIn("Set up a phone", json.loads(body)["message"])
 
     def test_test_of_an_alert_outside_the_rule_list(self):
-        status, _, _ = self.request("/test", {"alert": "SomeLokiAlert"})
+        status, _, _ = self.request("/test", {"alert": "SomeLokiAlert", "channels": "push"})
         self.assertEqual(status, 200)
         self.assertEqual(self.apprise.sent[0][0]["title"], "Test: SomeLokiAlert")
 
@@ -248,18 +323,14 @@ class PageTest(unittest.TestCase):
         self.assertEqual(self.apprise.sent, [])
 
     def test_tests_are_rate_limited(self):
-        codes = [self.request("/test", {"alert": "PVFillingUp"})[0] for _ in range(7)]
+        codes = [self.request("/test", {"alert": "PVFillingUp", "channels": "push"})[0] for _ in range(7)]
         self.assertEqual(codes, [200] * 6 + [429])
 
     def test_failed_send_is_reported(self):
-        self.apprise.result = "no_recipients"
-        status, body, _ = self.request("/test", {"alert": "PVFillingUp", "channel": "push"})
+        self.apprise.result = "failed"
+        status, body, _ = self.request("/test", {"alert": "PVFillingUp", "channels": "push"})
         self.assertEqual(status, 502)
         self.assertFalse(json.loads(body)["ok"])
-
-    def test_saved_banner(self):
-        _, html, _ = self.request("/?saved=1")
-        self.assertIn("Saved.", html)
 
 
 if __name__ == "__main__":

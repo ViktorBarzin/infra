@@ -62,29 +62,6 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(n["title"], "new")
 
 
-class RouteTest(unittest.TestCase):
-    people = {
-        "a@example.com": {"alerts": {"R730OnBackupUplink": "push"}, "default": "email"},
-        "b@example.com": {"groups": {"R730 Host": "email"}},
-    }
-
-    def route(self, labels):
-        return adapter.route(labels, self.people, lambda name: ["R730 Host"] if name == "R730OnBackupUplink" else [])
-
-    def test_alert_goes_to_its_subscribers(self):
-        self.assertEqual(self.route({"alertname": "R730OnBackupUplink"}), (["u-a-example-com-push", "u-b-example-com-email"], True))
-
-    def test_recipient_label_goes_to_that_default_channel_only(self):
-        labels = {"alertname": "R730OnBackupUplink", "recipient": "a@example.com"}
-        self.assertEqual(self.route(labels), (["u-a-example-com-email"], False))
-
-    def test_recipient_without_default(self):
-        self.assertEqual(self.route({"alertname": "X", "recipient": "b@example.com"}), ([], False))
-
-    def test_nobody_subscribed(self):
-        self.assertEqual(self.route({"alertname": "Other"}), ([], True))
-
-
 class FakeApprise(BaseHTTPRequestHandler):
     """Answers like apprise-api: /json/urls lists tags, /notify returns a set code."""
 
@@ -140,12 +117,12 @@ class SendTest(unittest.TestCase):
         self.assertEqual(auth, "Basic YWRtaW46cHc=")
         self.assertEqual(body, dict(N, tag="u-a-push, u-b-email"))
 
-    def test_tag_apprise_lacks_is_left_out(self):
-        self.assertEqual(self.client.send(N, ["u-a-push", "u-c-push"]), "sent")
+    def test_tag_apprise_lacks_is_a_failure_but_the_rest_still_go(self):
+        self.assertEqual(self.client.send(N, ["u-a-push", "u-c-push"]), "failed")
         self.assertEqual(FakeApprise.received[0][1]["tag"], "u-a-push")
 
-    def test_no_channel_is_not_sent(self):
-        self.assertEqual(self.client.send(N, ["u-c-push"]), "no_recipients")
+    def test_only_missing_tags_is_failed_and_nothing_sent(self):
+        self.assertEqual(self.client.send(N, ["u-c-push"]), "failed")
         self.assertEqual(self.client.send(N, []), "no_recipients")
         self.assertEqual(FakeApprise.received, [])
 
@@ -164,18 +141,31 @@ class HandlerTest(unittest.TestCase):
 
     def setUp(self):
         self.sent = []
-        self.results = ["sent", "sent"]
+        self.results = {}
         outer = self
 
         class StubApprise:
             def send(self, notification, tags):
-                outer.sent.append((notification, tags))
-                return outer.results.pop(0)
+                outer.sent.append(("apprise", notification, tags))
+                r = outer.results.get(tags[0].rsplit("-", 1)[1], "sent")
+                if r == "down":
+                    raise adapter.Unavailable("down")
+                return r
+
+        class StubSlack:
+            def post(self, target, body):
+                outer.sent.append(("slack", target, body))
+                r = outer.results.get("slack", "sent")
+                if r == "down":
+                    raise adapter.Unavailable("rate limited")
+                return r
 
         class StubDirectory:
+            stale = False
             people = {
-                "a": {"alerts": {"R730OnBackupUplink": "push"}, "default": "push"},
-                "b": {"alerts": {"R730OnBackupUplink": "email"}},
+                "a": {"alerts": {"R730OnBackupUplink": ["push", "slack"]}, "default": ["push"], "slack_target": "#alerts"},
+                "b": {"alerts": {"R730OnBackupUplink": "email"}, "slack_target": "U01ABCDEF"},
+                "c": {"alerts": {"R730OnBackupUplink": ["slack"]}, "slack_target": "#alerts"},
             }
 
             def subscribers(self):
@@ -186,7 +176,10 @@ class HandlerTest(unittest.TestCase):
                 return []
 
         adapter.METRICS.clear()
-        self.server = adapter.make_server(("127.0.0.1", 0), StubApprise(), StubDirectory(), StubRules(), PAGE)
+        adapter.DELIVERIES.clear()
+        self.server = adapter.make_server(
+            ("127.0.0.1", 0), StubApprise(), StubDirectory(), StubRules(), PAGE, StubSlack(), slack_live=True,
+        )
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.base = "http://127.0.0.1:%d" % self.server.server_port
 
@@ -204,27 +197,60 @@ class HandlerTest(unittest.TestCase):
     def metrics(self):
         return urllib.request.urlopen(self.base + "/metrics").read().decode()
 
-    def test_push_and_email_go_separately_and_email_carries_the_link(self):
+    def test_slack_first_once_per_target_then_push_and_email(self):
         self.assertEqual(self.post(payload()), 200)
-        (push, push_tags), (email, email_tags) = self.sent
-        self.assertEqual((push_tags, push["body"]), (["u-a-push"], "R730 is on its backup uplink"))
-        self.assertEqual(email_tags, ["u-b-email"])
+        kinds = [(s[0], s[1] if s[0] == "slack" else s[2]) for s in self.sent]
+        self.assertEqual(kinds, [("slack", "#alerts"), ("apprise", ["u-a-push"]), ("apprise", ["u-b-email"])])
+        self.assertEqual(self.sent[0][2]["attachments"][0]["title"], "[WARNING] R730OnBackupUplink (1)")
         self.assertEqual(
-            email["body"],
+            self.sent[2][1]["body"],
             "R730 is on its backup uplink\n\nChange what you get: https://notify.example/a/R730OnBackupUplink",
         )
         self.assertIn('notify_notifications_total{result="sent"} 1', self.metrics())
+        self.assertIn('notify_deliveries_total{channel="slack",result="sent"} 1', self.metrics())
 
-    def test_one_failed_channel_counts_as_failed(self):
-        self.results = ["sent", "failed"]
+    def test_slack_down_is_503_and_the_retry_skips_what_went_out(self):
+        self.results = {"slack": "down"}
+        self.assertEqual(self.post(payload()), 503)
+        self.assertEqual(len(self.sent), 3)
+        self.results = {}
+        self.sent.clear()
+        self.assertEqual(self.post(payload()), 200)
+        self.assertEqual([s[0] for s in self.sent], ["slack"])
+
+    def test_a_new_notification_is_not_skipped(self):
         self.post(payload())
+        self.sent.clear()
+        self.post(payload("resolved", alerts=[alert("resolved")]))
+        self.assertEqual(len(self.sent), 3)
+
+    def test_permanent_failure_is_200_and_counted(self):
+        self.results = {"email": "failed"}
+        self.assertEqual(self.post(payload()), 200)
         self.assertIn('notify_notifications_total{result="failed"} 1', self.metrics())
 
-    def test_recipient_send_has_no_link(self):
-        self.post(payload(recipient="a"))
-        self.assertEqual(self.sent, [(adapter.build(payload()), ["u-a-push"])])
+    def test_shadow_mode_never_posts_to_slack(self):
+        self.server.slack_live = False
+        self.post(payload())
+        self.assertEqual([s[0] for s in self.sent], ["apprise", "apprise"])
+        self.assertIn('notify_deliveries_total{channel="slack",result="skipped"} 1', self.metrics())
 
-    def test_nobody_subscribed_is_counted(self):
+    def test_recipient_send_has_no_link_and_uses_default(self):
+        self.post(payload(recipient="a"))
+        self.assertEqual(self.sent, [("apprise", adapter.build(payload()), ["u-a-push"])])
+
+    def test_unrouted_critical_is_reported_once(self):
+        crit = payload(alertname="DiskOnFire", alerts=[alert(labels={"alertname": "DiskOnFire", "severity": "critical"})])
+        crit["commonLabels"]["severity"] = "critical"
+        self.post(crit)
+        self.assertEqual(self.sent[0][0:2], ("slack", "#alerts"))
+        self.assertIn("DiskOnFire", self.sent[0][2]["text"])
+        self.sent.clear()
+        other = dict(crit, groupKey="other")
+        self.post(other)
+        self.assertEqual(self.sent, [])
+
+    def test_unrouted_warning_stays_quiet(self):
         self.assertEqual(self.post(payload(alertname="Other")), 200)
         self.assertEqual(self.sent, [])
         self.assertIn('notify_notifications_total{result="no_recipients"} 1', self.metrics())
@@ -236,7 +262,7 @@ class HandlerTest(unittest.TestCase):
         self.assertEqual(e.exception.code, 400)
         self.assertIn('notify_notifications_total{result="rejected"} 1', self.metrics())
 
-    def test_unavailable_is_503_so_alertmanager_retries(self):
+    def test_authentik_down_without_snapshot_is_503(self):
         def boom():
             raise adapter.Unavailable("down")
 
@@ -244,8 +270,16 @@ class HandlerTest(unittest.TestCase):
         self.assertEqual(self.post(payload()), 503)
         self.assertIn('notify_notifications_total{result="failed"} 1', self.metrics())
 
-    def test_failed_metric_is_exported_before_any_failure(self):
-        self.assertIn('notify_notifications_total{result="failed"} 0', self.metrics())
+    def test_a_crash_is_503_and_counted(self):
+        self.server.directory.subscribers = lambda: {"a": {"alerts": {"R730OnBackupUplink": ["push"]}}}
+        self.server.apprise = None
+        self.assertEqual(self.post(payload()), 503)
+        self.assertIn('notify_notifications_total{result="failed"} 1', self.metrics())
+
+    def test_metrics_export_zeroes_and_snapshot_gauge(self):
+        m = self.metrics()
+        self.assertIn('notify_notifications_total{result="failed"} 0', m)
+        self.assertIn("notify_snapshot_in_use 0", m)
 
     def test_healthz(self):
         self.assertEqual(urllib.request.urlopen(self.base + "/healthz").status, 200)
