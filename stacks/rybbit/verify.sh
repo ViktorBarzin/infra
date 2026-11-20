@@ -43,6 +43,11 @@ verify_component() {
   check "ClickHouse metrics reach Prometheus" expect_series 'ClickHouseMetrics_Query' 1
   check "rybbit backend healthy against ClickHouse" expect_http http://rybbit.rybbit.svc.cluster.local/api/health '200'
   if [ "${VERIFY_QUICK:-0}" != 1 ]; then
-    check "clickhouse-backup Job completes" run_cronjob rybbit clickhouse-backup 900
+    # The backup is a single-threaded dump + gzip + restore check, so its time
+    # grows with session_replay_events (956 s on 2026-11-19, up from 103 s a
+    # week earlier). 900 s timed out on a run that went on to succeed in 1082 s,
+    # and the rails reverted clickhouse 26.10.8.34 for it (infra#213). 2700 s
+    # still fits the verify Job's 3600 s deadline (scripts/verify/run --timeout).
+    check "clickhouse-backup Job completes" run_cronjob rybbit clickhouse-backup 2700
   fi
 }

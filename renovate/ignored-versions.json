@@ -12,39 +12,6 @@
       ],
       "matchNewValue": "v3.33.1",
       "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-20 pipeline #4243: stack rybbit failed after this bump: its verify checks failed (scripts/verify/run exit 1; newly failing: clickhouse-backup Job completes) (commit f5a1f375)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "clickhouse/clickhouse-server"
-      ],
-      "matchNewValue": "26.10.8.34",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-20 pipeline #4243: stack rybbit failed after this bump: its verify checks failed (scripts/verify/run exit 1; newly failing: clickhouse-backup Job completes) (commit f5a1f375)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "clickhouse/clickhouse-server"
-      ],
-      "matchNewValue": "26.10.8.34",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-20 pipeline #4243: stack rybbit failed after this bump: its verify checks failed (scripts/verify/run exit 1; newly failing: clickhouse-backup Job completes) (commit f5a1f375)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "clickhouse/clickhouse-server"
-      ],
-      "matchNewValue": "26.10.8.34",
-      "enabled": false
     }
   ]
 }
