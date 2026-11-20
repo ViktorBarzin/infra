@@ -388,8 +388,9 @@ locals {
   # src/reconciler/pg-task-jobs.ts. Its pod mounts only Cloud's two dump
   # directories (pg_backups.tf): the nightly `p_*` dumps read-only, and
   # the manual ones, which only a backup Job writes. The image is pinned
-  # here and in Cloud's PG_TASK_IMAGE; tests/cloud-access.test.sh sends the
-  # Jobs Cloud's own code builds, so a change on either side fails the test.
+  # here alone and fed to the reconciler as PG_TASK_IMAGE (deploy_rules.tf),
+  # so a Renovate bump moves the Jobs and the policy together;
+  # tests/cloud-access.test.sh sends the Jobs Cloud's own code builds.
   cloud_pg_task = {
     container = "pg"
     image     = "docker.io/library/postgres:18.7-trixie@sha256:e754b839f447639b7004895f4d8a4bfcb4e9dbe3a1bc035f27f646562a16fd61"

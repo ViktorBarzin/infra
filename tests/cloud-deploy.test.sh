@@ -69,7 +69,7 @@ locals {
   cloud_taken_hosts = {}
 }
 EOF
-if ! (cd "$TMP/locals" && echo 'jsonencode({console_rules = local.cloud_console_cluster_rules, console_env = local.cloud_console_env, reconciler_env = local.cloud_reconciler_env, reconciler_files = local.cloud_reconciler_files, reconciler_reload = local.cloud_reconciler_reload, secretstore_vault = local.cloud_secretstore_vault_server, console_secret_env = local.cloud_console_secret_env, reconciler_system_template = local.cloud_reconciler_system_template, console_system_template = local.cloud_console_system_template, reconciler_system_keys = local.cloud_reconciler_system_keys, console_system_keys = local.cloud_console_system_keys, reconciler_system_secret = local.cloud_reconciler_system_secret, console_system_secret = local.cloud_console_system_secret})' \
+if ! (cd "$TMP/locals" && echo 'jsonencode({console_rules = local.cloud_console_cluster_rules, console_env = local.cloud_console_env, reconciler_env = local.cloud_reconciler_env, reconciler_files = local.cloud_reconciler_files, reconciler_reload = local.cloud_reconciler_reload, secretstore_vault = local.cloud_secretstore_vault_server, console_secret_env = local.cloud_console_secret_env, reconciler_system_template = local.cloud_reconciler_system_template, console_system_template = local.cloud_console_system_template, reconciler_system_keys = local.cloud_reconciler_system_keys, console_system_keys = local.cloud_console_system_keys, reconciler_system_secret = local.cloud_reconciler_system_secret, console_system_secret = local.cloud_console_system_secret, pins = {EDGE_IMAGE = local.cloud_edge.image, OAUTH2_PROXY_IMAGE = local.cloud_oauth2_proxy.image, TOOLBOX_POSTGRES_IMAGE = local.cloud_toolbox.images.postgres, PG_TASK_IMAGE = local.cloud_pg_task.image}})' \
     | terraform console >"$TMP/locals.json" 2>"$TMP/locals.err"); then
   echo "FAIL: terraform console could not evaluate stacks/cloud/deploy_rules.tf (it must hold only locals)"
   cat "$TMP/locals.err"
@@ -159,6 +159,15 @@ mounts = {}
 for n, f in files.items():
     if mounts.setdefault(f["mount"], f["secret"]) != f["secret"]:
         bad.append(f"two Secrets share mount {f['mount']}")
+# Every image an admission policy pins and the reconciler renders reaches
+# it from that same local, so a Renovate bump of the pin moves both. A
+# second pin in the cloud repo drifted twice (edge 2026-11-13, Postgres
+# tasks 2026-11-19) and Kubernetes refused every object that used it.
+for n, pin in sorted(loc["pins"].items()):
+    if renv.get(n) != pin:
+        bad.append(f"the reconciler's {n} is {renv.get(n)!r}, want the pin its admission policy holds ({pin!r})")
+    if not re.search(rf'pinnedImage\("{n}"', src):
+        bad.append(f"the cloud code does not read {n} through pinnedImage()")
 if renv.get("VAULT_ADDR") != loc["secretstore_vault"]:
     bad.append(f"VAULT_ADDR {renv.get('VAULT_ADDR')!r} is not the in-cluster Vault address the admission policy pins ({loc['secretstore_vault']!r})")
 # M5. Builds: one switch, off until the GitHub tokens exist; the code reads

@@ -265,6 +265,10 @@ locals {
       { name = "OAUTH2_PROXY_IMAGE", value = local.cloud_oauth2_proxy.image },
       # B22: the psql toolbox image, the one cloud-managed-toolbox-job pins.
       { name = "TOOLBOX_POSTGRES_IMAGE", value = local.cloud_toolbox.images.postgres },
+      # B28: the Postgres task Jobs' image, the one cloud-pg-task pins.
+      # Renovate bumped that pin on 2026-11-18 and 2026-11-19 while Cloud
+      # still ran its own copy, and every task's Job was refused.
+      { name = "PG_TASK_IMAGE", value = local.cloud_pg_task.image },
       # B09: OpenTofu state encryption. The passphrase is read from Vault
       # secret/cloud/state-key by the reconciler itself, never as a file.
       # false since 2026-11-17: every Project state was rewritten encrypted

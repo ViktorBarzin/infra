@@ -192,6 +192,10 @@ if (await Bun.file(pgTaskFile).exists()) {
 			kind,
 			project: rendered.tfvarsJson.project,
 			database,
+			// The reconciler runs the image infra gives it as PG_TASK_IMAGE
+			// (deploy_rules.tf); pg_tasks.py checks Cloud's default equals
+			// infra's pin, and cloud-deploy.test.sh that the env carries it.
+			image: tasks.PG_TASK_IMAGE,
 			...(kind === "restore" ? { file: "dump_2026_11_19_00_00.dump" } : {}),
 		});
 		const secret = tasks.connects(kind)
