@@ -60,21 +60,20 @@ alertmanager:
       receiver: slack-warning
       routes:
         # The notify pipe (stacks/notify, docs/plans/2026-11-17-notify-pipe-
-        # design.md). A rule with a `topic` label (one of stacks/notify/
-        # topics.json) reaches the Recipients subscribed to that Topic; a rule
-        # with a `recipient` label (an Authentik username) reaches that
-        # person's default channel. continue: true, so every other route below
-        # still sees the alert: the pipe is an extra copy, never a diversion.
-        - receiver: notify-pipe
-          group_by: ["alertname", "topic"]
-          matchers:
-            - topic =~ ".+"
-          continue: true
+        # design.md). Every alert goes to the adapter, which sends it to the
+        # people who subscribed to it or to its rule group on
+        # https://notify.viktorbarzin.me. An alert with a `recipient` label
+        # (an Authentik username) goes to that person's default channel
+        # instead. continue: true, so every other route below still sees the
+        # alert: the pipe is an extra copy, never a diversion.
         - receiver: notify-pipe
           group_by: ["alertname", "recipient"]
           matchers:
-            - topic !~ ".+"
             - recipient =~ ".+"
+          continue: true
+        - receiver: notify-pipe
+          matchers:
+            - recipient !~ ".+"
           continue: true
         # Email copy for Emil (infra#142, 2026-10-25). Alerts that set
         # `notify_emo = "true"` go to his Gmail and then, via the next route,
@@ -498,7 +497,7 @@ alertmanager:
             color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
             fallback: '{{ if eq .Status "firing" }}CRITICAL{{ else }}RESOLVED{{ end }}: {{ .GroupLabels.alertname }}'
             title: '{{ if eq .Status "firing" }}[CRITICAL]{{ else }}[RESOLVED]{{ end }} {{ .GroupLabels.alertname }} ({{ .Alerts | len }})'
-            text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+            text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}<https://notify.viktorbarzin.me/a/{{ .GroupLabels.alertname }}|Notify me about this>'
       - name: slack-warning
         slack_configs:
           - send_resolved: true
@@ -506,7 +505,7 @@ alertmanager:
             color: '{{ if eq .Status "firing" }}warning{{ else }}good{{ end }}'
             fallback: '{{ if eq .Status "firing" }}WARNING{{ else }}RESOLVED{{ end }}: {{ .GroupLabels.alertname }}'
             title: '{{ if eq .Status "firing" }}[WARNING]{{ else }}[RESOLVED]{{ end }} {{ .GroupLabels.alertname }} ({{ .Alerts | len }})'
-            text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+            text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}<https://notify.viktorbarzin.me/a/{{ .GroupLabels.alertname }}|Notify me about this>'
       - name: slack-info
         slack_configs:
           - send_resolved: true
@@ -514,7 +513,7 @@ alertmanager:
             color: '{{ if eq .Status "firing" }}#439FE0{{ else }}good{{ end }}'
             fallback: '{{ if eq .Status "firing" }}INFO{{ else }}RESOLVED{{ end }}: {{ .GroupLabels.alertname }}'
             title: '{{ if eq .Status "firing" }}[INFO]{{ else }}[RESOLVED]{{ end }} {{ .GroupLabels.alertname }} ({{ .Alerts | len }})'
-            text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+            text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}<https://notify.viktorbarzin.me/a/{{ .GroupLabels.alertname }}|Notify me about this>'
       - name: slack-security
         slack_configs:
           - send_resolved: true
@@ -530,6 +529,7 @@ alertmanager:
               {{ if .Annotations.description }}{{ .Annotations.description }}
               {{ end }}{{ if .Annotations.runbook }}Runbook: {{ .Annotations.runbook }}
               {{ end }}{{ end }}
+              <https://notify.viktorbarzin.me/a/{{ .GroupLabels.alertname }}|Notify me about this>
   # web.external-url seems to be hardcoded, edited deployment manually
   # extraArgs:
   #   web.external-url: "https://prometheus.viktorbarzin.me"
@@ -1959,8 +1959,6 @@ serverFiles:
               severity: warning
               notify: page
               notify_emo: "true"
-              # notify pipe Topic (stacks/notify/topics.json).
-              topic: internet
             annotations:
               summary: "R730 is running on its backup uplink eno2 (SW2 P5) - primary eno1 / AX6000 port 1 failed"
               description: "eno2 has transmitted packets in the last 5m, so bond0 made it the active slave. Services keep working through SW2 and AX6000 port 2. Check AX6000 port 1 and cable SRV1; `cat /proc/net/bonding/bond0` on pve shows the active slave and failure counts. Context: infra#142."
@@ -1977,8 +1975,6 @@ serverFiles:
               severity: warning
               notify: page
               notify_emo: "true"
-              # notify pipe Topic (stacks/notify/topics.json).
-              topic: internet
             annotations:
               summary: "R730 backup uplink eno2 (SW2 P5) is down - the host has no second path"
               description: "bond0 reports fewer live slaves than configured while eno1 is still active, so the standby eno2 failed its link or ARP checks. Nothing is broken yet, but the next failure of AX6000 port 1 would take the host off the network. Check the LAN2 cable, SW2 P5 and SW2 itself. Context: infra#142."

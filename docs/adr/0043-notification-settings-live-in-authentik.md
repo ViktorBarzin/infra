@@ -1,8 +1,8 @@
 # ADR-0043: Notification settings live in Authentik, and Authentik pushes them to Apprise
 
-- Status: accepted
+- Status: accepted, revised 2026-11-20 (see "Revision")
 - Date: 2026-11-17
-- Related: `docs/plans/2026-11-17-notify-pipe-design.md` (the design), `stacks/notify` (apprise-api and the adapter), `stacks/authentik/notify.tf` (the settings page and the push), `GLOSSARY.md` ("Notifications")
+- Related: `docs/plans/2026-11-17-notify-pipe-design.md` (the design), `stacks/notify` (apprise-api, the adapter and the settings page), `stacks/authentik/notify.tf` (the service account and the push), `GLOSSARY.md` ("Notifications")
 
 ## Context
 
@@ -23,3 +23,15 @@ The pipe needs per-person settings: which Channels a Recipient has, which Topics
 - A config change reaches Apprise within seconds of a save. If Apprise loses its stored config, it comes back on the next User change. The config lives on a small NFS volume, so a pod restart keeps it.
 - The renderer is a Python expression inside Authentik. Its tests run it against fake users (`test_notify_render.py`), but a mistake shows only when Authentik runs it: the webhook then fails and Apprise keeps the previous config.
 - Each Recipient's list of Topics is limited to the fixed list in `stacks/notify/topics.json`; a new Topic is a commit that adds it next to its first sender.
+
+## Revision 2026-11-20: subscribe to alert rules, on a page of our own
+
+Viktor wanted an inventory of every alert and the easiest way to subscribe to new ones. A fixed Topic list could not give that: every new Topic was a commit. What changed:
+
+1. **Subscriptions name alert rules and Prometheus rule groups**, not Topics. The adapter reads the rule groups from Prometheus's rules API, so no rule needs a new label, and a rule group choice covers rules added to it later. A choice on an alert rule wins over its rule group. Topics and `topics.json` are gone.
+2. **The settings page moved out of Authentik's flow executor** to https://notify.viktorbarzin.me, served by the adapter behind forward auth. A prompt stage cannot search or show 550 rows. Every Slack post links to the page of its alert.
+3. **Settings still live in Authentik attributes.** The page writes them through a service account, `notify-settings`, whose role holds global `view_user` and `change_user`. That token can edit any account through the API. Viktor chose this over moving the settings to a store of the notify stack, which would have kept such a token out of the cluster. The token is mounted only into the adapter pod, and the page writes only the signed-in person's `notify` key.
+4. **The adapter routes; Apprise only holds Channels.** The renderer tags each Channel `u-<username>-push` or `u-<username>-email`, and the adapter picks the tags for each alert from everyone's attributes. The `user_write` rule went with the flow; the `model_updated` rule catches the page's saves.
+
+Consequence: alert routing now also depends on Authentik answering. When it does not, the adapter answers 503 and Alertmanager retries.
+

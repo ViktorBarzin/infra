@@ -1,29 +1,38 @@
 """Alertmanager webhook -> Apprise API adapter (the notify pipe).
 
-Alertmanager posts one alert group. A group with a `topic` label goes to the
-Apprise tag topic-<topic>; a group with a `recipient` label goes to the
-Recipient's default channel, tag person-<username>. Apprise holds which
-Channels carry which tags; Authentik renders that config (stacks/authentik/
-notify.tf). Design: docs/plans/2026-11-17-notify-pipe-design.md.
+Alertmanager posts every alert group here (stacks/monitoring, route
+notify-pipe). The adapter looks up who subscribed to that alert, directly or
+through its Prometheus rule group (subs.py), and asks apprise-api to notify
+their Channels, tagged u-<username>-push / u-<username>-email. A group with a
+`recipient` label goes to that person's default channel only. Each person
+picks their Subscriptions on the settings page (page.py), which this process
+also serves. Design: docs/plans/2026-11-17-notify-pipe-design.md.
 
 Environment:
-  APPRISE_URL       base URL of apprise-api, e.g. http://apprise.notify.svc:8000
-  APPRISE_KEY       config key holding every Recipient's Channels (notify)
-  APPRISE_USER      apprise-api administrator user
-  APPRISE_PASSWORD  apprise-api administrator password
-  TOPICS            comma-separated list of known Topics
-  PORT              listen port (default 8080)
+  APPRISE_URL         base URL of apprise-api, e.g. http://apprise.notify.svc:8000
+  APPRISE_KEY         config key holding every Recipient's Channels (notify)
+  APPRISE_USER        apprise-api administrator user
+  APPRISE_PASSWORD    apprise-api administrator password
+  AUTHENTIK_URL       base URL of Authentik's API
+  AUTHENTIK_TOKEN_FILE  file holding the notify-settings service account token
+  PROMETHEUS_URL      base URL of Prometheus (rules API)
+  PAGE_URL            public URL of the settings page
+  INGRESS_PROOF_FILE  file holding the header value Traefik adds (page.py)
+  PORT, PAGE_PORT     listen ports (default 8080 webhook, 8081 page)
 """
 
 import base64
 import json
 import logging
 import os
-import re
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import subs
+from subs import Unavailable
 
 log = logging.getLogger("notify-adapter")
 
@@ -32,34 +41,8 @@ METRICS: dict = {}
 _lock = threading.Lock()
 
 
-class Rejected(Exception):
-    """The alert group names no known Topic and no Recipient."""
-
-
-class Unavailable(Exception):
-    """apprise-api did not answer, so Alertmanager should retry."""
-
-
-def sanitize(name: str) -> str:
-    """Make an Apprise tag part; Authentik's renderer uses the same rule."""
-    return re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
-
-
-def tag_for(labels: dict, topics: set) -> str:
-    topic = labels.get("topic")
-    if topic:
-        if topic not in topics:
-            raise Rejected("unknown topic %r" % topic)
-        return "topic-" + sanitize(topic)
-    recipient = labels.get("recipient")
-    if recipient:
-        return "person-" + sanitize(recipient)
-    raise Rejected("no topic or recipient label")
-
-
-def build(payload: dict, topics: set) -> dict:
+def build(payload: dict) -> dict:
     """One Alertmanager group -> one Notification."""
-    tag = tag_for(payload.get("groupLabels") or payload.get("commonLabels") or {}, topics)
     resolved = payload.get("status") == "resolved"
     alerts = payload.get("alerts") or []
     if not resolved:
@@ -86,7 +69,17 @@ def build(payload: dict, topics: set) -> dict:
     if len(alerts) > 1:
         title += " (+%d more)" % (len(alerts) - 1)
     body = "\n\n".join(dict.fromkeys(bodies)) or title
-    return {"tag": tag, "title": title, "body": body, "type": kind}
+    return {"title": title, "body": body, "type": kind}
+
+
+def route(labels: dict, people: dict, groups_of) -> tuple:
+    """-> (Apprise tags, whether these are Subscriptions rather than a direct send)."""
+    recipient = labels.get("recipient")
+    if recipient:
+        tag = subs.tag_for_recipient(people, recipient)
+        return ([tag] if tag else []), False
+    name = labels.get("alertname", "")
+    return subs.tags_for_alert(people, name, groups_of(name)), True
 
 
 class Apprise:
@@ -119,12 +112,17 @@ class Apprise:
             raise Unavailable("listing tags returned %d" % status)
         return set(json.loads(body).get("tags") or [])
 
-    def send(self, notification: dict) -> str:
+    def send(self, notification: dict, tags: list) -> str:
         # Apprise answers 424 both for a failed Channel and for a tag nobody
-        # carries, so look first: a Topic with no Subscription is not a failure.
-        if notification["tag"] not in self.tags():
+        # carries, so send only to tags it holds. A missing one is a Channel
+        # the renderer refused (stacks/authentik/files/notify_render.py).
+        held = self.tags()
+        present = [t for t in tags if t in held]
+        if len(present) < len(tags):
+            log.warning("apprise holds no channel for %s", sorted(set(tags) - held))
+        if not present:
             return "no_recipients"
-        status, body = self._call("POST", "/notify/%s" % self.key, notification)
+        status, body = self._call("POST", "/notify/%s" % self.key, dict(notification, tag=", ".join(present)))
         if status == 200:
             return "sent"
         if status >= 500:
@@ -171,37 +169,51 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path != "/alertmanager":
             return self.reply(404)
+        srv = self.server
         try:
             length = int(self.headers.get("Content-Length") or 0)
             payload = json.loads(self.rfile.read(length))
-            notification = build(payload, self.server.topics)
-        except Rejected as e:
-            log.warning("rejected alert group: %s", e)
-            count("rejected")
-            return self.reply(200, b"rejected")
-        except (ValueError, KeyError) as e:
+            notification = build(payload)
+            labels = payload.get("groupLabels") or payload.get("commonLabels") or {}
+        except (ValueError, KeyError, AttributeError) as e:
             log.warning("bad payload: %s", e)
             count("rejected")
             return self.reply(400, b"bad payload")
         try:
-            result = self.server.apprise.send(notification)
+            tags, subscribed = route(labels, srv.directory.subscribers(), srv.rules.groups_of)
+            results = []
+            push = [t for t in tags if t.endswith("-push")]
+            email = [t for t in tags if t.endswith("-email")]
+            if push:
+                results.append(srv.apprise.send(notification, push))
+            if email:
+                n = notification
+                if subscribed:
+                    link = "%s/a/%s" % (srv.page_url, urllib.parse.quote(labels.get("alertname", "")))
+                    n = dict(n, body=n["body"] + "\n\nChange what you get: " + link)
+                results.append(srv.apprise.send(n, email))
         except Unavailable as e:
-            log.error("apprise unavailable: %s", e)
+            log.error("upstream unavailable: %s", e)
             count("failed")
-            return self.reply(503, b"apprise unavailable")
-        log.info("%s tag=%s title=%r", result, notification["tag"], notification["title"])
+            return self.reply(503, b"upstream unavailable")
+        result = "failed" if "failed" in results else "sent" if "sent" in results else "no_recipients"
+        log.info("%s alertname=%s tags=%s title=%r", result, labels.get("alertname"), tags, notification["title"])
         count(result)
         self.reply(200, result.encode())
 
 
-def make_server(address, apprise, topics) -> ThreadingHTTPServer:
+def make_server(address, apprise, directory, rules, page_url) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer(address, Handler)
     server.apprise = apprise
-    server.topics = set(topics)
+    server.directory = directory
+    server.rules = rules
+    server.page_url = page_url.rstrip("/")
     return server
 
 
 def main():
+    import page
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     apprise = Apprise(
         os.environ["APPRISE_URL"],
@@ -209,10 +221,15 @@ def main():
         os.environ["APPRISE_USER"],
         os.environ["APPRISE_PASSWORD"],
     )
-    topics = {t.strip() for t in os.environ.get("TOPICS", "").split(",") if t.strip()}
+    directory = subs.Authentik(os.environ["AUTHENTIK_URL"], os.environ["AUTHENTIK_TOKEN_FILE"])
+    rules = subs.Rules(os.environ["PROMETHEUS_URL"])
+    page_url = os.environ["PAGE_URL"]
     port = int(os.environ.get("PORT", "8080"))
-    log.info("listening on :%d, topics=%s", port, sorted(topics))
-    make_server(("0.0.0.0", port), apprise, topics).serve_forever()
+    page_port = int(os.environ.get("PAGE_PORT", "8081"))
+    ui = page.make_server(("0.0.0.0", page_port), directory, rules, os.environ["INGRESS_PROOF_FILE"], page_url)
+    threading.Thread(target=ui.serve_forever, daemon=True).start()
+    log.info("webhook on :%d, settings page on :%d", port, page_port)
+    make_server(("0.0.0.0", port), apprise, directory, rules, page_url).serve_forever()
 
 
 if __name__ == "__main__":

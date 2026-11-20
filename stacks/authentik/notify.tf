@@ -1,141 +1,80 @@
 # The notify pipe's Authentik half (design: docs/plans/2026-11-17-notify-pipe-
-# design.md, ADR-0043). Two parts:
+# design.md, ADR-0043). Each person's notification settings live in their
+# user attributes, key `notify` (stacks/notify/files/subs.py lists the keys).
+# Two parts:
 #
-# 1. A settings page, https://authentik.viktorbarzin.me/if/flow/notify-settings/,
-#    where each Recipient sets their own Channels (a Home Assistant push
-#    target, an email address), a choice of Channel per Topic, and a default
-#    channel. A prompt stage plus a never-create user_write stage writes them
-#    to the signed-in user's attributes.notify.
-# 2. Push, no polling: on every user_write and every User model_updated event a
-#    Notification Rule calls a webhook transport whose body mapping
-#    (files/notify_render.py) renders every Recipient's Apprise config and
-#    POSTs it to apprise-api /add/notify, replacing the stored config.
+# 1. A service account, notify-settings, that the settings page
+#    https://notify.viktorbarzin.me (stacks/notify/files/page.py) uses to read
+#    people's settings and write the signed-in person's own. The adapter also
+#    reads everyone's settings with it to route each alert.
+# 2. Push, no polling: on every User model_updated event (the page's save is
+#    one) a Notification Rule calls a webhook transport whose body mapping
+#    (files/notify_render.py) renders every person's Channels and POSTs them
+#    to apprise-api /add/notify, replacing the stored config.
 
-locals {
-  # The fixed Topic list, shared with the notify stack and its adapter.
-  notify_topics = jsondecode(file("${path.module}/../notify/topics.json"))
-  notify_channel_choices = jsonencode([
-    { label = "Off", value = "off" },
-    { label = "Phone (Home Assistant)", value = "push" },
-    { label = "Email", value = "email" },
-  ])
+# --- 1. The settings page's service account -------------------------------
+#
+# Its role holds view_user and change_user, both global. change_user is what
+# writing attributes takes, and it is broad: whoever holds the token can edit
+# any account through the API, not only `notify` attributes. Viktor chose this
+# over moving the settings out of Authentik (2026-11-20). What limits it:
+#   - The token lives only in the Secret notify-authentik-token in namespace
+#     notify, mounted into the adapter pod. Nothing else reads it.
+#   - The page writes only the signed-in person's own `notify` key; the
+#     identity comes from forward auth plus an ingress-only header
+#     (stacks/notify/ingress.tf).
+# Rotate: taint authentik_token.notify_settings and apply; the kubelet
+# refreshes the mounted Secret and the adapter reads it on every call.
+
+resource "authentik_rbac_role" "notify_settings" {
+  name = "notify settings"
 }
 
-# --- 1. The settings page ---------------------------------------------------
-
-resource "authentik_stage_prompt_field" "notify_push_instance" {
-  name                     = "notify-push-instance"
-  field_key                = "attributes.notify.push_instance"
-  label                    = "Phone: Home Assistant instance"
-  type                     = "dropdown"
-  required                 = false
-  placeholder_expression   = true
-  placeholder              = <<-EOT
-    return [
-        {"label": "None", "value": "none"},
-        {"label": "ha-sofia", "value": "ha-sofia"},
-        {"label": "ha-london", "value": "ha-london"},
-    ]
-  EOT
-  initial_value_expression = true
-  initial_value            = "return (user.attributes.get('notify') or {}).get('push_instance', 'none')"
-  order                    = 10
+resource "authentik_rbac_permission_role" "notify_settings" {
+  for_each   = toset(["authentik_core.view_user", "authentik_core.change_user"])
+  role       = authentik_rbac_role.notify_settings.id
+  permission = each.value
 }
 
-resource "authentik_stage_prompt_field" "notify_push_service" {
-  name                     = "notify-push-service"
-  field_key                = "attributes.notify.push_service"
-  label                    = "Phone: notify service"
-  type                     = "text"
-  required                 = false
-  placeholder              = "mobile_app_your_iphone"
-  sub_text                 = "The Home Assistant notify service of your phone's Companion app, without notify. in front."
-  initial_value_expression = true
-  initial_value            = "return (user.attributes.get('notify') or {}).get('push_service', '')"
-  order                    = 20
+resource "authentik_group" "notify_settings" {
+  name  = "notify settings"
+  roles = [authentik_rbac_role.notify_settings.id]
+  # Holds only the service account below, which the user resource adds.
+  lifecycle {
+    ignore_changes = [users]
+  }
 }
 
-resource "authentik_stage_prompt_field" "notify_email" {
-  name                     = "notify-email"
-  field_key                = "attributes.notify.email"
-  label                    = "Email address"
-  type                     = "email"
-  required                 = false
-  sub_text                 = "Empty means your account email."
-  initial_value_expression = true
-  initial_value            = "return (user.attributes.get('notify') or {}).get('email') or user.email"
-  order                    = 30
+resource "authentik_user" "notify_settings" {
+  username = "notify-settings"
+  name     = "Notify pipe (settings page)"
+  type     = "service_account"
+  path     = "goauthentik.io/service-accounts"
+  groups   = [authentik_group.notify_settings.id]
+  attributes = jsonencode({
+    managed_by = "infra/stacks/authentik/notify.tf"
+    purpose    = "The notify settings page reads people's notify attributes and writes the signed-in person's own"
+  })
 }
 
-resource "authentik_stage_prompt_field" "notify_default" {
-  name                     = "notify-default"
-  field_key                = "attributes.notify.default"
-  label                    = "Notifications sent to you by name"
-  type                     = "dropdown"
-  required                 = false
-  placeholder_expression   = true
-  placeholder              = "return ${local.notify_channel_choices}"
-  initial_value_expression = true
-  initial_value            = "return (user.attributes.get('notify') or {}).get('default', 'off')"
-  order                    = 40
+resource "authentik_token" "notify_settings" {
+  identifier   = "notify-settings"
+  user         = authentik_user.notify_settings.id
+  intent       = "api"
+  retrieve_key = true
+  # Non-expiring: a lapsed token would silently stop every notification.
+  expiring    = false
+  description = "notify-adapter: the settings page and alert routing. Rotate by tainting this resource."
 }
 
-resource "authentik_stage_prompt_field" "notify_topic" {
-  for_each                 = local.notify_topics
-  name                     = "notify-topic-${each.key}"
-  field_key                = "attributes.notify.topics.${each.key}"
-  label                    = "Topic: ${each.value}"
-  type                     = "dropdown"
-  required                 = false
-  placeholder_expression   = true
-  placeholder              = "return ${local.notify_channel_choices}"
-  initial_value_expression = true
-  initial_value            = "return ((user.attributes.get('notify') or {}).get('topics') or {}).get('${each.key}', 'off')"
-  order                    = 100
-}
-
-resource "authentik_stage_prompt" "notify_settings" {
-  name = "notify-settings"
-  fields = concat(
-    [
-      authentik_stage_prompt_field.notify_push_instance.id,
-      authentik_stage_prompt_field.notify_push_service.id,
-      authentik_stage_prompt_field.notify_email.id,
-      authentik_stage_prompt_field.notify_default.id,
-    ],
-    [for k in sort(keys(local.notify_topics)) : authentik_stage_prompt_field.notify_topic[k].id],
-  )
-}
-
-# never_create: the stage writes to the signed-in user and can never make one.
-resource "authentik_stage_user_write" "notify_settings" {
-  name               = "notify-settings-write"
-  user_creation_mode = "never_create"
-}
-
-resource "authentik_flow" "notify_settings" {
-  # Created last, so a failed apply never leaves a reachable half-built flow.
-  depends_on = [
-    authentik_stage_prompt.notify_settings,
-    authentik_stage_user_write.notify_settings,
-  ]
-  name           = "notify-settings"
-  slug           = "notify-settings"
-  title          = "Notifications"
-  designation    = "stage_configuration"
-  authentication = "require_authenticated"
-}
-
-resource "authentik_flow_stage_binding" "notify_settings_prompt" {
-  target = authentik_flow.notify_settings.uuid
-  stage  = authentik_stage_prompt.notify_settings.id
-  order  = 10
-}
-
-resource "authentik_flow_stage_binding" "notify_settings_write" {
-  target = authentik_flow.notify_settings.uuid
-  stage  = authentik_stage_user_write.notify_settings.id
-  order  = 20
+resource "kubernetes_secret" "notify_authentik_token" {
+  metadata {
+    name      = "notify-authentik-token"
+    namespace = "notify"
+  }
+  data = {
+    token = authentik_token.notify_settings.key
+  }
 }
 
 # --- 2. Push the rendered config to Apprise ---------------------------------
@@ -149,7 +88,7 @@ data "kubernetes_secret" "apprise_admin" {
 
 resource "authentik_property_mapping_notification" "notify_render" {
   name       = "notify-render-apprise-config"
-  expression = replace(file("${path.module}/files/notify_render.py"), "__TOPICS__", jsonencode(sort(keys(local.notify_topics))))
+  expression = file("${path.module}/files/notify_render.py")
 }
 
 resource "authentik_property_mapping_notification" "notify_apprise_auth" {
@@ -166,13 +105,8 @@ resource "authentik_event_transport" "notify_apprise" {
   send_once               = true
 }
 
-resource "authentik_policy_event_matcher" "notify_user_write" {
-  name   = "notify-user-write"
-  action = "user_write"
-}
-
-# Catches admin edits of attributes, which record no user_write. It also fires
-# on other User saves; each one is a harmless rewrite of the same config.
+# Every User save, the settings page's included. Other saves cause a harmless
+# rewrite of the same config.
 resource "authentik_policy_event_matcher" "notify_user_updated" {
   name   = "notify-user-updated"
   action = "model_updated"
@@ -180,24 +114,11 @@ resource "authentik_policy_event_matcher" "notify_user_updated" {
   model  = "authentik_core.user"
 }
 
-resource "authentik_event_rule" "notify_user_write" {
-  name                   = "notify-sync-on-user-write"
-  severity               = "notice"
-  destination_event_user = true
-  transports             = [authentik_event_transport.notify_apprise.id]
-}
-
 resource "authentik_event_rule" "notify_user_updated" {
   name                   = "notify-sync-on-user-updated"
   severity               = "notice"
   destination_event_user = true
   transports             = [authentik_event_transport.notify_apprise.id]
-}
-
-resource "authentik_policy_binding" "notify_user_write" {
-  target = authentik_event_rule.notify_user_write.id
-  policy = authentik_policy_event_matcher.notify_user_write.id
-  order  = 0
 }
 
 resource "authentik_policy_binding" "notify_user_updated" {

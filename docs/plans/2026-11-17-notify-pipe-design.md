@@ -7,6 +7,8 @@ plan: true
 
 emo does not want to install new apps, and the Home Assistant Companion app is the only push channel on his phone. This plan adds one pipe. An alert with a Topic or a Recipient label reaches each person on HA push or email. Each person chooses the Channel on an Authentik page.
 
+**Revised 2026-11-20.** Topics are gone. Each person now subscribes to single alert rules or whole Prometheus rule groups at https://notify.viktorbarzin.me, and every Slack post links to its alert's page there. The settings stay in Authentik attributes, which the page writes through the `notify-settings` service account. ADR-0043, "Revision", has the reasons. The sections below show the design as first built.
+
 ## In numbers
 
 ```numbers

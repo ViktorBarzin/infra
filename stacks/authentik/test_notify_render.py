@@ -2,8 +2,8 @@
 
 files/notify_render.py is the body of the webhook body mapping in notify.tf.
 Authentik runs it as a function body with `user`, `notification` and
-`request` in scope. These tests fill in the Terraform placeholder the same
-way notify.tf does and run it with a fake authentik.core.models.User.
+`request` in scope. These tests run it with a fake
+authentik.core.models.User.
 
 Run: python3 -m unittest discover -s stacks/authentik -p 'test_*.py'
 """
@@ -16,7 +16,6 @@ import types
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TOPICS = {"internet": "Sofia internet uplink"}
 
 
 class FakeUser:
@@ -43,7 +42,7 @@ def render(users):
         sys.modules.setdefault(name, types.ModuleType(name))
     sys.modules["authentik.core.models"] = models
     with open(os.path.join(HERE, "files", "notify_render.py"), encoding="utf-8") as f:
-        body = f.read().replace("__TOPICS__", json.dumps(sorted(TOPICS)))
+        body = f.read()
     src = "def mapping(user, notification, request):\n" + textwrap.indent(body, "    ")
     scope = {}
     exec(src, scope)
@@ -82,35 +81,28 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(len(render([])["urls"]), 1)
         self.assertEqual(urls(render([])), {})
 
-    def test_push_topic_and_email_default(self):
-        u = FakeUser("vbarzin", "me@example.com", push_instance="ha-london",
-                     push_service="mobile_app_viktor_barzins_iphone_17",
-                     topics={"internet": "push"}, default="email")
-        self.assertEqual(urls(render([u])), {VIKTOR_PUSH: "topic-internet", email_url("me@example.com"): "person-vbarzin"})
+    def test_every_channel_is_tagged_by_person_and_kind(self):
+        u = FakeUser("vbarzin@gmail.com", "me@example.com", push_instance="ha-london",
+                     push_service="mobile_app_viktor_barzins_iphone_17", default="email")
+        self.assertEqual(urls(render([u])), {
+            VIKTOR_PUSH: "u-vbarzin-gmail-com-push",
+            email_url("me@example.com"): "u-vbarzin-gmail-com-email",
+        })
 
-    def test_one_channel_carries_several_tags(self):
-        u = FakeUser("some.person", push_instance="ha-sofia", push_service="mobile_app_someones_iphone",
-                     topics={"internet": "push"}, default="push")
+    def test_sofia_push_uses_its_own_token(self):
+        u = FakeUser("some.person", push_instance="ha-sofia", push_service="mobile_app_someones_iphone")
         ((url, tag),) = urls(render([u])).items()
         self.assertTrue(url.startswith("jsons://ha-sofia.viktorbarzin.me/api/services/notify/mobile_app_someones_iphone?"))
         self.assertIn("${ha_sofia_token}", url)
-        self.assertEqual(tag, "person-some-person, topic-internet")
+        self.assertEqual(tag, "u-some-person-push")
 
     def test_email_field_wins_over_account_email(self):
-        u = FakeUser("a", "account@example.com", email="other@example.com", default="email")
-        self.assertEqual(urls(render([u])), {email_url("other@example.com"): "person-a"})
+        u = FakeUser("a", "account@example.com", email="other@example.com")
+        self.assertEqual(urls(render([u])), {email_url("other@example.com"): "u-a-email"})
 
-    def test_channel_without_subscription_is_left_out(self):
-        u = FakeUser("a", "a@example.com", push_instance="ha-sofia", push_service="mobile_app_x", topics={"internet": "off"})
+    def test_no_channel_no_url(self):
+        u = FakeUser("a", push_instance="none", default="off")
         self.assertEqual(urls(render([u])), {})
-
-    def test_unknown_topic_is_ignored(self):
-        u = FakeUser("a", "a@example.com", topics={"made-up": "email"})
-        self.assertEqual(urls(render([u])), {})
-
-    def test_push_choice_without_push_channel_is_ignored(self):
-        u = FakeUser("a", "a@example.com", topics={"internet": "push"}, default="email")
-        self.assertEqual(urls(render([u])), {email_url("a@example.com"): "person-a"})
 
     def test_bad_service_name_cannot_rewrite_the_url(self):
         u = FakeUser("a", push_instance="ha-sofia", push_service="x?evil=1", default="push")

@@ -63,12 +63,16 @@ _Avoid_: price chart, price graph
 ### Notifications
 
 **Notification**:
-One short piece of news the infrastructure sends to people, with a title and a body. It goes to a Topic or to one Recipient.
+One short piece of news the infrastructure sends to people, with a title and a body. It goes to the people subscribed to its alert rule, or to one Recipient.
 _Avoid_: alert, message, push
 
-**Topic**:
-A named stream of Notifications about one shared thing, such as tv or the Sofia internet uplink. The list of Topics is fixed in the repo.
-_Avoid_: channel, feed, category
+**Alert rule**:
+A Prometheus or Loki alerting rule, named by its alertname, such as PVFillingUp. Every one that fires reaches the notify pipe.
+_Avoid_: alert (an IDS detection), topic
+
+**Rule group**:
+A named set of alert rules in Prometheus, such as "R730 Host". A Subscription to a rule group also covers the alert rules added to it later.
+_Avoid_: topic, category
 
 **Recipient**:
 A person who can receive Notifications, named by their Authentik username. They need not have a devvm account.
@@ -79,9 +83,9 @@ One way to reach one Recipient, such as their phone through a Home Assistant ins
 _Avoid_: provider, target, destination
 
 **Subscription**:
-A Recipient's choice to receive one Topic, and on which of their Channels.
+A Recipient's choice to receive one alert rule or one rule group, and on which of their Channels. A choice on an alert rule wins over the choice on its rule group.
 _Avoid_: follow, opt-in
 
 **Default channel**:
-The Channel that receives the Notifications sent to a Recipient by name instead of to a Topic.
+The Channel that receives the Notifications sent to a Recipient by name instead of through a Subscription.
 _Avoid_: primary channel, fallback

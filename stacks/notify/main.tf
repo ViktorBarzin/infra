@@ -2,21 +2,25 @@
 # (Home Assistant Companion push, email). Design and decisions:
 # docs/plans/2026-11-17-notify-pipe-design.md, docs/adr/0043-*.md.
 #
-#   Alertmanager --webhook--> notify-adapter --tag--> apprise-api --> HA push / email
-#   Authentik (settings page save) --webhook--> apprise-api /add/notify
+#   Alertmanager --webhook--> notify-adapter --tags--> apprise-api --> HA push / email
+#   person --> notify.viktorbarzin.me (adapter's page) --API--> Authentik user attributes
+#   Authentik (User model_updated) --webhook--> apprise-api /add/notify
 #
-# apprise-api holds which Channels carry which tags (config key "notify").
-# Authentik renders that config from Recipients' attributes on every User
-# change (stacks/authentik/notify.tf), so nothing here lists a person. The
-# stored config holds no secrets: ${ha_sofia_token} and friends are Apprise
-# template values filled from this pod's APPRISE_TEMPLATE_* environment.
-#
-# No ingress on purpose: every sender in v1 is in the cluster.
+# apprise-api holds each person's Channels, tagged u-<username>-push and
+# u-<username>-email. Authentik renders that config from people's attributes
+# on every User change (stacks/authentik/notify.tf), so nothing here lists a
+# person. The stored config holds no secrets: ${ha_sofia_token} and friends
+# are Apprise template values filled from this pod's APPRISE_TEMPLATE_*
+# environment. The adapter decides per alert which tags to notify, from the
+# same attributes and Prometheus's rule groups (files/subs.py).
+
+variable "tls_secret_name" {
+  type      = string
+  sensitive = true
+}
 
 locals {
-  # The fixed Topic list. stacks/authentik/notify.tf builds the settings page
-  # from the same file; Alertmanager rules set `topic` to one of these keys.
-  topics = jsondecode(file("${path.module}/topics.json"))
+  adapter_files = ["adapter.py", "subs.py", "page.py"]
 }
 
 resource "kubernetes_namespace" "notify" {
@@ -36,6 +40,12 @@ resource "kubernetes_namespace" "notify" {
 # webhook writes the config with it (stacks/authentik/notify.tf reads this
 # Secret). It guards sending and config writes only: the config holds no
 # secrets.
+module "tls_secret" {
+  source          = "../../modules/kubernetes/setup_tls_secret"
+  namespace       = kubernetes_namespace.notify.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+}
+
 resource "random_password" "apprise_admin" {
   length  = 32
   special = false
@@ -257,9 +267,7 @@ resource "kubernetes_config_map" "adapter" {
     name      = "notify-adapter"
     namespace = kubernetes_namespace.notify.metadata[0].name
   }
-  data = {
-    "adapter.py" = file("${path.module}/files/adapter.py")
-  }
+  data = { for f in local.adapter_files : f => file("${path.module}/files/${f}") }
 }
 
 resource "kubernetes_deployment" "adapter" {
@@ -284,8 +292,8 @@ resource "kubernetes_deployment" "adapter" {
           app = "notify-adapter"
         }
         annotations = {
-          # Roll the pod when the script changes.
-          "notify/adapter-sha" = sha1(file("${path.module}/files/adapter.py"))
+          # Roll the pod when the code changes.
+          "notify/adapter-sha" = sha1(join("", [for f in local.adapter_files : file("${path.module}/files/${f}")]))
         }
       }
       spec {
@@ -294,7 +302,12 @@ resource "kubernetes_deployment" "adapter" {
           image   = "python:3.15-alpine"
           command = ["python3", "-u", "/app/adapter.py"]
           port {
+            name           = "http"
             container_port = 8080
+          }
+          port {
+            name           = "page"
+            container_port = 8081
           }
           env {
             name  = "APPRISE_URL"
@@ -305,8 +318,24 @@ resource "kubernetes_deployment" "adapter" {
             value = "notify"
           }
           env {
-            name  = "TOPICS"
-            value = join(",", keys(local.topics))
+            name  = "AUTHENTIK_URL"
+            value = "http://goauthentik-server.authentik.svc.cluster.local"
+          }
+          env {
+            name  = "AUTHENTIK_TOKEN_FILE"
+            value = "/secrets/authentik/token"
+          }
+          env {
+            name  = "PROMETHEUS_URL"
+            value = "http://prometheus-server.monitoring.svc.cluster.local"
+          }
+          env {
+            name  = "PAGE_URL"
+            value = "https://${local.page_host}"
+          }
+          env {
+            name  = "INGRESS_PROOF_FILE"
+            value = "/secrets/proof/proof"
           }
           env_from {
             secret_ref {
@@ -316,6 +345,18 @@ resource "kubernetes_deployment" "adapter" {
           volume_mount {
             name       = "script"
             mount_path = "/app"
+            read_only  = true
+          }
+          # Files, not env: the kubelet refreshes a mounted Secret in place, so
+          # a rotated token or proof applies without a restart.
+          volume_mount {
+            name       = "authentik-token"
+            mount_path = "/secrets/authentik"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "ingress-proof"
+            mount_path = "/secrets/proof"
             read_only  = true
           }
           liveness_probe {
@@ -335,10 +376,10 @@ resource "kubernetes_deployment" "adapter" {
           resources {
             requests = {
               cpu    = "5m"
-              memory = "32Mi"
+              memory = "64Mi"
             }
             limits = {
-              memory = "64Mi"
+              memory = "128Mi"
             }
           }
         }
@@ -346,6 +387,21 @@ resource "kubernetes_deployment" "adapter" {
           name = "script"
           config_map {
             name = kubernetes_config_map.adapter.metadata[0].name
+          }
+        }
+        volume {
+          name = "authentik-token"
+          secret {
+            # Written by stacks/authentik/notify.tf, which applies after this
+            # stack: until then the page and routing answer "unavailable".
+            secret_name = "notify-authentik-token"
+            optional    = true
+          }
+        }
+        volume {
+          name = "ingress-proof"
+          secret {
+            secret_name = kubernetes_secret.ingress_proof.metadata[0].name
           }
         }
       }
@@ -377,6 +433,12 @@ resource "kubernetes_service" "adapter" {
       name        = "http"
       port        = 8080
       target_port = 8080
+    }
+    # The settings page; only the ingress (ingress.tf) should reach it.
+    port {
+      name        = "page"
+      port        = 8081
+      target_port = 8081
     }
   }
 }
