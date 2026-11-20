@@ -519,9 +519,12 @@ it counts 0 Projects, 0 CPU and 0 memory, and only its Postgres storage.
 Its Postgres leaves the shared 80-connection ceiling too. Its restore
 plans again and is refused when the Budget or the ceiling no longer fits.
 Its App names stay held and count in the owner's 20 held names
-(`HELD_APP_NAMES_MAX`, with the names released in the last 30 days); a
-delete that would pass 20 is refused as `held_names_full`, and only
-`--purge` deletes then. A Project with no Services, and a delete with
+(`HELD_APP_NAMES_MAX`, with the names released in the last 30 days). A
+delete that would pass 20 frees the owner's oldest released names, as a
+release does, and its Plan names them in a `released_names_freed`
+warning. It is refused as `held_names_full` only when the deleted
+Projects' App names and this Project's pass 20 alone, and only `--purge`
+deletes then. A Project with no Services, and a delete with
 `--purge` (`DELETE /api/v1/projects/<p>?purge=true`), are destroyed at
 once. Nothing in infra changed for this: the reconciler already deletes
 edge Deployments and Ingresses when an App is removed, and may delete
