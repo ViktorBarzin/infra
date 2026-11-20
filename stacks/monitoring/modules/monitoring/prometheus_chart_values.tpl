@@ -120,6 +120,11 @@ alertmanager:
           repeat_interval: 8760h
           matchers:
             - severity = info
+        # Everything else, at the root's timings. Without this, an alert
+        # that matched only the slack-fallback route above (a warning such
+        # as NotifyPipeDown) would never reach the pipe: Alertmanager skips
+        # the root receiver once any child route has matched.
+        - receiver: notify-pipe
     inhibit_rules:
       # Node down suppresses workload and service alerts (cascade protection)
       - source_matchers:
