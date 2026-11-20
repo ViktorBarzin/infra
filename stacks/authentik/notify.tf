@@ -106,11 +106,14 @@ resource "authentik_event_transport" "notify_apprise" {
 }
 
 # Every User save, the settings page's included. Other saves cause a harmless
-# rewrite of the same config.
-resource "authentik_policy_event_matcher" "notify_user_updated" {
-  name   = "notify-user-updated"
+# rewrite of the same config. No `app`: the matcher compares it with the
+# event's own app, which for model_updated is authentik.events.middleware, not
+# the model's app; app = "authentik.core" matched no event at all. (Renamed
+# from notify_user_updated so Terraform recreated it: the provider does not
+# clear a field set to null.)
+resource "authentik_policy_event_matcher" "notify_user_model_updated" {
+  name   = "notify-user-model-updated"
   action = "model_updated"
-  app    = "authentik.core"
   model  = "authentik_core.user"
 }
 
@@ -123,6 +126,6 @@ resource "authentik_event_rule" "notify_user_updated" {
 
 resource "authentik_policy_binding" "notify_user_updated" {
   target = authentik_event_rule.notify_user_updated.id
-  policy = authentik_policy_event_matcher.notify_user_updated.id
+  policy = authentik_policy_event_matcher.notify_user_model_updated.id
   order  = 0
 }
