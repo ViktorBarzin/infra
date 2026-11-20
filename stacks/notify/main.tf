@@ -22,7 +22,7 @@ variable "tls_secret_name" {
 }
 
 locals {
-  adapter_files = ["adapter.py", "subs.py", "page.py"]
+  adapter_files = ["adapter.py", "subs.py", "page.py", "preview.py"]
 }
 
 resource "kubernetes_namespace" "notify" {

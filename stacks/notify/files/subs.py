@@ -179,6 +179,7 @@ class Rules:
         self._lock = threading.Lock()
         self._catalog = []
         self._index = {}
+        self._raw = {}
         self._fetched = None
 
     def _refresh(self):
@@ -188,13 +189,14 @@ class Rules:
         except (Unavailable, KeyError, ValueError) as e:
             log.warning("prometheus rules unavailable, keeping %d groups: %s", len(self._catalog), e)
             return
-        catalog, index = [], {}
+        catalog, index, raw = [], {}, {}
         for g in data:
             seen, alerts = set(), []
             for r in g.get("rules") or []:
                 if r.get("type") != "alerting" or r["name"] in seen:
                     continue
                 seen.add(r["name"])
+                raw.setdefault(r["name"], r)
                 alerts.append({
                     "name": r["name"],
                     "summary": (r.get("annotations") or {}).get("summary", ""),
@@ -205,6 +207,7 @@ class Rules:
                 catalog.append({"name": g["name"], "alerts": alerts})
         self._catalog = sorted(catalog, key=lambda g: g["name"].lower())
         self._index = index
+        self._raw = raw
 
     def catalog(self) -> list:
         with self._lock:
@@ -212,13 +215,23 @@ class Rules:
                 self._refresh()
             return self._catalog
 
+    def _fresh(self, alertname: str):
+        age = None if self._fetched is None else self.clock() - self._fetched
+        # A rule added since the last read: look again, once a minute at most.
+        if age is None or age > self.TTL or (alertname not in self._index and age > self.MISS_RETRY):
+            self._refresh()
+
     def groups_of(self, alertname: str) -> list:
         with self._lock:
-            age = None if self._fetched is None else self.clock() - self._fetched
-            # A rule added since the last read: look again, once a minute at most.
-            if age is None or age > self.TTL or (alertname not in self._index and age > self.MISS_RETRY):
-                self._refresh()
+            self._fresh(alertname)
             return list(self._index.get(alertname, []))
+
+    def rule(self, alertname: str):
+        """The first rule of that name as the rules API gives it (query,
+        labels, annotations, active alerts), or None."""
+        with self._lock:
+            self._fresh(alertname)
+            return self._raw.get(alertname)
 
 
 class Authentik:

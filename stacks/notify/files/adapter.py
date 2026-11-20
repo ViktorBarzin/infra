@@ -213,6 +213,7 @@ def make_server(address, apprise, directory, rules, page_url) -> ThreadingHTTPSe
 
 def main():
     import page
+    import preview
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     apprise = Apprise(
@@ -226,7 +227,8 @@ def main():
     page_url = os.environ["PAGE_URL"]
     port = int(os.environ.get("PORT", "8080"))
     page_port = int(os.environ.get("PAGE_PORT", "8081"))
-    ui = page.make_server(("0.0.0.0", page_port), directory, rules, os.environ["INGRESS_PROOF_FILE"], page_url)
+    prom = preview.Prometheus(os.environ["PROMETHEUS_URL"])
+    ui = page.make_server(("0.0.0.0", page_port), directory, rules, os.environ["INGRESS_PROOF_FILE"], page_url, apprise, prom)
     threading.Thread(target=ui.serve_forever, daemon=True).start()
     log.info("webhook on :%d, settings page on :%d", port, page_port)
     make_server(("0.0.0.0", port), apprise, directory, rules, page_url).serve_forever()

@@ -230,6 +230,10 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(self.rules.groups_of("PVFillingUp"), ["Storage"])
         self.assertEqual(self.rules.groups_of("Nope"), [])
 
+    def test_rule_returns_the_raw_rule(self):
+        self.assertEqual(self.rules.rule("PVFillingUp")["labels"], {"severity": "warning"})
+        self.assertIsNone(self.rules.rule("Nope"))
+
     def test_cached_within_ttl(self):
         self.rules.catalog()
         self.now += 100

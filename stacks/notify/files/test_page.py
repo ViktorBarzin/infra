@@ -1,5 +1,6 @@
 """Tests for the settings page. Run: python3 -m unittest"""
 
+import json
 import os
 import tempfile
 import threading
@@ -27,6 +28,35 @@ class StubRules:
 
     def groups_of(self, name):
         return [g["name"] for g in CATALOG for a in g["alerts"] if a["name"] == name]
+
+    def rule(self, name):
+        if name != "PVFillingUp":
+            return None
+        return {
+            "name": "PVFillingUp",
+            "query": "used / capacity > 0.85",
+            "labels": {"severity": "warning"},
+            "annotations": {"summary": "PV {{ $labels.pvc }} is {{ $value | humanizePercentage }} full", "description": "Grow it."},
+            "alerts": [],
+        }
+
+
+class StubProm:
+    def query(self, expr, at=None):
+        return [{"metric": {"pvc": "immich"}, "value": 0.5}] if expr == "used / capacity" else []
+
+    def values(self, label, metrics):
+        return []
+
+
+class StubApprise:
+    def __init__(self):
+        self.sent = []
+        self.result = "sent"
+
+    def send(self, notification, tags):
+        self.sent.append((notification, tags))
+        return self.result
 
 
 class StubDirectory:
@@ -62,7 +92,8 @@ class PageTest(unittest.TestCase):
         os.write(fd, b"proof123\n")
         os.close(fd)
         self.directory = StubDirectory()
-        self.server = page.make_server(("127.0.0.1", 0), self.directory, StubRules(), self.proof_file, URL)
+        self.apprise = StubApprise()
+        self.server = page.make_server(("127.0.0.1", 0), self.directory, StubRules(), self.proof_file, URL, self.apprise, StubProm())
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.base = "http://127.0.0.1:%d" % self.server.server_port
 
@@ -166,6 +197,65 @@ class PageTest(unittest.TestCase):
         # Search hides rows with `hidden`; .row sets display:flex, which would win.
         _, html, _ = self.request("/")
         self.assertIn("[hidden]{display:none!important}", html)
+
+    def test_rows_have_a_test_button(self):
+        _, html, _ = self.request("/")
+        self.assertIn('data-alert="PVFillingUp"', html)
+        _, html, _ = self.request("/a/PVFillingUp")
+        self.assertIn('data-alert="PVFillingUp"', html)
+
+    def test_test_sends_a_production_like_notification_to_me_only(self):
+        status, body, _ = self.request("/test", {"alert": "PVFillingUp", "channel": "push"})
+        self.assertEqual(status, 200)
+        answer = json.loads(body)
+        self.assertTrue(answer["ok"])
+        self.assertEqual(answer["source"], "made-up value on real labels")
+        (n, tags), = self.apprise.sent
+        self.assertEqual(tags, ["u-me-example-com-push"])
+        self.assertEqual(n["title"], "Test: PV immich is 102% full")
+        self.assertEqual((n["body"], n["type"]), ("Grow it.", "warning"))
+
+    def test_test_email_carries_the_link_like_a_real_one(self):
+        self.request("/test", {"alert": "PVFillingUp", "channel": "email"})
+        (n, tags), = self.apprise.sent
+        self.assertEqual(tags, ["u-me-example-com-email"])
+        self.assertEqual(n["body"], "Grow it.\n\nChange what you get: https://notify.example/a/PVFillingUp")
+
+    def test_test_without_a_channel_uses_the_phone_first(self):
+        self.request("/test", {"alert": "PVFillingUp", "channel": ""})
+        self.assertEqual(self.apprise.sent[0][1], ["u-me-example-com-push"])
+
+    def test_test_falls_back_to_email_without_a_phone(self):
+        self.directory.users["me@example.com"]["attributes"]["notify"]["push_instance"] = "none"
+        self.request("/test", {"alert": "PVFillingUp", "channel": "push"})
+        self.assertEqual(self.apprise.sent[0][1], ["u-me-example-com-email"])
+
+    def test_test_without_any_channel_is_refused(self):
+        self.directory.users["me@example.com"]["attributes"]["notify"]["push_instance"] = "none"
+        self.directory.users["me@example.com"]["email"] = ""
+        status, body, _ = self.request("/test", {"alert": "PVFillingUp"})
+        self.assertEqual(status, 400)
+        self.assertIn("phone or an email", json.loads(body)["message"])
+
+    def test_test_of_an_alert_outside_the_rule_list(self):
+        status, _, _ = self.request("/test", {"alert": "SomeLokiAlert"})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.apprise.sent[0][0]["title"], "Test: SomeLokiAlert")
+
+    def test_test_needs_the_page_origin_and_a_valid_name(self):
+        self.assertEqual(self.request("/test", {"alert": "PVFillingUp"}, origin="https://evil.example")[0], 403)
+        self.assertEqual(self.request("/test", {"alert": "<x>"})[0], 400)
+        self.assertEqual(self.apprise.sent, [])
+
+    def test_tests_are_rate_limited(self):
+        codes = [self.request("/test", {"alert": "PVFillingUp"})[0] for _ in range(7)]
+        self.assertEqual(codes, [200] * 6 + [429])
+
+    def test_failed_send_is_reported(self):
+        self.apprise.result = "no_recipients"
+        status, body, _ = self.request("/test", {"alert": "PVFillingUp", "channel": "push"})
+        self.assertEqual(status, 502)
+        self.assertFalse(json.loads(body)["ok"])
 
     def test_saved_banner(self):
         _, html, _ = self.request("/?saved=1")

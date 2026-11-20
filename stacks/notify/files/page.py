@@ -8,6 +8,7 @@ new Channels to apprise-api by itself (stacks/authentik/notify.tf).
   GET  /            every alert, by rule group, with a search box
   GET  /a/<alert>   one alert: the link in Slack posts and in emails
   POST /save        any subset of the fields; the rest stay as they were
+  POST /test        send the signed-in person a test of one alert (preview.py)
 
 Who is asking comes from X-authentik-username, set by Traefik's forward auth.
 The listener is reachable inside the cluster too, so a request must also carry
@@ -17,11 +18,16 @@ ingress.tf). A save must come from this page's own origin.
 
 import hmac
 import html
+import json
 import logging
 import re
+import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import adapter
+import preview
 import subs
 
 log = logging.getLogger("notify-page")
@@ -29,6 +35,8 @@ log = logging.getLogger("notify-page")
 LABELS = {"off": "Off", "push": "Phone", "email": "Email"}
 INSTANCES = (("none", "None"), ("ha-sofia", "ha-sofia"), ("ha-london", "ha-london"))
 TEMPLATE = re.compile(r"\{\{.*?\}\}")
+TESTS_PER_MINUTE = 6
+CHANNEL_WORDS = {"push": "your phone", "email": "your email"}
 
 
 def esc(value) -> str:
@@ -60,6 +68,10 @@ def seg(ids, name, current, inherit=False) -> str:
     return "".join(out)
 
 
+def test_button(name) -> str:
+    return '<button type="button" class="test" data-alert="%s" title="Send yourself a test of this alert">Test</button>' % esc(name)
+
+
 def summary_text(alert) -> str:
     return TEMPLATE.sub("…", alert.get("summary") or "")
 
@@ -88,6 +100,11 @@ details{padding:0 0 8px}summary{cursor:pointer;color:var(--muted);font-size:13px
 .row{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:7px 0 7px 14px;border-top:1px solid var(--line)}
 .row .name{font-size:14px;word-break:break-word}.row .sum{color:var(--muted);font-size:12px}
 .from{font-size:11px;color:var(--muted);margin-left:6px}
+.acts{display:flex;gap:8px;align-items:center;flex:none}
+.row,.field{flex-wrap:wrap}.row>div:first-child,.field>div:first-child{flex:1 1 220px;min-width:0}.acts{margin-left:auto}
+button.test{background:transparent;color:var(--accent);border:1px solid var(--line);border-radius:7px;padding:3px 10px;font-size:13px}
+button.test:disabled{opacity:.5;cursor:default}
+.tst{font-size:12px;color:var(--muted);margin-top:2px}.tst.bad{color:var(--bad)}
 .group{border-top:1px solid var(--line)}.group:first-of-type{border-top:none}
 #q{width:100%;margin:4px 0 8px}
 .bar{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line);padding:10px 16px;text-align:center}
@@ -121,6 +138,20 @@ if(q){q.addEventListener('input',function(){
   });
 });}
 refresh();
+document.addEventListener('click',function(e){
+  var b=e.target.closest('button.test'); if(!b) return;
+  var row=b.closest('.row,.field'), st=row.querySelector('.tst');
+  var c=row.querySelector('input[type=radio]:checked'), ch=c?c.value:'';
+  if(ch==='inherit') ch=row.dataset.inh||'';
+  if(ch==='off') ch='';
+  b.disabled=true; st.className='tst'; st.textContent='Sending a test...';
+  fetch('/test',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:new URLSearchParams({alert:b.dataset.alert,channel:ch})})
+  .then(function(r){return r.json();})
+  .then(function(j){st.className=j.ok?'tst':'tst bad'; st.textContent=j.message;})
+  .catch(function(){st.className='tst bad'; st.textContent='No answer. Reload the page to sign in again.';})
+  .then(function(){b.disabled=false;});
+});
 """
 
 
@@ -181,8 +212,8 @@ def full_page(user, notify, catalog, saved) -> bytes:
             current = alerts.get(a["name"], "inherit")
             rows.append(
                 '<div class="row"><div><span class="name">%s</span><span class="from" hidden>from group</span>'
-                '<div class="sum">%s</div></div>%s</div>'
-                % (esc(a["name"]), esc(summary_text(a)), seg(ids, "a:" + a["name"], current, inherit=True))
+                '<div class="sum">%s</div><div class="tst" aria-live="polite"></div></div><span class="acts">%s%s</span></div>'
+                % (esc(a["name"]), esc(summary_text(a)), test_button(a["name"]), seg(ids, "a:" + a["name"], current, inherit=True))
             )
         out.append(
             '<section class="group" data-name="%s"><div class="ghead"><b>%s</b>%s</div>'
@@ -224,7 +255,8 @@ def alert_page(user, notify, name, catalog, groups_of, saved) -> bytes:
         '<div class="banner">Saved.</div>' if saved else "",
         '<div class="banner">Your phone is not set up yet: <a href="/">add it on the full page</a>.</div>' if no_phone else "",
         '<form method="post" action="/save"><input type="hidden" name="next" value="/a/%s"><div class="card">' % esc(name),
-        '<div class="field"><span>Just this alert</span>%s</div>' % seg(ids, "a:" + name, current),
+        '<div class="field"><div><span>Just this alert</span><div class="tst" aria-live="polite"></div></div>'
+        '<span class="acts">%s%s</span></div>' % (test_button(name), seg(ids, "a:" + name, current)),
     ]
     for g in in_groups:
         out.append(
@@ -304,8 +336,15 @@ class Handler(BaseHTTPRequestHandler):
             return origin == self.server.origin
         return (self.headers.get("Referer") or "").startswith(self.server.origin + "/")
 
+    def answer(self, code, ok, message, **extra):
+        body = json.dumps(dict(extra, ok=ok, message=message)).encode()
+        self.reply(code, body, "application/json")
+
     def do_POST(self):
-        if urllib.parse.urlsplit(self.path).path != "/save":
+        path = urllib.parse.urlsplit(self.path).path
+        if path == "/test":
+            return self.test()
+        if path != "/save":
             return self.reply(404, message_page("Not found.", "/"))
         if not self.same_origin():
             return self.reply(403, message_page("Save from https://notify.viktorbarzin.me itself.", "/"))
@@ -331,11 +370,69 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(503, message_page("Authentik did not answer, so nothing was saved. Try again in a minute.", "/"))
 
 
-def make_server(address, directory, rules, proof_file, page_url) -> ThreadingHTTPServer:
+    def test(self):
+        """Send the signed-in person a test of one alert, built like a real one."""
+        if not self.same_origin():
+            return self.answer(403, False, "Send tests from https://notify.viktorbarzin.me itself.")
+        try:
+            user = self.identify()
+            if not user:
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            form = {k: v[-1] for k, v in urllib.parse.parse_qs(self.rfile.read(length).decode(), keep_blank_values=True).items()}
+            name = form.get("alert", "")
+            if not subs.ALERTNAME.fullmatch(name):
+                return self.answer(400, False, "No such alert.")
+            notify = (user.get("attributes") or {}).get("notify") or {}
+            have = subs.available(notify, user.get("email") or "")
+            wanted = form.get("channel", "")
+            channel = wanted if wanted in have else next((c for c in ("push", "email") if c in have), None)
+            if channel is None:
+                return self.answer(400, False, "Set up a phone or an email address first.")
+            if not self.server.allow_test(user["username"]):
+                return self.answer(429, False, "That is %d tests this minute; wait a little." % TESTS_PER_MINUTE)
+
+            srv = self.server
+            rule = srv.rules.rule(name) or {"name": name, "labels": {}, "annotations": {}, "query": "", "alerts": []}
+            sample = preview.sample(rule, srv.prom, time.time())
+            n = adapter.build({"status": "firing", "alerts": [sample["alert"]]})
+            n["title"] = "Test: " + n["title"]
+            if channel == "email":
+                n["body"] += "\n\nChange what you get: %s/a/%s" % (srv.page_url, urllib.parse.quote(name))
+            result = srv.apprise.send(n, [subs.channel_tag(user["username"], channel)])
+        except subs.Unavailable as e:
+            log.error("test: %s", e)
+            return self.answer(503, False, "Apprise or Authentik did not answer. Try again in a minute.")
+        log.info("test %s for %s on %s: %s (%s)", name, user["username"], channel, result, sample["source"])
+        where = CHANNEL_WORDS[channel]
+        if result == "sent":
+            return self.answer(200, True, "Sent to %s (%s): %s" % (where, sample["source"], n["title"]), source=sample["source"], title=n["title"])
+        if result == "no_recipients":
+            return self.answer(502, False, "Apprise holds no channel for %s yet. Save your settings once, then try again." % where)
+        return self.answer(502, False, "Sending to %s failed. The notify runbook lists the usual reasons." % where)
+
+
+def make_server(address, directory, rules, proof_file, page_url, apprise=None, prom=None) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer(address, Handler)
     server.directory = directory
     server.rules = rules
     server.proof_file = proof_file
+    server.page_url = page_url.rstrip("/")
+    server.apprise = apprise
+    server.prom = prom
     parts = urllib.parse.urlsplit(page_url)
     server.origin = "%s://%s" % (parts.scheme, parts.netloc)
+    tests, lock = {}, threading.Lock()
+
+    def allow_test(username) -> bool:
+        now = time.monotonic()
+        with lock:
+            recent = [t for t in tests.get(username, []) if now - t < 60]
+            if len(recent) >= TESTS_PER_MINUTE:
+                tests[username] = recent
+                return False
+            tests[username] = recent + [now]
+            return True
+
+    server.allow_test = allow_test
     return server

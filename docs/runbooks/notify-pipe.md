@@ -10,7 +10,7 @@ person --> notify.viktorbarzin.me (adapter :8081) --PATCH as notify-settings--> 
 Authentik User model_updated --> Notification Rule --webhook--> apprise-api /add/notify (Channels only)
 ```
 
-- `stacks/notify`: apprise-api (`caronc/apprise`, config key `notify`, on the `apprise-config` NFS volume) and `notify-adapter`: `files/adapter.py` (webhook), `files/subs.py` (Subscriptions, the Authentik and Prometheus clients), `files/page.py` (the settings page). Tests: `files/test_*.py`, run `python3 -m unittest` in `files/`.
+- `stacks/notify`: apprise-api (`caronc/apprise`, config key `notify`, on the `apprise-config` NFS volume) and `notify-adapter`: `files/adapter.py` (webhook), `files/subs.py` (Subscriptions, the Authentik and Prometheus clients), `files/page.py` (the settings page), `files/preview.py` (test notifications). Tests: `files/test_*.py`, run `python3 -m unittest` in `files/`.
 - `stacks/notify/ingress.tf`: the page's ingress. Forward auth admits Home Server Admins and Home Users (`stacks/authentik/forward-auth-apps.json`). The ingress adds `X-Notify-Ingress-Proof`; the page refuses requests without it, so a pod that opens the Service directly cannot pose as someone.
 - `stacks/authentik/notify.tf`: the service account `notify-settings` (global `view_user` and `change_user`; its token is the Secret `notify-authentik-token` in `notify`) and the push of Channels to Apprise. The renderer is `files/notify_render.py` (tests in `test_notify_render.py`).
 
@@ -22,6 +22,17 @@ For each alert group, the adapter reads everyone's `attributes.notify` (cached 6
 - Everything: https://notify.viktorbarzin.me lists every alert rule by rule group, with a search box, and the Channel settings. A rule group choice also covers alert rules added to that group later.
 - The phone notify service is the Companion app's `notify.mobile_app_*` service on your HA instance, without `notify.`. List them with `curl -s -H "Authorization: Bearer $(homelab ha token --instance sofia)" https://ha-sofia.viktorbarzin.me/api/services | jq -r '.[] | select(.domain=="notify") | .services | keys[]' | grep mobile_app`.
 - Loki ruler alerts are not in Prometheus's rule list. A person subscribes to one through its `/a/<alertname>` link.
+
+## Test an alert
+
+Each alert row, and the alert's own page, has a **Test** button. It sends the signed-in person one Notification, built by the same `adapter.build` as a real one, with "Test: " in front of the title. It goes to the Channel the row is set to; on Off it uses the phone, else email. The values come from the best source available (`files/preview.py`):
+
+1. the alert as it fires now, with the annotations Prometheus rendered;
+2. the rule's expression evaluated at the last time `ALERTS` shows it firing, within 26 weeks;
+3. for a plain `A > N` rule, A's current series for the labels and a value just past N;
+4. label values that exist on the rule's metrics, else any value of that label, else "example".
+
+For 2 to 4 the adapter renders the annotations itself, with the Go template subset the rules use: `$labels.x`, `$value`, `printf`, the `humanize*` functions and `with query`. The button's answer names the source, such as "last fired 16 Nov 2026 21:59 UTC". A person may send 6 tests a minute. A test can take a few seconds: the slowest rules need three Prometheus queries.
 
 ## Send to one person
 
