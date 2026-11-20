@@ -1524,7 +1524,7 @@ secret, `stacks/authentik/cloud-apps.tf`):
 | `cloud-bot` | no | `forgejo_read_token` | read:repository | reconciler (branch polling) and the GitHub builder repo's `FORGEJO_READ_TOKEN` secret; reads a private App repo only as a Read collaborator, which `cloud new` adds (Cloud's `FORGEJO_READER`, default `cloud-bot`) |
 | `cloud-admin-reader` | yes | `forgejo_admin_token` | read:admin, read:repository, read:user | reconciler only (the Project owner's repo-access check); never copied anywhere |
 | `cloud-bot` | no | `forgejo_status_token` (a second token) | write:repository | reconciler only: posts the commit status `cloud/build` of check builds (B13). Write comes only from repos with Renovate on, where `cloud new` or `cloud renovate enable` makes `cloud-bot` a Write collaborator; elsewhere it stays Read or absent. Write lets this token push any branch of those repos, the deploy branch included; it is Forgejo's minimum for posting a status (`reqRepoWriter`), and no narrower role exists. Never copied to the builder |
-| `cloud-renovate` | no, restricted | in Vault `secret/renovate-cloud` `forgejo_token` | write:repository, read:user, write:issue | the `renovate-cloud-apps` CronJob only (`docs/runbooks/renovate.md`); a Write collaborator of enrolled App repos, and of nothing else |
+| `cloud-renovate` | no, restricted | in Vault `secret/renovate-cloud` `forgejo_token` | write:repository, read:user, write:issue, read:organization | the `renovate-cloud-apps` CronJob only (`docs/runbooks/renovate.md`); a Write collaborator of enrolled App repos, and of nothing else |
 
 Both were made with the in-pod CLI (the admin REST endpoint cannot mint
 tokens for another user):
@@ -1551,7 +1551,7 @@ fj() { kubectl -n forgejo exec deploy/forgejo -c forgejo -- su -s /bin/sh git -c
 fj "forgejo admin user create --username cloud-renovate --email cloud-renovate@viktorbarzin.me --fullname 'Cloud Renovate' --random-password --must-change-password=false --restricted"
 
 # 2. Its token, into its own Vault path (Secret renovate-cloud-env).
-tok=$(fj "forgejo admin user generate-access-token --username cloud-renovate --token-name renovate-cloud --scopes 'write:repository,read:user,write:issue' --raw")
+tok=$(fj "forgejo admin user generate-access-token --username cloud-renovate --token-name renovate-cloud-2 --scopes 'write:repository,read:user,write:issue,read:organization' --raw")
 [ -n "$tok" ] || { echo "no token; nothing written" >&2; false; } && printf %s "$tok" | vault kv put secret/renovate-cloud forgejo_token=-
 unset tok
 
@@ -1560,6 +1560,8 @@ tok=$(fj "forgejo admin user generate-access-token --username cloud-bot --token-
 [ -n "$tok" ] || { echo "no token; nothing written" >&2; false; } && printf %s "$tok" | vault kv patch secret/cloud/system forgejo_status_token=-
 unset tok
 ```
+
+Renovate reads each repo's owner with `GET /api/v1/orgs/<owner>`, which needs `read:organization`; without it every repo answers 403. The first token, `renovate-cloud`, lacked that scope and was replaced by `renovate-cloud-2` on 2026-11-20.
 
 Until step 2 is done, the ExternalSecret `renovate/renovate-cloud-env` reports a sync error (no `secret/renovate-cloud` in Vault). That is expected while the job is suspended, and no alert reads it. ESO retries a failed sync on its own backoff, and the 1 h refresh at the latest reads the key after step 2; check with `kubectl -n renovate get externalsecret renovate-cloud-env` (Ready) before you unsuspend the job.
 
