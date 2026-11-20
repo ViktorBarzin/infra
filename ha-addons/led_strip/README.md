@@ -1,9 +1,10 @@
 # LED strip add-on (ha-london)
 
-This Home Assistant OS add-on drives the "Livia" LED strip in London. It runs
-`strandtest.py`, the rpi_ws281x example script that rpi-london ran from
-`led.service` until its SD card died on 2026-10-13. Home Assistant shows the
-strip as `light.livia`, and the London Alexa knows it as "Livia".
+This Home Assistant OS add-on drives the "Livia" LED strip in London. Its
+first patterns came from `strandtest.py`, the rpi_ws281x example script that
+rpi-london ran from `led.service` until its SD card died on 2026-10-13. Home
+Assistant shows the strip as `light.livia`, and the London Alexa knows it as
+"Livia".
 
 ## Hardware
 
@@ -21,16 +22,30 @@ unlike GPIO18 (PWM), which rpi-london used.
 
 ## How it works
 
+| file | what it does |
+|---|---|
+| `patterns.py` | every pattern, as a generator of frames; no hardware. The list `PATTERNS` gives each one its name, title, group and a one-line description |
+| `play.py` | plays one pattern on the strip until SIGINT, then clears it |
+| `server.py` | the HTTP control Home Assistant talks to; starts and stops `play.py` |
+| `preview.py` | draws each pattern as an animated WebP for the dashboard (devvm only, needs Pillow) |
+| `dashboard.py` | rebuilds the pattern section of the `livia-strip` dashboard from `PATTERNS` |
+
+A pattern yields `(pixels, delay)` frames, one `(r, g, b)` per LED. A delay of
+`None` marks a still frame: `play.py` keeps it and sends it again once a
+second, rather than at the animation rate. That heals a frame the strip
+misread within a second, and gives the strip far fewer frames to misread.
+
 `server.py` listens on port 8099 on the Supervisor network only, as
 `http://local-led-strip:8099`:
 
-- `GET /state` returns `on`, `pattern`, `brightness` (1-255), `rgb` and `running`.
+- `GET /state` returns `on`, `pattern`, `brightness` (1-255), `rgb`, `running`
+  and `patterns`, the list of names (Home Assistant's effect list).
 - `POST /state` takes any of `on`, `pattern`, `brightness` and `rgb`. A change
   without `on` turns the strip on. A colour sent while a rainbow pattern runs
   switches to `color_wipe`.
 
-Each change stops `strandtest.py` with SIGINT, so `-c` clears the strip. Then
-the server starts it again with the new flags, as rpi-london's Flask page did.
+Each change stops `play.py` with SIGINT, which clears the strip. Then the
+server starts it again with the new flags, as rpi-london's Flask page did.
 The state is saved in `/data/state.json`, and the add-on restores it when it
 starts.
 
@@ -39,22 +54,30 @@ kills add-ons first (`oom_score_adj` 200):
 
 | what dies | what brings it back |
 |---|---|
-| `strandtest.py` alone | `server.py` checks every 5 s and restarts a pattern that died while the light is on; a pattern that keeps dying is retried after 5, 10, 20, 40, then 60 s |
+| `play.py` alone | `server.py` checks every 5 s and restarts a pattern that died while the light is on; a pattern that keeps dying is retried after 5, 10, 20, 40, then 60 s |
 | the whole add-on | the Supervisor watchdog (`watchdog: true`, set by `deploy.sh`) restarts the container, which restores the saved state |
 | HA's view of it after a reboot | the automation `livia_reload_state_sensor` in `packages/livia.yaml` reloads the REST sensor when it stays unavailable |
 
-The patterns:
+The patterns, by group as on the dashboard:
 
-| kind | patterns |
+| group | patterns |
 |---|---|
-| from the original script | `rainbow`, `rainbow_cycle`, `theater_chase_rainbow`, `jik_tak`, `color_wipe`, `theater_chase` |
-| flags, scrolling with a cloth ripple | `flag_bg`, `flag_ro`, `flag_uk` |
-| scenes | `fire`, `ocean`, `police`, `candy_cane` |
-| in the chosen colour | `color_wipe`, `theater_chase`, `comet`, `scanner`, `breathe`, `twinkle` |
-| setup | `ruler` |
+| Calm | `aurora`, `ocean`, `lava_lamp`, `candle`, `plasma` |
+| Rainbows | `rainbow`, `rainbow_cycle`, `theater_chase_rainbow`, `jik_tak` (from the original script) |
+| Lively | `fire`, `fireworks`, `bouncing_balls`, `candy_cane`, `police` |
+| Flags, scrolling with a cloth ripple | `flag_bg`, `flag_ro`, `flag_uk` |
+| Weather | `weather_sun`, `weather_cloud`, `weather_rain`, `weather_snow`, `weather_storm` |
+| In the chosen colour | `color_wipe` (still once filled), `breathe`, `twinkle`, `comet`, `scanner`, `theater_chase` |
+| Setup | `ruler` (still) |
 
-`falling_stars` is left out because it is unfinished. A colour sent while a
-pattern without a colour runs switches to `color_wipe`.
+A colour sent while a pattern without a colour runs switches to `color_wipe`.
+To add a pattern, write its generator in `patterns.py` and add it to
+`PATTERNS`. The tests, the effect list in Home Assistant, the preview and the
+dashboard card follow from that entry when `deploy.sh` runs.
+
+The script `script.livia_weather` (button "Show the weather") reads the daily
+forecast and starts the matching weather pattern: today's until 17:00, then
+tomorrow's.
 
 The add-on gets `/dev/spidev0.0`, `/dev/gpiomem` (rpi_ws281x sets the MOSI pin
 function through it) and the device tree (`devicetree: true`). Docker hides
@@ -66,7 +89,7 @@ The HA side is `packages/livia.yaml` in the ha-london-config repo:
 - a `rest` sensor `sensor.livia_state` polls the state every 30 seconds;
 - `script.livia_set` turns the plug on before a change and off after "off";
 - the template light `light.livia` has brightness, colour and the patterns as
-  effects;
+  effects, listed from the sensor's `patterns` attribute;
 - the automation `livia_stop_when_unpowered` stops the output whenever
   `switch.livia` is not on.
 
@@ -78,13 +101,16 @@ stopped. The automation checks on every plug change and once a minute.
 
 The dashboard `livia-strip` (sidebar "Livia") has the light with brightness
 and favourite colours, a "Pick any colour" button that opens the colour
-wheel, preset colours, one button per pattern, and the plug.
+wheel, preset colours and the plug. Its pattern section is generated by
+`dashboard.py`: one animated preview per pattern, with its name and a
+one-line description; a tap starts it. Edit the rest of the dashboard in Home
+Assistant; `deploy.sh` replaces only that section.
 
 ## Change and deploy
 
 ```sh
 cd ha-addons/led_strip
-python3 -m unittest test_server test_patterns   # state logic, process handling and every pattern, no hardware
+python3 -m unittest test_server test_patterns   # state logic, process handling, every pattern, the dashboard; no hardware
 ```
 
 1. Bump `version` in `config.yaml`. The Supervisor pulls `<image>:<version>`.
@@ -92,8 +118,9 @@ python3 -m unittest test_server test_patterns   # state logic, process handling 
    (`.github/workflows/build-ha-addon-led-strip.yml`) builds the arm64 image
    and pushes `ghcr.io/viktorbarzin/ha-addon-led-strip:<version>` (public).
 3. Run `./deploy.sh`. It waits for that tag, copies `config.yaml` and the
-   sources to `/addons/led_strip`, then has the Supervisor install or update
-   the add-on.
+   sources to `/addons/led_strip`, and has the Supervisor install or update
+   the add-on. Then it draws the previews into `/homeassistant/www/livia/`
+   and rebuilds the dashboard's pattern section.
 
 Do not let the Pi build the image. On 2026-11-18, compiling rpi_ws281x on
 the Pi 3 (903 MB RAM) next to Core froze it until the hardware watchdog reset
@@ -109,7 +136,7 @@ count it: LED 1 is blue, every 10th LED is red and every 50th is green.
 homelab ha ssh --instance london -- 'sudo docker exec homeassistant curl -s http://local-led-strip:8099/state'
 ```
 
-`running: true` with `on: true` means strandtest is sending frames. The SPI
+`running: true` with `on: true` means play.py is sending frames. The SPI
 counters prove it: `/sys/class/spi_master/spi0/statistics/messages` on the host
 rises by about 30 a second during a rainbow.
 
@@ -117,5 +144,5 @@ rises by about 30 a second during a rainbow.
 
 rpi-london's home directory is kept at `/srv/nfs/london-pi/` on the Proxmox
 host. It holds the original `strandtest.py`, `led.service` and the Flask page
-`toggle-led/`. This copy uses `LED_PIN = 10`, adds `--brightness` and
-`--count` flags, and adds the patterns marked as added in the file.
+`toggle-led/`. Its `falling_stars` pattern was unfinished and was not carried
+over.

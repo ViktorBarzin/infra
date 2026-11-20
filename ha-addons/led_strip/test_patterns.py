@@ -1,84 +1,160 @@
-import importlib
-import sys
-import types
+import itertools
+import random
 import unittest
-from unittest import mock
+
+import dashboard
+import patterns
+import play
+
+FRAMES = 400  # enough to see rockets, drops and flakes appear
 
 
-def Color(red, green, blue, white=0):
-    return (white << 24) | (red << 16) | (green << 8) | blue
-
-
-# strandtest.py does `from rpi_ws281x import *`; give it a stand-in off the Pi.
-fake = types.ModuleType("rpi_ws281x")
-fake.Color = Color
-fake.Adafruit_NeoPixel = object
-fake.__all__ = ["Color", "Adafruit_NeoPixel"]
-sys.modules.setdefault("rpi_ws281x", fake)
-strandtest = importlib.import_module("strandtest")
+def take(name, n, colour=(0, 255, 0), count=FRAMES, seed=1):
+    gen = patterns.PATTERNS[name].frames(n, colour, random.Random(seed))
+    return list(itertools.islice(gen, count))
 
 
 class FakeStrip:
     def __init__(self, n):
-        self.n = n
         self.pixels = [0] * n
         self.shows = 0
-        self.lit = 0
-
-    def numPixels(self):
-        return self.n
 
     def setPixelColor(self, i, color):
-        if not 0 <= i < self.n:
+        if not 0 <= i < len(self.pixels):
             raise IndexError(i)
         if not 0 <= color <= 0xFFFFFF:
             raise ValueError(hex(color))
         self.pixels[i] = color
 
-    def getPixelColor(self, i):
-        return self.pixels[i]
-
     def show(self):
         self.shows += 1
-        self.lit = max(self.lit, sum(1 for p in self.pixels if p))
 
 
-NEW_PATTERNS = {
-    "flag_bg": (), "flag_ro": (), "flag_uk": (), "fire": (), "police": (),
-    "ocean": (), "candy_cane": (), "ruler": (),
-    "comet": (Color(0, 255, 0),), "scanner": (Color(255, 0, 0),),
-    "breathe": (Color(0, 0, 255),), "twinkle": (Color(255, 255, 255),),
-}
+class EveryPatternTest(unittest.TestCase):
+    def test_frames_are_valid_and_light_the_strip(self):
+        for name in patterns.PATTERNS:
+            for n in (150, 7, 1):
+                with self.subTest(pattern=name, leds=n):
+                    frames = take(name, n)
+                    self.assertGreater(len(frames), 0)
+                    lit = False
+                    for pixels, delay in frames:
+                        self.assertEqual(len(pixels), n)
+                        for rgb in pixels:
+                            self.assertEqual(len(rgb), 3)
+                            for c in rgb:
+                                self.assertIsInstance(c, int)
+                                self.assertTrue(0 <= c <= 255, rgb)
+                        lit = lit or any(rgb != (0, 0, 0) for rgb in pixels)
+                        self.assertTrue(delay is None or 0 < delay <= 1, delay)
+                    self.assertTrue(lit)
+
+    def test_only_the_last_frame_can_be_still(self):
+        for name in patterns.PATTERNS:
+            with self.subTest(pattern=name):
+                frames = take(name, 150)
+                self.assertNotIn(None, [delay for _, delay in frames[:-1]])
+
+    def test_colour_patterns_use_the_colour(self):
+        for p in patterns.PATTERNS.values():
+            if p.colour:
+                with self.subTest(pattern=p.name):
+                    colours = {rgb for pixels, _ in take(p.name, 150, colour=(0, 0, 200)) for rgb in pixels}
+                    self.assertIn((0, 0, 200), colours)
+                    self.assertTrue(all(r == 0 and g == 0 for r, g, _ in colours))
+
+    def test_every_pattern_has_a_title_and_a_group(self):
+        for p in patterns.PATTERNS.values():
+            self.assertTrue(p.title and p.group and p.about, p.name)
 
 
 class PatternTest(unittest.TestCase):
-    def test_every_new_pattern_draws_and_returns(self):
-        with mock.patch.object(strandtest.time, "sleep"):
-            for name, extra in NEW_PATTERNS.items():
-                for n in (150, 7, 1):
-                    with self.subTest(pattern=name, leds=n):
-                        strip = FakeStrip(n)
-                        strandtest.run_pattern(strandtest.Pattern(name), strip, *extra)
-                        self.assertGreater(strip.shows, 0)
-                        self.assertGreater(strip.lit, 0)
+    def test_ruler_marks_every_tenth_and_fiftieth_led_and_is_still(self):
+        (pixels, delay), = take("ruler", 150)
+        self.assertIsNone(delay)
+        self.assertEqual(pixels[0], (0, 0, 255))
+        self.assertEqual(pixels[9], (255, 0, 0))
+        self.assertEqual(pixels[49], (0, 255, 0))
+        self.assertEqual(pixels[149], (0, 255, 0))
+        self.assertEqual(pixels[5], (12, 12, 12))
 
-    def test_ruler_marks_every_tenth_and_fiftieth_led(self):
-        strip = FakeStrip(150)
-        with mock.patch.object(strandtest.time, "sleep"):
-            strandtest.ruler(strip)
-        self.assertEqual(strip.pixels[0], Color(0, 0, 255))
-        self.assertEqual(strip.pixels[9], Color(255, 0, 0))
-        self.assertEqual(strip.pixels[49], Color(0, 255, 0))
-        self.assertEqual(strip.pixels[149], Color(0, 255, 0))
-        self.assertNotIn(strip.pixels[5], (Color(255, 0, 0), Color(0, 255, 0)))
+    def test_solid_colour_fills_then_stays_still(self):
+        frames = take("color_wipe", 10, colour=(9, 8, 7))
+        self.assertEqual(len(frames), 11)
+        self.assertEqual(frames[0][0][:2], [(9, 8, 7), (0, 0, 0)])
+        self.assertEqual(frames[-1], ([(9, 8, 7)] * 10, None))
 
     def test_flag_has_the_flag_colours(self):
-        strip = FakeStrip(150)
-        with mock.patch.object(strandtest.time, "sleep"):
-            strandtest.flag(strip, strandtest.FLAGS["bg"], frames=1)
-        hues = {strandtest.rgb_of(p).index(max(strandtest.rgb_of(p))) for p in strip.pixels
-                if strandtest.rgb_of(p) != (0, 0, 0) and len(set(strandtest.rgb_of(p))) > 1}
+        pixels, _ = take("flag_bg", 150, count=1)[0]
+        hues = {rgb.index(max(rgb)) for rgb in pixels if len(set(rgb)) > 1}
         self.assertEqual(hues, {0, 1})  # red and green bands; white has equal channels
+
+    def test_jik_tak_is_mirrored(self):
+        for n in (150, 7):
+            pixels, _ = take("jik_tak", n, count=1)[0]
+            self.assertEqual(pixels, pixels[::-1])
+
+    def test_storm_has_lightning(self):
+        brightest = max(max(sum(rgb) for rgb in pixels) for pixels, _ in take("weather_storm", 150, count=600))
+        self.assertGreater(brightest, 600)
+
+    def test_bouncing_balls_reach_both_ends(self):
+        lit = {i for pixels, _ in take("bouncing_balls", 150, count=600)
+               for i, rgb in enumerate(pixels) if sum(rgb) > 200}
+        self.assertIn(0, lit)
+        self.assertGreater(max(lit), 120)
+
+
+class PlayTest(unittest.TestCase):
+    def test_draws_frames_and_restarts_a_pattern_that_ends(self):
+        strip = FakeStrip(7)
+        sleeps = []
+        sent = play.play(strip, lambda: patterns.PATTERNS["police"].frames(7, (0, 0, 0), random.Random()),
+                         sleep=sleeps.append, limit=20)
+        self.assertEqual(sent, 20)
+        self.assertEqual(strip.shows, 20)  # police has 8 frames, so it ran again
+        self.assertEqual(sleeps, [0.06] * 19)
+
+    def test_still_frame_is_resent_once_a_second(self):
+        strip = FakeStrip(150)
+        sleeps = []
+        play.play(strip, lambda: patterns.PATTERNS["ruler"].frames(150, (0, 0, 0), random.Random()),
+                  sleep=sleeps.append, limit=5)
+        self.assertEqual(sleeps, [play.HOLD_REFRESH] * 4)
+        self.assertEqual(strip.pixels[0], 0x0000FF)
+        self.assertEqual(strip.pixels[9], 0xFF0000)
+
+    def test_rgb_argument(self):
+        self.assertEqual(play.parse_rgb("255,0,9"), (255, 0, 9))
+        for bad in ("1,2", "0,0,256", "a,b,c"):
+            with self.assertRaises(Exception):
+                play.parse_rgb(bad)
+
+
+class DashboardTest(unittest.TestCase):
+    def config(self):
+        return {"views": [{"sections": [
+            {"type": "grid", "cards": [{"type": "tile", "entity": "light.livia"}]},
+            {"type": "grid", "cards": [{"type": "button", "tap_action": {"data": {"effect": "rainbow"}}}]},
+        ]}]}
+
+    def test_replaces_the_pattern_section_and_keeps_the_rest(self):
+        sections = dashboard.updated(self.config(), "9.9.9")["views"][0]["sections"]
+        self.assertEqual(len(sections), 2)
+        self.assertEqual(sections[0]["cards"], [{"type": "tile", "entity": "light.livia"}])
+        effects = [c["tap_action"]["data"]["effect"] for c in sections[1]["cards"] if c["type"] == "picture"]
+        self.assertEqual(effects, list(patterns.PATTERNS))
+        self.assertIn("/local/livia/aurora.webp?v=9.9.9", [c.get("image") for c in sections[1]["cards"]])
+
+    def test_has_a_heading_per_group_and_the_weather_button(self):
+        cards = dashboard.section("1")["cards"]
+        headings = [c["heading"] for c in cards if c["type"] == "heading"]
+        self.assertEqual(headings[1:], list(dict.fromkeys(p.group for p in patterns.PATTERNS.values())))
+        self.assertIn(dashboard.WEATHER_BUTTON, cards)
+
+    def test_adds_the_section_when_missing(self):
+        config = {"views": [{"sections": [{"type": "grid", "cards": []}]}]}
+        self.assertEqual(len(dashboard.updated(config, "1")["views"][0]["sections"]), 2)
 
 
 if __name__ == "__main__":

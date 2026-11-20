@@ -54,7 +54,8 @@ Nothing images the VM; the SSD can fail and recovery is a rebuild:
 
 Two local add-ons are built on the box from a repo rather than pulled from an
 add-on store. On ha-london, `local_led_strip` drives the "Livia" LED strip from
-GPIO10 with the strandtest.py script rpi-london used to run; its source and
+GPIO10 with the patterns in `patterns.py` (the first ones came from the
+strandtest.py script rpi-london used to run); its source and
 `deploy.sh` are `ha-addons/led_strip/` in this repo (README there), and
 GitHub Actions builds its arm64 image, because a build on the Pi 3 froze it. On
 ha-sofia, `local_intercom_watch`, emo's watchdog for the B4 intercom at the

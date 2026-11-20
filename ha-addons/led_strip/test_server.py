@@ -45,27 +45,22 @@ class MergeTest(unittest.TestCase):
 
 
 class CommandTest(unittest.TestCase):
-    def test_rainbow_passes_no_colour(self):
+    def test_passes_pattern_colour_and_brightness_to_play(self):
         state = server.merge(server.DEFAULT_STATE, {"on": True})
         argv = server.command(state)
-        self.assertIn("-c", argv)
-        self.assertEqual(argv[argv.index("-s") + 1], "rainbow")
-        self.assertEqual(argv[argv.index("--colors") + 1], "")
+        self.assertTrue(argv[1].endswith("play.py"))
+        self.assertEqual(argv[argv.index("--pattern") + 1], "rainbow")
+        self.assertEqual(argv[argv.index("--rgb") + 1], "176,143,18")
         self.assertEqual(argv[argv.index("--brightness") + 1], "102")
 
-    def test_colour_pattern_passes_strandtest_colour_format(self):
-        state = server.merge(server.DEFAULT_STATE, {"pattern": "color_wipe", "rgb": [10, 20, 30]})
-        argv = server.command(state)
-        self.assertEqual(argv[argv.index("--colors") + 1], "r=10,g=20,b=30")
+    def test_patterns_come_from_the_pattern_list(self):
+        self.assertIn("aurora", server.PATTERNS)
+        self.assertIn("weather_storm", server.PATTERNS)
+        self.assertEqual(set(server.COLOUR_PATTERNS),
+                         {"color_wipe", "theater_chase", "comet", "scanner", "breathe", "twinkle"})
 
 
 class NewPatternTest(unittest.TestCase):
-    def test_new_colour_patterns_get_the_colour(self):
-        for pattern in ("comet", "scanner", "breathe", "twinkle"):
-            state = server.merge(server.DEFAULT_STATE, {"pattern": pattern, "rgb": [1, 2, 3]})
-            argv = server.command(state)
-            self.assertEqual(argv[argv.index("--colors") + 1], "r=1,g=2,b=3", pattern)
-
     def test_colour_on_a_flag_switches_to_color_wipe(self):
         state = server.merge(server.DEFAULT_STATE, {"pattern": "flag_bg"})
         self.assertEqual(server.merge(state, {"rgb": [9, 9, 9]})["pattern"], "color_wipe")
@@ -99,7 +94,7 @@ class PersistTest(unittest.TestCase):
             self.assertEqual(server.load(path), server.DEFAULT_STATE)
 
 
-FAKE_STRANDTEST = """
+FAKE_PLAY = """
 import signal, sys, time
 print("fake", sys.argv[1:], flush=True)
 try:
@@ -113,8 +108,8 @@ except KeyboardInterrupt:
 class StripProcessTest(unittest.TestCase):
     def test_start_switch_and_stop(self):
         with tempfile.TemporaryDirectory() as d:
-            fake = Path(d) / "strandtest.py"
-            fake.write_text(FAKE_STRANDTEST)
+            fake = Path(d) / "play.py"
+            fake.write_text(FAKE_PLAY)
             original = server.SCRIPT
             server.SCRIPT = fake
             try:
@@ -141,8 +136,8 @@ class StripProcessTest(unittest.TestCase):
 class KeepAliveTest(unittest.TestCase):
     def test_restarts_a_pattern_that_died_while_on_and_not_while_off(self):
         with tempfile.TemporaryDirectory() as d:
-            fake = Path(d) / "strandtest.py"
-            fake.write_text(FAKE_STRANDTEST)
+            fake = Path(d) / "play.py"
+            fake.write_text(FAKE_PLAY)
             original = server.SCRIPT
             server.SCRIPT = fake
             try:
@@ -166,7 +161,7 @@ class KeepAliveTest(unittest.TestCase):
 
     def test_backs_off_when_the_pattern_keeps_dying(self):
         with tempfile.TemporaryDirectory() as d:
-            fake = Path(d) / "strandtest.py"
+            fake = Path(d) / "play.py"
             fake.write_text("import sys; sys.exit(1)\n")
             original = server.SCRIPT
             server.SCRIPT = fake

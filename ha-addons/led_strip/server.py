@@ -1,11 +1,11 @@
-"""HTTP control for strandtest.py, so Home Assistant can drive the LED strip.
+"""HTTP control for play.py, so Home Assistant can drive the LED strip.
 
-GET  /state  -> current state as JSON, plus "running"
+GET  /state  -> current state as JSON, plus "running" and the pattern names
 POST /state  -> JSON with any of on, pattern, brightness, rgb; returns the new state
 
-Each change stops strandtest.py with SIGINT (it clears the strip on -c) and starts
-it again with the new flags, the same way rpi-london's Flask page did. The state
-is saved in /data/state.json, so the strip comes back as it was after a restart.
+Each change stops play.py with SIGINT (it clears the strip) and starts it again
+with the new flags. The state is saved in /data/state.json, so the strip comes
+back as it was after a restart.
 """
 
 import json
@@ -19,25 +19,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TypedDict
 
-COLOUR_PATTERNS = ("color_wipe", "theater_chase", "comet", "scanner", "breathe", "twinkle")
-PATTERNS = (
-    "rainbow",
-    "rainbow_cycle",
-    "theater_chase_rainbow",
-    "jik_tak",
-    "flag_bg",
-    "flag_ro",
-    "flag_uk",
-    "fire",
-    "ocean",
-    "police",
-    "candy_cane",
-    "ruler",
-) + COLOUR_PATTERNS
+import patterns
+
+PATTERNS = tuple(patterns.PATTERNS)
+COLOUR_PATTERNS = tuple(p.name for p in patterns.PATTERNS.values() if p.colour)
 DEFAULT_COUNT = 150
 STATE_FILE = Path("/data/state.json")
 OPTIONS_FILE = Path("/data/options.json")
-SCRIPT = Path(__file__).with_name("strandtest.py")
+SCRIPT = Path(__file__).with_name("play.py")
 PORT = 8099
 MIN_BACKOFF = 5.0  # seconds before restarting a pattern that died
 MAX_BACKOFF = 60.0
@@ -103,14 +92,10 @@ def led_count(path: Path) -> int:
 
 
 def command(state: State, count: int = DEFAULT_COUNT) -> list[str]:
-    colours = ""
-    if state["pattern"] in COLOUR_PATTERNS:
-        r, g, b = state["rgb"]
-        colours = f"r={r},g={g},b={b}"
     return [
-        sys.executable, str(SCRIPT), "-c",
-        "-s", state["pattern"],
-        "--colors", colours,
+        sys.executable, str(SCRIPT),
+        "--pattern", state["pattern"],
+        "--rgb", ",".join(str(c) for c in state["rgb"]),
         "--brightness", str(state["brightness"]),
         "--count", str(count),
     ]
@@ -180,7 +165,7 @@ class Strip:
     def keep_alive(self, now: float) -> bool:
         """Restart the pattern if it died while the light is on.
 
-        The OOM killer can kill strandtest.py alone; the add-on then stays up
+        The OOM killer can kill play.py alone; the add-on then stays up
         and reports "on" over a dark strip. A pattern that keeps dying is
         retried with a backoff of up to MAX_BACKOFF seconds.
         """
@@ -219,7 +204,7 @@ def handler(strip: Strip) -> type[BaseHTTPRequestHandler]:
         def do_GET(self) -> None:
             if self.path != "/state":
                 return self._reply(404, {"error": "not found"})
-            self._reply(200, {**strip.state, "running": strip.running()})
+            self._reply(200, {**strip.state, "running": strip.running(), "patterns": list(PATTERNS)})
 
         def do_POST(self) -> None:
             if self.path != "/state":

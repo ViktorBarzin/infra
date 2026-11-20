@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Copy the LED strip add-on to ha-london and have the Supervisor build and start it.
-# Idempotent: installs on the first run, rebuilds after that. Run from anywhere.
+# Copy the LED strip add-on to ha-london, have the Supervisor install or update it,
+# then refresh the pattern previews and the dashboard. Idempotent. Run from anywhere.
+# Needs Pillow and websockets on the machine it runs on (the devvm has both).
 # The HA side (light.livia) is packages/livia.yaml in the ha-london-config repo.
 set -euo pipefail
 
@@ -19,8 +20,8 @@ tag_exists() {
 }
 until tag_exists; do echo "waiting for ghcr.io/$image:$version (push to master builds it)"; sleep 30; done
 
-tar -C "$here" -czf - Dockerfile config.yaml server.py strandtest.py \
-  | ssh_ha 'sudo mkdir -p /addons/led_strip && sudo tar -C /addons/led_strip -xzf - && ls /addons/led_strip'
+tar -C "$here" -czf - Dockerfile config.yaml server.py play.py patterns.py \
+  | ssh_ha 'sudo rm -rf /addons/led_strip && sudo mkdir -p /addons/led_strip && sudo tar -C /addons/led_strip -xzf - && ls /addons/led_strip'
 
 ssh_ha 'bash -s' <<'EOF'
 set -euo pipefail
@@ -47,3 +48,12 @@ api POST /addons/local_led_strip/start >/dev/null || true
 sleep 5
 api GET /addons/local_led_strip/info | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print("state", d["state"], "version", d["version"], "boot", d["boot"], "watchdog", d["watchdog"])'
 EOF
+
+# The dashboard shows each pattern as an animated preview, drawn here from
+# patterns.py and served by Home Assistant from /local/livia/.
+previews=$(mktemp -d)
+trap 'rm -rf "$previews"' EXIT
+python3 "$here/preview.py" "$previews" >/dev/null
+tar -C "$previews" -czf - . \
+  | ssh_ha 'sudo rm -rf /homeassistant/www/livia && sudo mkdir -p /homeassistant/www/livia && sudo tar -C /homeassistant/www/livia -xzf - && echo "previews: $(sudo ls /homeassistant/www/livia | wc -l)"'
+HA_TOKEN=$(homelab ha token --instance london) python3 "$here/dashboard.py" --version "$version"

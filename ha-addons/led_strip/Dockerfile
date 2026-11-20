@@ -14,6 +14,6 @@ RUN apk add --no-cache --virtual .build gcc musl-dev linux-headers \
     && apk del .build
 
 WORKDIR /app
-COPY server.py strandtest.py ./
+COPY server.py play.py patterns.py ./
 
 CMD ["python3", "-u", "server.py"]
