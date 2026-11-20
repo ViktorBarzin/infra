@@ -219,6 +219,13 @@ resource "kubernetes_deployment" "health" {
             name  = "NUTRITION_VISION_ENABLED"
             value = "true"
           }
+          # api_bearer_token holders reach claude-agent-restricted (stacks/
+          # claude-agent-service/restricted.tf); the admin service checks
+          # admin_api_token and answers 401 to this token.
+          env {
+            name  = "CLAUDE_AGENT_URL"
+            value = "http://claude-agent-restricted.claude-agent.svc.cluster.local:8080"
+          }
           env {
             name = "CLAUDE_AGENT_TOKEN"
             value_from {
