@@ -14,6 +14,7 @@ PATTERNS; the tests, the previews and the dashboard pick it up.
 
 import math
 import random
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
@@ -314,6 +315,196 @@ def candy_cane(n: int, colour: RGB, rng: random.Random) -> Frames:
         yield [(255, 0, 0) if ((i + t) // band) % 2 == 0 else WHITE for i in range(n)], 0.06
 
 
+# --- shapes ------------------------------------------------------------------
+
+now: Callable[[], float] = time.time  # the clock reads this; tests replace it
+
+PENDULUMS = 10
+SAND: RGB = (255, 170, 40)
+MESSAGE = "HELLO"
+MORSE = {
+    "A": ".-", "B": "-...", "C": "-.-.", "D": "-..", "E": ".", "F": "..-.", "G": "--.",
+    "H": "....", "I": "..", "J": ".---", "K": "-.-", "L": ".-..", "M": "--", "N": "-.",
+    "O": "---", "P": ".--.", "Q": "--.-", "R": ".-.", "S": "...", "T": "-", "U": "..-",
+    "V": "...-", "W": ".--", "X": "-..-", "Y": "-.--", "Z": "--..",
+}
+
+
+def heartbeat(n: int, colour: RGB, rng: random.Random) -> Frames:
+    """Two pulses, lub-dub, run out from the middle once a second."""
+    red, dark = (255, 0, 30), (10, 0, 2)
+    centre, reach = (n - 1) / 2, max(1.0, n / 2)
+    beats = ((0.0, 1.0), (0.22, 0.7))  # time in the second, strength
+    dt = 0.02
+    for step in range(50):
+        t = step * dt
+        pixels = []
+        for i in range(n):
+            d = abs(i - centre)
+            k = 0.0
+            for start, strength in beats:
+                if t >= start:
+                    r = (t - start) / 0.6 * reach
+                    k += strength * max(0.0, 1 - r / reach) * math.exp(-((d - r) / 3.0) ** 2)
+            pixels.append(add(dark, scale(red, k)))
+        yield pixels, dt
+
+
+def newtons_cradle(n: int, colour: RGB, rng: random.Random) -> Frames:
+    """Five steel balls in the middle; the end ones swing out and knock in turn."""
+    steel = (200, 205, 220)
+    width = max(1, n // 50)
+    middle = n // 2
+    swing = n * 0.3
+    steps, dt = 80, 0.02
+    for step in range(steps):
+        x = math.sin(2 * math.pi * step / steps)
+        pixels = solid(n, BLACK)
+        for ball in range(5):
+            pos = middle + (ball - 2) * width
+            if ball == 0 and x < 0:
+                pos += swing * x
+            if ball == 4 and x > 0:
+                pos += swing * x
+            knock = 1.0 if abs(x) < 0.08 and 0 < ball < 4 else 0.75
+            glow(pixels, pos, scale(steel, knock), width / 2 + 0.8)
+        yield pixels, dt
+
+
+def pendulum_wave(n: int, colour: RGB, rng: random.Random) -> Frames:
+    """Ten pendulums of different lengths drift out of step and back in."""
+    lanes = min(PENDULUMS, n)
+    lane = n // lanes
+    steps, dt = 1000, 0.03  # 30 seconds until they line up again
+    for step in range(steps):
+        pixels = solid(n, BLACK)
+        for k in range(lanes):
+            swings = 15 + k  # in 30 seconds
+            pos = (lane - 1) * (1 + math.cos(2 * math.pi * swings * step / steps)) / 2
+            dots = solid(lane, BLACK)
+            glow(dots, pos, hue(k / lanes), 1.6)
+            pixels[k * lane:(k + 1) * lane] = dots
+        yield pixels, dt
+
+
+def dna(n: int, colour: RGB, rng: random.Random) -> Frames:
+    """Two strands, blue and pink, twist around each other with rungs between."""
+    blue, pink, rung = (0, 140, 255), (255, 0, 120), (50, 50, 50)
+    t = 0
+    while True:
+        pixels = []
+        for i in range(n):
+            twist = math.sin(2 * math.pi * i / 30.0 - t / 8.0)
+            a, b = (1 + twist) / 2, (1 - twist) / 2
+            rgb = add(scale(blue, a * a), scale(pink, b * b))
+            if i % 5 == 0:
+                rgb = add(rgb, scale(rung, 1 - abs(twist)))
+            pixels.append(rgb)
+        yield pixels, 0.04
+        t += 1
+
+
+def hourglass(n: int, colour: RGB, rng: random.Random) -> Frames:
+    """Sand trickles from the top half into the bottom half, then the glass turns."""
+    glass = (10, 6, 2)
+    half = n // 2
+    if half == 0:
+        yield [SAND], 0.5
+        return
+    top, pile = half, 0  # grains left on top, grains in the bottom pile
+    falling: list[float] = []
+    step = 0
+    while pile < half:
+        if top and step % 3 == 2:
+            top -= 1
+            falling.append(float(half - 1))
+        falling = [g - 2 for g in falling]
+        pile += sum(1 for g in falling if g < pile + 1)
+        falling = [g for g in falling if g >= pile]
+        pixels = solid(n, glass)
+        for i in range(pile):
+            pixels[i] = SAND
+        for i in range(half, half + top):
+            pixels[i] = SAND
+        for g in falling:
+            pixels[int(g)] = SAND
+        yield pixels, 0.04
+        step += 1
+    for _ in range(25):
+        yield pixels, 0.04
+
+
+def clock(n: int, colour: RGB, rng: random.Random) -> Frames:
+    """The time along the strip: orange hours, blue minutes, a white second dot."""
+    last = n - 1
+    marks = solid(n, BLACK)
+    for h in range(12):
+        marks[round(h / 12 * last)] = (20, 20, 20)
+    while True:
+        t = now()
+        tm = time.localtime(t)
+        seconds = tm.tm_sec + t % 1
+        pixels = list(marks)
+        glow(pixels, (tm.tm_hour % 12 + tm.tm_min / 60) / 12 * last, (255, 90, 0), 4.0)
+        glow(pixels, (tm.tm_min + seconds / 60) / 60 * last, (0, 90, 255), 2.5)
+        glow(pixels, seconds / 60 * last, (150, 150, 150), 1.2)
+        yield pixels, 0.1
+
+
+def rally(n: int, colour: RGB, rng: random.Random) -> Frames:
+    """A ball goes back and forth between two paddles, faster each hit, until one misses."""
+    paddle = max(1, min(3, n // 10))
+    blue, red, ball = (0, 80, 255), (255, 30, 0), WHITE
+    lo, hi = float(paddle), float(n - 1 - paddle)
+    if hi <= lo:
+        yield solid(n, ball), 0.5
+        return
+    x, speed = lo, max(0.4, n / 150 * 1.2)
+    flash = [0.0, 0.0]  # left, right
+    hits = rng.randint(6, 12)
+    while True:
+        x += speed
+        if (speed > 0 and x >= hi) or (speed < 0 and x <= lo):
+            side = 1 if speed > 0 else 0
+            if hits == 0:
+                break
+            hits -= 1
+            x = hi if side else lo
+            speed = -speed * 1.08
+            flash[side] = 1.0
+        pixels = solid(n, BLACK)
+        for i in range(paddle):
+            pixels[i] = mix(scale(blue, 0.5), WHITE, flash[0] * 0.6)
+            pixels[n - 1 - i] = mix(scale(red, 0.5), WHITE, flash[1] * 0.6)
+        glow(pixels, x, ball, 1.8)
+        flash = [f * 0.8 for f in flash]
+        yield pixels, 0.02
+    loser = 1 if speed > 0 else 0  # the ball got past this paddle
+    for k in (1.0, 0.0, 1.0, 0.0, 1.0, 0.0):
+        pixels = solid(n, BLACK)
+        half = range(n // 2, n) if loser else range(0, n // 2 or 1)
+        for i in half:
+            pixels[i] = scale(red if loser else blue, 0.6 * k)
+        yield pixels, 0.12
+
+
+def morse(text: str) -> str:
+    """Text as Morse code: 1 is on and 0 is off for one unit of time."""
+    words = []
+    for word in text.upper().split():
+        letters = ["0".join("1" if s == "." else "111" for s in MORSE[c]) for c in word if c in MORSE]
+        words.append("000".join(letters) + "0000000")
+    return "".join(words)
+
+
+def morse_ticker(n: int, colour: RGB, rng: random.Random) -> Frames:
+    """A message in Morse code scrolls along the strip, three LEDs per unit."""
+    tape = morse(MESSAGE)
+    width = 3
+    for t in range(len(tape) * width):
+        yield [colour if tape[((i + t) // width) % len(tape)] == "1" else BLACK for i in range(n)], 0.04
+
+
 # --- flags -------------------------------------------------------------------
 
 FLAGS: dict[str, list[RGB]] = {
@@ -510,6 +701,14 @@ PATTERNS: dict[str, Pattern] = {p.name: p for p in [
     Pattern("bouncing_balls", "Bouncing balls", "Lively", "Four balls bouncing with real gravity", bouncing_balls),
     Pattern("candy_cane", "Candy cane", "Lively", "Red and white stripes marching", candy_cane),
     Pattern("police", "Police", "Lively", "Red and blue halves flashing in turn", police),
+    Pattern("heartbeat", "Heartbeat", "Shapes", "A lub-dub pulse from the middle, once a second", heartbeat),
+    Pattern("newtons_cradle", "Newton's cradle", "Shapes", "Steel balls knocking, the end ones swing out", newtons_cradle),
+    Pattern("pendulum_wave", "Pendulum wave", "Shapes", "Ten pendulums drift out of step and back", pendulum_wave),
+    Pattern("dna", "DNA", "Shapes", "Blue and pink strands twisting together", dna),
+    Pattern("hourglass", "Hourglass", "Shapes", "Sand trickles to the bottom half, then turns", hourglass),
+    Pattern("clock", "Clock", "Shapes", "Orange hours, blue minutes, a white second dot", clock),
+    Pattern("rally", "Rally", "Shapes", "A ball between two paddles, faster each hit", rally),
+    Pattern("morse", "Morse", "Shapes", "HELLO in Morse code, scrolling in your colour", morse_ticker, colour=True),
     Pattern("flag_bg", "Bulgaria", "Flags", "White, green and red, rippling", flag(FLAGS["bg"])),
     Pattern("flag_ro", "Romania", "Flags", "Blue, yellow and red, rippling", flag(FLAGS["ro"])),
     Pattern("flag_uk", "United Kingdom", "Flags", "Blue, white and red, rippling", flag(FLAGS["uk"], band=8)),

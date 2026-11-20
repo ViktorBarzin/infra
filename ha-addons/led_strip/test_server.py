@@ -57,7 +57,7 @@ class CommandTest(unittest.TestCase):
         self.assertIn("aurora", server.PATTERNS)
         self.assertIn("weather_storm", server.PATTERNS)
         self.assertEqual(set(server.COLOUR_PATTERNS),
-                         {"color_wipe", "theater_chase", "comet", "scanner", "breathe", "twinkle"})
+                         {"color_wipe", "theater_chase", "comet", "scanner", "breathe", "twinkle", "morse"})
 
 
 class NewPatternTest(unittest.TestCase):

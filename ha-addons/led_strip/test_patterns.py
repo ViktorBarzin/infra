@@ -1,6 +1,7 @@
 import itertools
 import json
 import random
+import time
 import unittest
 
 import dashboard
@@ -104,6 +105,71 @@ class PatternTest(unittest.TestCase):
                for i, rgb in enumerate(pixels) if sum(rgb) > 200}
         self.assertIn(0, lit)
         self.assertGreater(max(lit), 120)
+
+    def test_heartbeat_is_mirrored_around_the_middle(self):
+        for n in (150, 7):
+            for pixels, _ in take("heartbeat", n, count=60):
+                self.assertEqual(pixels, pixels[::-1])
+
+    def test_heartbeat_beats_once_a_second(self):
+        beat = list(patterns.heartbeat(150, (0, 0, 0), random.Random()))
+        self.assertAlmostEqual(sum(delay for _, delay in beat), 1.0)
+
+    def test_newtons_cradle_swings_one_end_at_a_time(self):
+        n = 150
+        middle = n // 2
+        for pixels, _ in take("newtons_cradle", n, count=300):
+            self.assertGreater(sum(pixels[middle]), 0)  # the balls in the middle never move
+            left = any(sum(rgb) for rgb in pixels[:middle - 20])
+            right = any(sum(rgb) for rgb in pixels[middle + 20:])
+            self.assertFalse(left and right)
+
+    def test_pendulum_wave_starts_and_ends_in_step(self):
+        frames = list(patterns.pendulum_wave(150, (0, 0, 0), random.Random()))
+        lane = 150 // patterns.PENDULUMS
+
+        def offsets(pixels):
+            return {max(range(lane), key=lambda i: sum(pixels[k * lane + i])) for k in range(patterns.PENDULUMS)}
+        self.assertEqual(len(offsets(frames[0][0])), 1)
+        self.assertGreater(len(offsets(frames[len(frames) // 10][0])), 3)  # out of step soon after
+
+    def test_dna_has_two_strands(self):
+        pixels, _ = take("dna", 150, count=1)[0]
+        self.assertTrue(any(b > r for r, g, b in pixels))
+        self.assertTrue(any(r > b for r, g, b in pixels))
+
+    def test_hourglass_moves_the_sand_from_the_top_to_the_bottom(self):
+        frames = take("hourglass", 150, count=100000)
+        first, last = frames[0][0], frames[-1][0]
+        sand = patterns.SAND
+        self.assertTrue(all(rgb == sand for rgb in first[75:]))
+        self.assertNotIn(sand, first[:75])
+        self.assertTrue(all(rgb == sand for rgb in last[:75]))
+        self.assertNotIn(sand, last[76:])
+        counts = {sum(rgb == sand for rgb in pixels) for pixels, _ in frames}
+        self.assertLessEqual(max(counts) - min(counts), 3)  # grains in flight only
+
+    def test_clock_hands_point_at_the_time(self):
+        half_past_three = time.mktime((2026, 1, 1, 3, 30, 0, 0, 0, -1))  # local time
+        try:
+            patterns.now = lambda: half_past_three
+            pixels, _ = take("clock", 121, count=1)[0]
+        finally:
+            patterns.now = time.time
+        hour = max(range(121), key=lambda i: pixels[i][0] - pixels[i][2])
+        minute = max(range(121), key=lambda i: pixels[i][2] - pixels[i][0])
+        self.assertAlmostEqual(hour, 35, delta=2)  # 3.5 of 12 hours
+        self.assertAlmostEqual(minute, 60, delta=2)  # 30 of 60 minutes
+
+    def test_rally_ball_reaches_both_paddles(self):
+        lit = {i for pixels, _ in take("rally", 150, count=1500)
+               for i, rgb in enumerate(pixels) if rgb[0] > 150 and rgb[1] > 150 and rgb[2] > 150}
+        self.assertLess(min(lit), 8)
+        self.assertGreater(max(lit), 141)
+
+    def test_morse_code(self):
+        self.assertEqual(patterns.morse("SOS"), "1010100011101110111000101010000000")
+        self.assertEqual(patterns.morse("E E"), "1000000010000000")
 
 
 class PlayTest(unittest.TestCase):
