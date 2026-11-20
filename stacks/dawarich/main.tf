@@ -52,6 +52,55 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.dawarich]
 }
 
+# The shared Redis as the ACL user dawarich: only this namespace's own key of
+# Vault secret/redis/users (docs/runbooks/redis-acl.md). REDIS_URL carries no
+# db: Dawarich passes each client's db on its own (cache 0, Sidekiq 1, Action
+# Cable 2, Rack::Attack 3). The secret_key_refs are not optional, so a pod started before ESO has
+# written the key waits for it. The match annotation lets Reloader, in search
+# mode on the Deployment, restart it when the password changes.
+resource "kubernetes_manifest" "redis_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "dawarich-redis"
+      namespace = "dawarich"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "dawarich-redis"
+        template = {
+          engineVersion = "v2"
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            REDIS_URL = "redis://dawarich:{{ .password }}@${var.redis_host}:6379"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = "dawarich"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.dawarich]
+}
+
 # Overrides Dawarich's stock Devise session settings so web sign-ins last a
 # year from the last visit. The reasoning lives in session_lifetime.rb.
 resource "kubernetes_config_map" "session_lifetime" {
@@ -74,6 +123,7 @@ module "tls_secret" {
 }
 
 resource "kubernetes_deployment" "dawarich" {
+  depends_on = [kubernetes_manifest.redis_external_secret]
   metadata {
     name      = "dawarich"
     namespace = kubernetes_namespace.dawarich.metadata[0].name
@@ -117,8 +167,13 @@ resource "kubernetes_deployment" "dawarich" {
           command = ["web-entrypoint.sh"]
           args    = ["bin/rails", "server", "-p", "3000", "-b", "::"]
           env {
-            name  = "REDIS_URL"
-            value = "redis://${var.redis_host}:6379"
+            name = "REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name = "dawarich-redis"
+                key  = "REDIS_URL"
+              }
+            }
           }
           env {
             name  = "DATABASE_HOST"
@@ -292,8 +347,13 @@ resource "kubernetes_deployment" "dawarich" {
             container_port = 9394
           }
           env {
-            name  = "REDIS_URL"
-            value = "redis://${var.redis_host}:6379"
+            name = "REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name = "dawarich-redis"
+                key  = "REDIS_URL"
+              }
+            }
           }
           env {
             name  = "DATABASE_HOST"
