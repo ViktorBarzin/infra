@@ -501,15 +501,34 @@ resource "kubernetes_cron_job_v1" "clickhouse_backup" {
                 # Runs in the clickhouse-server image that matches the server. Dumps every
                 # user table (schema as SQL, data in Native format), restores the dump into
                 # clickhouse-local to prove it reads back, then writes it to NFS.
-                ch() { clickhouse-client --host "$CH_HOST" --port 9000 --user default --password "$CLICKHOUSE_PASSWORD" "$@"; }
+                #
+                # Tables in CHUNKED (session_replay_events, ~99.9% of the bytes) are dumped
+                # one UTC day at a time into a content store shared by every run,
+                # /backup/chunks/<db>.<table>/<day>-<rows>-<fp>.native.zst, where fp is
+                # sum(cityHash64) over the day's key columns. A day already in the store is
+                # reused, not dumped or restored again, so nightly time and new bytes track
+                # the days that changed, not the 90-day replay window (infra#215). Each run
+                # directory lists the chunks it is made of in chunks.tsv. Chunks no retained
+                # run lists are deleted. On Sundays every reused chunk is checked against its
+                # .sha256 sidecar; a chunk that fails is set aside and dumped again.
+                CHUNKED=" clickhouse.session_replay_events "
+                CHUNK_KEY="cityHash64(session_id, sequence_number, timestamp)"
+                ch() { clickhouse-client --host "$CH_HOST" --port 9000 --user default --password "$CLICKHOUSE_PASSWORD" "$@" < /dev/null; }
                 t0=$(date -u +%s)
                 TS=$(date -u +%Y%m%d-%H%M)
+                sunday=0; [ "$(date -u +%u)" = 7 ] && sunday=1
                 work=/tmp/dump
-                mkdir -p "$work"
+                store=/backup/chunks
+                mkdir -p "$work/new" "$store"
                 ch -q "SELECT version()" > "$work/VERSION"
                 ch -q "SELECT name FROM system.databases WHERE name NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA') ORDER BY name FORMAT TSV" > "$work/databases"
                 ch -q "SELECT database, name, engine LIKE '%MergeTree' OR engine IN ('Log', 'TinyLog', 'StripeLog', 'Memory') FROM system.tables WHERE database NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA') AND NOT is_temporary ORDER BY database, name FORMAT TSV" > "$work/tables.tsv"
-                : > "$work/counts.tsv"
+                # counts.tsv: rows per table at dump time (the record). checks.tsv: rows the
+                # restore check must find (the whole table, or a chunked table's new days).
+                # chunks.tsv: db, table, day, rows, chunk path under /backup, sha256.
+                # new.tsv: chunks dumped tonight (db, table, chunk path, local file).
+                : > "$work/counts.tsv"; : > "$work/checks.tsv"; : > "$work/chunks.tsv"; : > "$work/new.tsv"
+                reused=0; dumped=0
                 while read -r db; do
                   ch -q "SHOW CREATE DATABASE \`$db\` FORMAT TSVRaw" > "$work/$db.database.sql"
                 done < "$work/databases"
@@ -526,16 +545,49 @@ resource "kubernetes_cron_job_v1" "clickhouse_backup" {
                       Replacing*|Aggregating*|Collapsing*|VersionedCollapsing*|Summing*|Coalescing*|Graphite*) final=FINAL ;;
                     esac
                     n=$(ch -q "SELECT count() FROM \`$db\`.\`$t\` $final")
-                    # zstd written by the client itself, not gzip -6 (single-threaded,
-                    # the dump's bottleneck): session_replay_events went to 895 MB
-                    # in 97 s, against ~2.1 GB with gzip (infra#214). file() in the
-                    # restore check picks the codec from the .zst extension.
-                    ch -q "SELECT * FROM \`$db\`.\`$t\` INTO OUTFILE '$work/$db.$t.native.zst' COMPRESSION 'zstd' LEVEL 3 FORMAT Native"
                     printf '%s\t%s\t%s\n' "$db" "$t" "$n" >> "$work/counts.tsv"
+                    case "$CHUNKED" in
+                      *" $db.$t "*)
+                        mkdir -p "$store/$db.$t" "$work/new/$db.$t"
+                        ch -q "SELECT toDate(timestamp) AS d, count(), lower(hex(sum($CHUNK_KEY))) FROM \`$db\`.\`$t\` GROUP BY d ORDER BY d FORMAT TSV" > "$work/$db.$t.days"
+                        want=0
+                        while IFS="$(printf '\t')" read -r day rows fp; do
+                          rel="chunks/$db.$t/$day-$rows-$fp.native.zst"
+                          if [ -s "/backup/$rel" ] && [ -s "/backup/$rel.sha256" ] && [ "$sunday" = 1 ]; then
+                            if [ "$(sha256sum < "/backup/$rel" | cut -d' ' -f1)" != "$(cat "/backup/$rel.sha256")" ]; then
+                              echo "chunk $rel fails its sha256, setting it aside and dumping the day again"
+                              mv "/backup/$rel" "/backup/$rel.corrupt-$TS"
+                            fi
+                          fi
+                          if [ -s "/backup/$rel" ] && [ -s "/backup/$rel.sha256" ]; then
+                            sum=$(cat "/backup/$rel.sha256"); reused=$((reused + 1))
+                          else
+                            # zstd written by the client itself, not gzip -6 (infra#214).
+                            loc="$work/new/$db.$t/$day-$rows-$fp.native.zst"
+                            ch -q "SELECT * FROM \`$db\`.\`$t\` WHERE toDate(timestamp) = '$day' INTO OUTFILE '$loc' COMPRESSION 'zstd' LEVEL 3 FORMAT Native"
+                            sum=$(sha256sum < "$loc" | cut -d' ' -f1)
+                            printf '%s\t%s\t%s\t%s\n' "$db" "$t" "$rel" "$loc" >> "$work/new.tsv"
+                            want=$((want + rows)); dumped=$((dumped + 1))
+                          fi
+                          printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$db" "$t" "$day" "$rows" "$rel" "$sum" >> "$work/chunks.tsv"
+                        done < "$work/$db.$t.days"
+                        printf '%s\t%s\t%s\n' "$db" "$t" "$want" >> "$work/checks.tsv"
+                        ;;
+                      *)
+                        # zstd written by the client itself, not gzip -6 (single-threaded,
+                        # the dump's bottleneck before infra#214). file() in the restore
+                        # check picks the codec from the .zst extension.
+                        ch -q "SELECT * FROM \`$db\`.\`$t\` INTO OUTFILE '$work/$db.$t.native.zst' COMPRESSION 'zstd' LEVEL 3 FORMAT Native"
+                        printf '%s\t%s\t%s\n' "$db" "$t" "$n" >> "$work/checks.tsv"
+                        ;;
+                    esac
                   fi
                 done < "$work/tables.tsv"
+                echo "chunks: $dumped dumped, $reused reused"
 
                 # Restore check: tables that hold data first, then everything else (views).
+                # A chunked table gets only tonight's new chunks; reused ones were read
+                # back on the night they were written.
                 r="$work/restore.sql"
                 : > "$r"
                 while read -r db; do
@@ -545,7 +597,14 @@ resource "kubernetes_cron_job_v1" "clickhouse_backup" {
                   while IFS="$(printf '\t')" read -r db t hasdata; do
                     [ "$hasdata" = "$pass" ] || continue
                     { cat "$work/$db.$t.sql"; echo ";"; } >> "$r"
-                    [ "$hasdata" = 1 ] && echo "INSERT INTO \`$db\`.\`$t\` SELECT * FROM file('$work/$db.$t.native.zst', 'Native');" >> "$r"
+                    [ "$hasdata" = 1 ] || continue
+                    if [ -f "$work/$db.$t.native.zst" ]; then
+                      echo "INSERT INTO \`$db\`.\`$t\` SELECT * FROM file('$work/$db.$t.native.zst', 'Native');" >> "$r"
+                    else
+                      while IFS="$(printf '\t')" read -r cdb ct rel loc; do
+                        if [ "$cdb.$ct" = "$db.$t" ]; then echo "INSERT INTO \`$db\`.\`$t\` SELECT * FROM file('$loc', 'Native');" >> "$r"; fi
+                      done < "$work/new.tsv"
+                    fi
                   done < "$work/tables.tsv"
                 done
                 # clickhouse-local caps itself at 0.9 x the container limit. By default it
@@ -553,33 +612,51 @@ resource "kubernetes_cron_job_v1" "clickhouse_backup" {
                 # dump it reads and the parts it writes, so a big dump hit that cap with
                 # little real memory in use (infra#205). Count its own allocations instead,
                 # and squash inserts into 32 MiB blocks on one thread rather than 256 MiB
-                # ones: session_replay_events alone dumps to about 1.9 GB. Even so the
-                # process RSS it caps on reaches ~920 MiB on that table, so the
-                # container limit is 2Gi (infra#208); 1Gi failed about half the runs.
+                # ones. Even so the process RSS it caps on reached ~920 MiB on a 1.9 GB
+                # session_replay_events dump, so the container limit is 2Gi (infra#208).
                 printf '<clickhouse><memory_worker_use_cgroup>0</memory_worker_use_cgroup></clickhouse>\n' > "$work/local.xml"
-                chl() { clickhouse-local -C "$work/local.xml" --path /tmp/restore --max_threads=1 --max_insert_threads=1 --min_insert_block_size_rows=0 --min_insert_block_size_bytes=33554432 "$@"; }
+                chl() { clickhouse-local -C "$work/local.xml" --path /tmp/restore --max_threads=1 --max_insert_threads=1 --min_insert_block_size_rows=0 --min_insert_block_size_bytes=33554432 "$@" < /dev/null; }
                 chl --queries-file "$r"
                 fail=0
                 while IFS="$(printf '\t')" read -r db t n; do
                   got=$(chl -q "SELECT count() FROM \`$db\`.\`$t\`")
-                  echo "table $db.$t source=$n restored=$got"
+                  echo "table $db.$t want>=$n restored=$got"
                   [ "$got" -ge "$n" ] || fail=1
-                done < "$work/counts.tsv"
+                done < "$work/checks.tsv"
                 [ "$fail" -eq 0 ] || { echo "restore check failed, not writing the backup"; exit 1; }
+
+                # New chunks go into the store first (each under a temporary name, then
+                # renamed), so a run directory never lists a chunk that is not there.
+                newbytes=0
+                while IFS="$(printf '\t')" read -r db t rel loc; do
+                  cp "$loc" "/backup/$rel.partial"
+                  sha256sum < "$loc" | cut -d' ' -f1 > "/backup/$rel.sha256"
+                  mv "/backup/$rel.partial" "/backup/$rel"
+                  newbytes=$((newbytes + $(stat -c %s "$loc")))
+                done < "$work/new.tsv"
 
                 out=/backup/$TS
                 mkdir -p "$out.partial"
-                cp "$work"/*.sql "$work"/*.native.zst "$work/VERSION" "$work/databases" "$work/tables.tsv" "$work/counts.tsv" "$out.partial/"
+                cp "$work"/*.sql "$work/VERSION" "$work/databases" "$work/tables.tsv" "$work/counts.tsv" "$work/chunks.tsv" "$out.partial/"
+                cp "$work"/*.native.zst "$out.partial/" 2>/dev/null || true
                 rm -f "$out.partial/restore.sql"
                 (cd "$out.partial" && sha256sum * > SHA256SUMS)
                 mv "$out.partial" "$out"
                 find /backup -mindepth 1 -maxdepth 1 -type d -name '20*' -mtime +14 -exec rm -rf {} +
                 find /backup -mindepth 1 -maxdepth 1 -type d -name '*.partial' -mtime +1 -exec rm -rf {} +
+                # Chunk GC: delete chunks no retained run directory lists. The 3 h guard
+                # spares chunks a concurrent manual run has stored but not yet listed.
+                cat /backup/20*/chunks.tsv 2>/dev/null | cut -f5 | sort -u > "$work/referenced"
+                [ -s "$work/referenced" ] && find "$store" -type f -name '*.native.zst' -mmin +180 | while read -r f; do
+                  grep -qxF "$(printf '%s' "$f" | sed 's|^/backup/||')" "$work/referenced" || { echo "chunk gc: $f"; rm -f "$f" "$f.sha256"; }
+                done
+                find "$store" -type f \( -name '*.partial' -o -name '*.corrupt-*' \) -mtime +14 -exec rm -f {} +
 
                 dur=$(( $(date -u +%s) - t0 ))
-                bytes=$(du -sb "$out" | cut -f1)
-                echo "backup written: $out ($bytes bytes, $dur s)"; ls -l "$out"
-                printf 'backup_duration_seconds %s\nbackup_output_bytes %s\nbackup_last_success_timestamp %s\n' "$dur" "$bytes" "$(date -u +%s)" > /tmp/metrics
+                bytes=$(( $(du -sb "$out" | cut -f1) + newbytes ))
+                storebytes=$(du -sb "$store" | cut -f1)
+                echo "backup written: $out ($bytes bytes new, chunk store $storebytes bytes, $dur s)"; ls -l "$out"
+                printf 'backup_duration_seconds %s\nbackup_output_bytes %s\nbackup_chunk_store_bytes %s\nbackup_chunks_dumped %s\nbackup_chunks_reused %s\nbackup_last_success_timestamp %s\n' "$dur" "$bytes" "$storebytes" "$dumped" "$reused" "$(date -u +%s)" > /tmp/metrics
                 wget -qO- --post-file=/tmp/metrics "$PUSHGATEWAY/metrics/job/clickhouse-backup" || echo "pushgateway push failed"
               EOT
               ]

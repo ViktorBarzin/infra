@@ -1,6 +1,6 @@
 # Restore ClickHouse (rybbit)
 
-Last updated: 2026-11-20 (dumps are zstd, infra#214)
+Last updated: 2026-11-20 (session replay dumped by day into a shared chunk store, infra#215)
 
 Applies to the single-replica `clickhouse` Deployment in the `rybbit`
 namespace, the event store for Rybbit analytics.
@@ -21,12 +21,34 @@ Each run directory holds, per user table:
   2026-11-20 hold `.native.gz` (gzip) instead.
 
 plus `<db>.database.sql`, `VERSION` (server version at dump time), `counts.tsv`
-(rows per table at dump time), `tables.tsv` and `SHA256SUMS`.
+(rows per table at dump time), `tables.tsv`, `chunks.tsv` and `SHA256SUMS`.
+
+**Chunked tables** (`clickhouse.session_replay_events`, almost all of the
+bytes) have no `.native.zst` in the run directory. They are dumped one UTC day
+at a time into a store shared by every run (infra#215):
+
+```
+/backup/chunks/<db>.<table>/<yyyy-mm-dd>-<rows>-<fp>.native.zst   # Native, zstd
+/backup/chunks/<db>.<table>/<yyyy-mm-dd>-<rows>-<fp>.native.zst.sha256
+```
+
+`fp` is `sum(cityHash64(session_id, sequence_number, timestamp))` over that day.
+A day with the same fingerprint as a stored chunk is not dumped again, so a
+night writes only the days that changed (normally today and yesterday). The
+run's `chunks.tsv` lists the chunks that make up that run: `db`, `table`,
+`day`, `rows`, chunk path relative to `/backup`, `sha256`. Restoring a run means
+loading every chunk it lists. The job deletes a chunk once no retained run
+directory lists it, and only if the chunk is older than 3 h.
 
 The job restores every dump into `clickhouse-local` from the same image before
-it writes the directory, and pushes `backup_last_success_timestamp{job="clickhouse-backup"}`
-only after that check passes. A directory that exists under its final name has
-been read back once. Alerts: `ClickHouseBackupStale` (36h), `ClickHouseBackupNeverRun`,
+it writes the directory. That covers every table dumped whole, plus the chunks
+it wrote that night. A reused chunk was read back on the night it was written,
+and on Sundays the job checks each reused chunk against its `.sha256`. A chunk
+that fails is renamed `*.corrupt-<run>` and dumped again from the live table.
+`backup_last_success_timestamp{job="clickhouse-backup"}` is pushed only after the
+check passes, along with `backup_chunks_dumped`, `backup_chunks_reused` and
+`backup_chunk_store_bytes`. A directory that exists under its final name has
+been read back. Alerts: `ClickHouseBackupStale` (36h), `ClickHouseBackupNeverRun`,
 and the generic `BackupCronJobFailed`.
 
 The check runs in the Job's 2Gi container (1Gi failed about half the runs on a 1.9 GB dump, infra#208). It gives `clickhouse-local` a
@@ -71,6 +93,21 @@ ch -q "INSERT INTO clickhouse.events FROM INFILE '$D/clickhouse.events.native.zs
 ch -q "SELECT count() FROM clickhouse.events"                        # compare with counts.tsv
 ```
 
+For a chunked table, load every chunk the run lists, not a single file:
+
+```bash
+ch -q "RENAME TABLE clickhouse.session_replay_events TO clickhouse.session_replay_events_broken"
+ch --queries-file "$D/clickhouse.session_replay_events.sql"
+awk -F'\t' '$1=="clickhouse" && $2=="session_replay_events" {print $6"  /backup/"$5}' "$D/chunks.tsv" | sha256sum -c -   # chunks intact
+awk -F'\t' '$1=="clickhouse" && $2=="session_replay_events" {print $5}' "$D/chunks.tsv" | while read -r c; do
+  ch --min_insert_block_size_bytes=16777216 -q "INSERT INTO clickhouse.session_replay_events FROM INFILE '/backup/$c' COMPRESSION 'zstd' FORMAT Native" < /dev/null
+done
+ch -q "SELECT count() FROM clickhouse.session_replay_events"           # compare with counts.tsv
+```
+
+Keep inserts at 16 MiB blocks or smaller against the live server: 128 MiB
+blocks ran it out of memory (infra#206).
+
 Drop `clickhouse.events_broken` once Rybbit shows the restored data.
 
 ## Restore everything into an empty server
@@ -78,6 +115,7 @@ Drop `clickhouse.events_broken` once Rybbit shows the restored data.
 For a wiped or recreated PVC: let the Deployment start with an empty data
 directory, then, in the same throwaway pod, create each database from
 `<db>.database.sql` (skip `default`, which already exists) and repeat the
-two table commands above for every line of `tables.tsv`. Tables whose third
-`tables.tsv` column is `0` are views or other data-less engines and need only
-the `.sql` file; create them after the tables they read from.
+table commands above for every line of `tables.tsv`, using the chunk loop for
+tables listed in `chunks.tsv`. Tables whose third `tables.tsv` column is `0`
+are views or other data-less engines and need only the `.sql` file; create
+them after the tables they read from.
