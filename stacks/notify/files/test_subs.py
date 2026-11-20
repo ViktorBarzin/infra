@@ -39,6 +39,14 @@ class ChannelsForTest(unittest.TestCase):
         s = {"groups": {"A": "push", "B": "email"}}
         self.assertEqual(subs.channels_for(s, "X", ["A", "B"]), {"push", "email"})
 
+    def test_list_values_are_read(self):
+        s = {"groups": {"Storage": ["push", "email"]}, "alerts": {"Other": []}}
+        self.assertEqual(subs.channels_for(s, "PVFillingUp", ["Storage"]), {"push", "email"})
+        self.assertEqual(subs.channels_for(s, "Other", ["Storage"]), set())
+
+    def test_list_default_for_recipient(self):
+        self.assertEqual(subs.tag_for_recipient({"a@x.io": {"default": ["email"]}}, "a@x.io"), "u-a-x-io-email")
+
     def test_unknown_choice_is_ignored(self):
         s = {"groups": {"Storage": "sms"}, "alerts": {"PVFillingUp": "pager"}}
         self.assertEqual(subs.channels_for(s, "PVFillingUp", ["Storage"]), set())

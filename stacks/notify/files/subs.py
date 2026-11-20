@@ -55,15 +55,28 @@ def channel_tag(username: str, channel: str) -> str:
     return "u-%s-%s" % (sanitize(username), channel)
 
 
+def as_set(value):
+    """A stored choice as a set of Channels: a list such as ["push", "email"],
+    or the older single word ("push", "email", "off"). None if unreadable."""
+    if isinstance(value, str):
+        return {value} & set(CHANNELS) if value in CHOICES else None
+    if isinstance(value, list):
+        return {v for v in value if isinstance(v, str)} & set(CHANNELS)
+    return None
+
+
 def _from_groups(settings: dict, groups) -> set:
     chosen = settings.get("groups") or {}
-    return {chosen.get(g) for g in groups} & set(CHANNELS)
+    out = set()
+    for g in groups:
+        out |= as_set(chosen.get(g)) or set()
+    return out
 
 
 def channels_for(settings: dict, alertname: str, groups) -> set:
-    own = (settings.get("alerts") or {}).get(alertname)
-    if own in CHOICES:
-        return {own} - {"off"}
+    own = as_set((settings.get("alerts") or {}).get(alertname))
+    if own is not None:
+        return own
     return _from_groups(settings, groups)
 
 
@@ -78,8 +91,9 @@ def tags_for_alert(people: dict, alertname: str, groups) -> list:
 def tag_for_recipient(people: dict, recipient: str):
     want = sanitize(recipient)
     for user, settings in people.items():
-        if sanitize(user) == want and settings.get("default") in CHANNELS:
-            return channel_tag(user, settings["default"])
+        default = sorted(as_set(settings.get("default")) or [])
+        if sanitize(user) == want and default:
+            return channel_tag(user, default[0])
     return None
 
 
@@ -134,13 +148,15 @@ def apply_form(settings: dict, form: dict, groups_of, account_email: str) -> dic
             else:
                 alerts[name] = value
 
-    groups = {g: c for g, c in groups.items() if c in CHANNELS}
+    groups = {g: c for g, c in groups.items() if as_set(c)}
     s["groups"] = groups
     s["alerts"] = {
-        a: c for a, c in alerts.items() if ({c} - {"off"}) != _from_groups(s, groups_of(a))
+        a: c for a, c in alerts.items() if as_set(c) is not None and as_set(c) != _from_groups(s, groups_of(a))
     }
 
-    used = ({s.get("default")} | set(groups.values()) | set(s["alerts"].values())) & set(CHANNELS)
+    used = set()
+    for c in [s.get("default")] + list(groups.values()) + list(s["alerts"].values()):
+        used |= as_set(c) or set()
     missing = used - available(s, account_email)
     if "push" in missing:
         raise Invalid("Set up your phone first: pick its Home Assistant instance and notify service.")
