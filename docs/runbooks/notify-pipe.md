@@ -1,61 +1,66 @@
 # Notify pipe
 
-The notify pipe sends infra alerts to people on Channels they already have: Home Assistant Companion push and email. Each person picks which alert rules reach them. Design: `docs/plans/2026-11-17-notify-pipe-design.md`. Why it is built this way: ADR-0043. Terms: `GLOSSARY.md`, "Notifications".
+The notify pipe is the only way an alert reaches a person. Every alert goes from Alertmanager to the notify adapter, which sends it to the people who chose it, on Phone (Home Assistant Companion push), Email or Slack. Designs: `docs/plans/2026-11-17-notify-pipe-design.md` and `docs/plans/2026-11-20-notify-one-flow-design.md`. Why it is built this way: ADR-0043. Terms: `GLOSSARY.md`, "Notifications". The settings page has a "How it works" page with the diagram: https://notify.viktorbarzin.me/how.
 
 ## How it works
 
 ```
 Alertmanager --every alert--> notify-adapter --u-<user>-push / -email--> apprise-api --> HA notify.mobile_app_* / SMTP
+                                    \--chat.postMessage (bot)--> Slack: a DM, or #alerts for Viktor
+Alertmanager --6 root-cause alerts--> slack-fallback --webhook--> #alerts
 person --> notify.viktorbarzin.me (adapter :8081) --PATCH as notify-settings--> Authentik user attributes.notify
-Authentik User model_updated --> Notification Rule --webhook--> apprise-api /add/notify (Channels only)
+Authentik User model_updated --> Notification Rule --webhook--> apprise-api /add/notify (Phone and Email only)
 ```
 
-- `stacks/notify`: apprise-api (`caronc/apprise`, config key `notify`, on the `apprise-config` NFS volume) and `notify-adapter`: `files/adapter.py` (webhook), `files/subs.py` (Subscriptions, the Authentik and Prometheus clients), `files/page.py` (the settings page), `files/preview.py` (test notifications). Tests: `files/test_*.py`, run `python3 -m unittest` in `files/`.
-- `stacks/notify/ingress.tf`: the page's ingress. Forward auth admits Home Server Admins and Home Users (`stacks/authentik/forward-auth-apps.json`). The ingress adds `X-Notify-Ingress-Proof`; the page refuses requests without it, so a pod that opens the Service directly cannot pose as someone.
-- `stacks/authentik/notify.tf`: the service account `notify-settings` (global `view_user` and `change_user`; its token is the Secret `notify-authentik-token` in `notify`) and the push of Channels to Apprise. The renderer is `files/notify_render.py` (tests in `test_notify_render.py`).
+- `stacks/notify/files`: `adapter.py` (webhook and delivery), `subs.py` (choices, the Authentik and rules-API clients), `slack.py` (Slack posts), `page.py` (the settings page), `preview.py` (test notifications). Tests: `test_*.py`; run `python3 -m unittest` in that folder.
+- `stacks/notify/ingress.tf`: the page's ingress. Forward auth admits Home Server Admins and Home Users. The ingress adds `X-Notify-Ingress-Proof`; the page refuses requests without it.
+- `stacks/notify/main.tf`: the Slack bot token (ExternalSecret `notify-slack`, from `secret/viktor` `slack_bot_token`), the state volume `notify-adapter-state` (proxmox-lvm-encrypted), and `SLACK_LIVE`.
+- `stacks/authentik/notify.tf`: the service account `notify-settings` (global `view_user` and `change_user`; token in the Secret `notify-authentik-token`) and the push of Phone and Email Channels to Apprise. Renderer: `files/notify_render.py`.
+- Alertmanager (`stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`): receivers `notify-pipe`, `notify-pipe-noresolve` (event lane) and `slack-fallback`. The child routes only set timings: security 10s/1m/1h, event no resolved, Trivy 30m/24h, `UPSOnBatteryEmail` every 10m, critical re-ping every 6h, info 5m/30m.
 
-For each alert group, the adapter reads everyone's `attributes.notify` (cached 60 s) and the alert's Prometheus rule groups (`/api/v1/rules`, cached 5 min, read again at most once a minute for an alertname it does not know). A choice on the alert rule wins over its rule group. Push and email go as two Apprise calls; the email ends with a link to the alert's page.
+## What a person chooses
 
-## Subscribe
+Each person's `attributes.notify` holds their Channels (`push_instance`, `push_service`, `email`, `slack_target`), and their choices as lists of Channels: `default` (sent to them by name), `groups` (rule group name -> list) and `alerts` (alertname -> list, `[]` for off). A choice on an alert wins over its groups. The inventory is every alerting rule in Prometheus's and Loki's rules APIs; groups with the same name merge.
 
-- From Slack: every #alerts post ends with "Notify me about this". It opens https://notify.viktorbarzin.me/a/<alertname>, with the alert and its rule group.
-- Everything: https://notify.viktorbarzin.me lists every alert rule by rule group, with a search box, and the Channel settings. A rule group choice also covers alert rules added to that group later.
-- The phone notify service is the Companion app's `notify.mobile_app_*` service on your HA instance, without `notify.`. List them with `curl -s -H "Authorization: Bearer $(homelab ha token --instance sofia)" https://ha-sofia.viktorbarzin.me/api/services | jq -r '.[] | select(.domain=="notify") | .services | keys[]' | grep mobile_app`.
-- Loki ruler alerts are not in Prometheus's rule list. A person subscribes to one through its `/a/<alertname>` link.
+- `slack_target` is a Slack member ID (a DM from the bot "claude"), or, for a Home Server Admin, a channel such as `#alerts`. The bot lacks `users:read.email`, so people paste their member ID once.
+- The page sends only the rows that changed, with the value it showed. A save of a row someone changed meanwhile is refused (409) and asks for a reload.
+- Each save logs the person and the before and after values: `kubectl -n notify logs deploy/notify-adapter | grep "save by"`.
 
-## Test an alert
+## Delivery and retries
 
-Each alert row, and the alert's own page, has a **Test** button. It sends the signed-in person one Notification, built by the same `adapter.build` as a real one, with "Test: " in front of the title. It goes to the Channel the row is set to; on Off it uses the phone, else email. The values come from the best source available (`files/preview.py`):
+- The adapter sends Slack first, then Phone, then Email. A send that may work later (Slack rate limit, Apprise or Authentik down) answers 503 and Alertmanager sends the group again. Sends that already went out for that notification are skipped on the retry, for an hour.
+- A permanent refusal (a wrong HA service, a Slack `channel_not_found`, an Apprise tag that is missing) counts as `failed` and fires `NotifyDeliveryFailing`.
+- When Authentik does not answer, routing uses the last read of everyone's settings: in memory, else `/state/subscribers.json` (mode 0600). The gauge `notify_snapshot_in_use` is 1 while it does.
+- A critical or security alert that reaches nobody posts one line to `#alerts`, once per alertname (`/state/unrouted.json`).
+- `NotifyPipeDown`, `NotifyDeliveryFailing`, `NodeDown`, `NFSServerUnresponsive`, `AuthentikDown` and `PowerOutage` also post straight to #alerts through `slack-fallback`, so they appear twice while the pipe works.
 
-1. the alert as it fires now, with the annotations Prometheus rendered;
-2. the rule's expression evaluated at the last time `ALERTS` shows it firing, within 26 weeks;
-3. for a plain `A > N` rule, A's current series for the labels and a value just past N;
-4. label values that exist on the rule's metrics, else any value of that label, else "example".
+## Add an alert rule
 
-For 2 to 4 the adapter renders the annotations itself, with the Go template subset the rules use: `$labels.x`, `$value`, `printf`, the `humanize*` functions and `with query`. The button's answer names the source, such as "last fired 16 Nov 2026 21:59 UTC". A person may send 6 tests a minute. A test can take a few seconds: the slowest rules need three Prometheus queries.
-
-## Send to one person
-
-Add `recipient: <authentik username>` to the rule's labels in `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`. It reaches that person's default channel and no one else. Usernames here are usually email addresses.
-
-The Notification uses these annotations, in this order:
+Write the rule as usual, without any routing label: `scripts/check-no-notify-page.py` fails a stack that still uses `notify: page`. Then switch it on for the people who need it at https://notify.viktorbarzin.me/a/<alertname>. For a rule meant for one person, add `recipient: <authentik username>`: it reaches that person's default Channels and nobody else. The Notification uses these annotations, in this order:
 
 | | firing | resolved |
 |---|---|---|
 | title | `notification_title`, `summary` | `notification_resolved_title`, "Resolved: " + the firing title |
 | body | `notification_body`, `description`, `summary` | `notification_resolved_body`, "This is no longer happening." |
 
+Slack posts keep the old Alertmanager layout and use `summary` (and, in the security lane, `description` and `runbook`).
+
+## Test an alert
+
+Each row's **Test** button sends the signed-in person one Notification built like a real one, with "Test: " in front of the title, on the row's Channels. A test never posts into a Slack channel, only to a DM. The values come from the best source available (`files/preview.py`): the alert firing now; the rule evaluated at the last time `ALERTS` shows it firing, within 26 weeks; for a plain `A > N` rule, A's current series and a value past N; else label values from the rule's metrics. Six tests a minute per person.
+
 ## Check it
 
-- Metrics: `notify_notifications_total{result="sent|failed|no_recipients|rejected"}` on the adapter. `no_recipients` is the usual result: most alerts have no subscriber. Alerts `NotifyPipeDown` and `NotifyDeliveryFailing` page on Slack #alerts, outside the pipe.
-- Logs: `kubectl -n notify logs deploy/notify-adapter` prints one line per alert group with its result and tags, and one per saved settings page.
-- What Apprise holds (tags only, no secrets): `kubectl -n notify exec deploy/apprise -- sh -c 'curl -s -u "$APPRISE_USER:$APPRISE_PASSWORD" "http://localhost:8000/json/urls/notify?privacy=1"'`.
-- Send a test Notification without Alertmanager: the same `exec`, with `curl -s -u "$APPRISE_USER:$APPRISE_PASSWORD" -H 'Content-Type: application/json' -d '{"tag":"u-<username with symbols as ->-push","title":"Test","body":"Test"}' http://localhost:8000/notify/notify`.
+- Metrics: `notify_notifications_total{result}`, `notify_deliveries_total{channel,result}` (channel push, email, slack, unrouted; result sent, failed, unavailable, skipped), `notify_snapshot_in_use`.
+- Logs: `kubectl -n notify logs deploy/notify-adapter` prints one line per alert group with its targets, and one per Slack, Apprise or Authentik problem.
+- What Apprise holds (tags only): `kubectl -n notify exec deploy/apprise -- sh -c 'curl -s -u "$APPRISE_USER:$APPRISE_PASSWORD" "http://localhost:8000/json/urls/notify?privacy=1"'`.
+- Before a risky change, set `slack_live = "false"` in `stacks/notify/main.tf`: the adapter then logs `slack shadow: would post ...` and posts nothing to Slack.
 
 ## When it breaks
 
-- `failed` with HTTP 424 in the adapter log: a Channel refused it. A wrong notify service, or an extra field in the JSON body, gives HA 400 ("Unsupported Parameters": the push URL must keep `:version`, `:type` and `:attachments`); an expired HA token gives 401 (the tokens are in Vault `secret/openclaw` -> `skill_secrets`). Apprise's own log names the URL: `kubectl -n notify logs deploy/apprise`.
-- "apprise holds no channel for ..." in the adapter log: the person's settings name a Channel the renderer refused or that Apprise lost. Saving the settings page with any change rebuilds Apprise's config. If it does not, check the Authentik worker log for the `notify-apprise-config` transport (`kubectl -n authentik logs deploy/goauthentik-worker | grep -i notify`).
-- The page or every alert answers "upstream unavailable" / 503: the adapter cannot reach Authentik, or the token is missing or refused. The Secret `notify-authentik-token` comes from `stacks/authentik`; apply it.
-- Apprise lost its config (the volume was replaced), or the renderer changed: any User change runs the renderer again, so save any person's settings page once.
-- Rotate the service account token: taint `authentik_token.notify_settings` in `stacks/authentik` and apply. Rotate the ingress proof: taint `random_password.ingress_proof` in `stacks/notify` and apply. The adapter reads both files on every call.
+- `NotifyPipeDown` or `NotifyDeliveryFailing` in #alerts (they arrive through `slack-fallback`): check the adapter log first.
+- `failed` with HTTP 424 from Apprise: a Phone or Email Channel refused it. HA 400 means an extra JSON field (the push URL must keep `:version`, `:type` and `:attachments`); 401 means an expired HA token (`secret/openclaw` -> `skill_secrets`).
+- "apprise holds no channel for ...": Apprise lost or never got that person's Channel. Any User change runs the renderer again: save the person's settings page once. If that does not help, check the Authentik worker log for `notify-apprise-config`.
+- Slack `not_in_channel` or `channel_not_found`: the target is wrong, or the channel is private and the bot is not in it.
+- 503 to every alert and no snapshot: Authentik is down and the adapter has never read anyone. The six fallback alerts still post.
+- Rotate the Authentik token: taint `authentik_token.notify_settings` in `stacks/authentik`. Rotate the ingress proof: taint `random_password.ingress_proof` in `stacks/notify`. The Slack token follows Vault through the ExternalSecret. The adapter reads all three files on every call.

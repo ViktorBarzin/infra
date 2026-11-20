@@ -205,8 +205,9 @@ Since 2026-11-10 `me@viktorbarzin.me` has its own per-user sieve
 (`extra/me-at-viktorbarzin.me.dovecot.sieve`, same ConfigMap-plus-`sub_path`
 mount as docs@). It files the Synology NAS_Barzini's "The UPS device connected
 to NAS_Barzini ..." emails straight into `Archive`, marked read, so a UPS
-transfer of a few seconds does not notify. Real outages reach the inbox from
-Alertmanager's `UPSOnBatteryEmail` (receiver `email-viktor`) after 1 minute on
+transfer of a few seconds does not notify. Real outages arrive from
+Alertmanager's `UPSOnBatteryEmail` through the notify pipe, at the email
+address its subscriber set on notify.viktorbarzin.me, after 1 minute on
 battery, then every 10 minutes. Emil's copy of the NAS mail goes to his Gmail
 and is not filtered. docker-mailserver copies the file to `~/.dovecot.sieve`
 at pod start, so a change needs the pod restart that Reloader does on a

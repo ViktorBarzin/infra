@@ -431,7 +431,7 @@ see also [monitoring.md → Security Alerts](../architecture/monitoring.md#secur
 
 | Signal | What | Where |
 |---|---|---|
-| **`AggregatorDown`** | `kube_deployment_status_replicas_available{namespace="goldmane-edge-aggregator",deployment="goldmane-edge-aggregator"} < 1` for 15m → warning | Prometheus alert group `Network Observability (Goldmane)` in `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`; routes `slack-warning` → `#alerts` |
+| **`AggregatorDown`** | `kube_deployment_status_replicas_available{namespace="goldmane-edge-aggregator",deployment="goldmane-edge-aggregator"} < 1` for 15m → warning | Prometheus alert group `Network Observability (Goldmane)` in `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`; reaches whoever chose it on notify.viktorbarzin.me |
 | **`DigestFailing`** | `kube_job_status_failed{...job_name=~"goldmane-edges-digest.*"} > 0` within 24h, for 30m → warning | same alert group → `#alerts` |
 | **cluster-health #48** | `check_goldmane_aggregator` reads the Deployment's `Available` condition (missing or not-Available → FAIL) | `scripts/cluster_healthcheck.sh` (human / `--quiet` / `--json` modes; emits `goldmane_aggregator`) |
 

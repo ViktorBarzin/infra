@@ -6,8 +6,8 @@ current board of firing alerts grouped by severity, plus a one-line list of
 what fired-and-cleared in the last 24h.
 
 Since 2026-11-10 the deployed CronJob runs weekly with ALERT_BOARD=off and
-posts only the Trivy section. Only alerts labelled notify=page reach Slack
-now, so a daily board of everything else is the noise the alert-noise design
+posts only the Trivy section. Since 2026-11-20 each person chooses on
+notify.viktorbarzin.me which alerts reach Slack, so a daily board of everything else is the noise the alert-noise design
 (docs/plans/2026-07-26-alert-noise-reduction-design.md) removes.
 
 This is the safety net for the "alert on change" routing model (warnings/info

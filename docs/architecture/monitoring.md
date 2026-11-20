@@ -229,15 +229,18 @@ graph LR
 
 When a node goes down, all pod-level alerts for pods scheduled on that node are suppressed, reducing noise and focusing attention on the root cause.
 
-### Which alerts post to Slack
+### Who hears about an alert
 
-Since 2026-11-10 only alerts labelled `notify: page`, plus the `lane=security`
-and `lane=event` alerts, post to `#alerts`. The first child route after
-`email-emo` sends everything else to the `silent` receiver, which has no
-notifier. Silent alerts are still evaluated and show in Alertmanager, Grafana
-and `/cluster-health`. 159 rules carry the label and 28 more page through
-their lane; 364 are silent. A new rule is silent until it gets the label.
-Design and classification: `docs/plans/2026-07-26-alert-noise-reduction-design.md`.
+Since 2026-11-20 every alert goes to the notify pipe (`stacks/notify`), and
+each person chooses on https://notify.viktorbarzin.me which alerts reach them
+and on which Channels: Phone (HA Companion), Email or Slack. Viktor's 222
+paged alerts from before that day became his Slack choices, posting to
+#alerts. No label in a rule decides it; a new rule reaches nobody until
+someone switches it on, and a critical or security alert that reaches nobody
+posts one line to #alerts. Six root-cause alerts also post straight to
+#alerts. Unchosen alerts are still evaluated and show in Alertmanager, Grafana
+and `/cluster-health`. Design: `docs/plans/2026-11-20-notify-one-flow-design.md`;
+runbook: `docs/runbooks/notify-pipe.md`.
 
 ### Repeat notifications from flapping alerts
 

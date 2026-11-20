@@ -67,7 +67,7 @@ One short piece of news the infrastructure sends to people, with a title and a b
 _Avoid_: alert, message, push
 
 **Alert rule**:
-A Prometheus or Loki alerting rule, named by its alertname, such as PVFillingUp. Every one that fires reaches the notify pipe.
+A Prometheus or Loki alerting rule, named by its alertname, such as PVFillingUp. Every one that fires reaches the notify pipe, which is the only way it reaches people.
 _Avoid_: alert (an IDS detection), topic
 
 **Rule group**:
@@ -79,11 +79,11 @@ A person who can receive Notifications, named by their Authentik username. They 
 _Avoid_: subscriber, user, roster person
 
 **Channel**:
-One way to reach one Recipient, such as their phone through a Home Assistant instance, or their email address.
+One way to reach one Recipient: their phone through a Home Assistant instance, their email address, or Slack (a direct message, or a channel such as #alerts for an admin).
 _Avoid_: provider, target, destination
 
 **Subscription**:
-A Recipient's choice to receive one alert rule or one rule group, and on which of their Channels. A choice on an alert rule wins over the choice on its rule group.
+A Recipient's choice to receive one alert rule or one rule group, and on which of their Channels; one Subscription may name several. A choice on an alert rule wins over the choice on its rule group.
 _Avoid_: follow, opt-in
 
 **Default channel**:

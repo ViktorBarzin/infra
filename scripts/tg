@@ -145,6 +145,11 @@ if $is_tf_op && [ -n "$STACK_NAME" ]; then
   if ! "$REPO_ROOT/scripts/check-ingress-descriptions.py" "$REPO_ROOT/stacks/$STACK_NAME"; then
     exit 1
   fi
+  # The `notify: page` alert label was retired on 2026-11-20: people choose
+  # their alerts on https://notify.viktorbarzin.me, so the label pages nobody.
+  if ! "$REPO_ROOT/scripts/check-no-notify-page.py" "$REPO_ROOT/stacks/$STACK_NAME"; then
+    exit 1
+  fi
 fi
 
 # Acquire lock for mutating operations (Tier 0 only — Tier 1 uses pg_advisory_lock)

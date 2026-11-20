@@ -1,6 +1,6 @@
 # ADR-0043: Notification settings live in Authentik, and Authentik pushes them to Apprise
 
-- Status: accepted, revised 2026-11-20 (see "Revision")
+- Status: accepted, revised twice on 2026-11-20 (see the two "Revision" sections)
 - Date: 2026-11-17
 - Related: `docs/plans/2026-11-17-notify-pipe-design.md` (the design), `stacks/notify` (apprise-api, the adapter and the settings page), `stacks/authentik/notify.tf` (the service account and the push), `GLOSSARY.md` ("Notifications")
 
@@ -34,4 +34,15 @@ Viktor wanted an inventory of every alert and the easiest way to subscribe to ne
 4. **The adapter routes; Apprise only holds Channels.** The renderer tags each Channel `u-<username>-push` or `u-<username>-email`, and the adapter picks the tags for each alert from everyone's attributes. The `user_write` rule went with the flow; the `model_updated` rule catches the page's saves. That rule never fired before this revision: its matcher also required `app = authentik.core`, and a `model_updated` event's app is `authentik.events.middleware`. Every sync until then came from `user_write`.
 
 Consequence: alert routing now also depends on Authentik answering. When it does not, the adapter answers 503 and Alertmanager retries.
+
+## Revision 2026-11-20 (2): one flow for every alert
+
+Viktor asked for one flow for alerts, fully configurable on the page (`docs/plans/2026-11-20-notify-one-flow-design.md`). What changed:
+
+1. **Every alert goes through the pipe.** The five Slack receivers, `email-viktor`, `email-emo` and `silent` are gone. The `notify: page` label is retired, and `scripts/check-no-notify-page.py` rejects it. Today's 222 paged alerts became Viktor's Slack choices; his UPS email and emo's two R730 alerts became their choices.
+2. **Choices are lists of Channels**, so one alert can go to Phone, Email and Slack at once. Old single words still read.
+3. **Slack is a per-person Channel**, chosen by Viktor over one shared #alerts switch. A person's Slack is a DM from the homelab bot; a Home Server Admin may name a channel instead, and Viktor's is #alerts. The adapter posts it itself, in the old Alertmanager layout, so Apprise and its NFS volume are not on the Slack path.
+4. **Safety nets**, after two challenger reviews: six root-cause alerts also go straight to #alerts; a failed send makes Alertmanager retry without repeating what went out; routing falls back to a snapshot on a local encrypted volume when Authentik does not answer; a critical or security alert that reaches nobody posts one line to #alerts.
+
+Consequences: a Slack post now depends on the adapter as well as Alertmanager. The fallback receiver, `NotifyPipeDown` and `NotifyDeliveryFailing` cover that. A new rule reaches nobody until someone switches it on, unless it is critical or security, which reports itself once.
 

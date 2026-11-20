@@ -3646,8 +3646,9 @@ try:
 except Exception as exc:  # any failure degrades to WARN-and-skip upstream
     die(f"{type(exc).__name__}: {exc}")
 
-# Alertmanager receiver formats (slack-critical/-warning/-info/-security in
-# stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl):
+# #alerts post formats (the notify adapter's stacks/notify/files/slack.py,
+# which keeps the old Alertmanager Slack receivers' titles, and the
+# slack-fallback receiver in prometheus_chart_values.tpl):
 #   [CRITICAL] <alertname> (n) / [WARNING] ... / [SECURITY/<SEV>] ...  -> firing
 #   [RESOLVED] <alertname> (n)                                         -> resolved
 #   [INFO] <alertname> (n) — resolves are titled [RESOLVED] like the other

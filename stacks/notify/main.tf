@@ -26,7 +26,7 @@ locals {
   adapter_files = ["adapter.py", "subs.py", "page.py", "preview.py", "slack.py"]
   # "true" once Alertmanager routes every alert here (plan step 4); before
   # that the adapter only logs what it would post, so nothing posts twice.
-  slack_live = "false"
+  slack_live = "true"
 }
 
 resource "kubernetes_namespace" "notify" {

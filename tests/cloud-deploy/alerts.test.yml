@@ -24,7 +24,7 @@ tests:
       - eval_time: 20m
         alertname: CloudReconcilerDown
         exp_alerts:
-          - exp_labels: {severity: critical, notify: page, subsystem: cloud}
+          - exp_labels: {severity: critical, subsystem: cloud}
   - interval: 2m
     input_series:
       - series: 'up{job="kubernetes-service-endpoints", namespace="monitoring", service="other", instance="10.0.0.2:9090"}'
@@ -33,7 +33,7 @@ tests:
       - eval_time: 20m
         alertname: CloudReconcilerDown
         exp_alerts:
-          - exp_labels: {severity: critical, notify: page, subsystem: cloud}
+          - exp_labels: {severity: critical, subsystem: cloud}
   - interval: 2m
     input_series:
       - series: 'up{job="kubernetes-service-endpoints", namespace="cloud", service="cloud-reconciler", instance="10.0.0.1:9090"}'
@@ -57,7 +57,7 @@ tests:
       - eval_time: 35m
         alertname: CloudReconcileQueueStuck
         exp_alerts:
-          - exp_labels: {severity: critical, notify: page, subsystem: cloud}
+          - exp_labels: {severity: critical, subsystem: cloud}
   - interval: 2m
     input_series:
       - series: 'cloud_reconcile_queue_depth{namespace="cloud", service="cloud-reconciler"}'
@@ -100,7 +100,7 @@ tests:
       - eval_time: 1h40m
         alertname: CloudReconcileQueueStuck
         exp_alerts:
-          - exp_labels: {severity: critical, notify: page, subsystem: cloud}
+          - exp_labels: {severity: critical, subsystem: cloud}
 
   # A job failed after all its attempts: warning, no page, for as long as the
   # failure is inside the 15-minute window. Retries alone are quiet.
