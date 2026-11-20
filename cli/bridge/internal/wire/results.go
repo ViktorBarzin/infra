@@ -1,7 +1,5 @@
 package wire
 
-import "encoding/json"
-
 // Action results, one per action type. A boolean or a count that the
 // protocol shows in a result is written without omitempty, because "clicked:
 // false" and "count: 0" are answers rather than absences.
@@ -75,12 +73,65 @@ type QueryResult struct {
 	Matches []QueryMatch `json:"matches"`
 }
 
-// EvalResult is the result of read.eval. Value is whatever the expression
-// returned, so it stays raw: the caller knows the shape it asked for and the
-// protocol does not.
-type EvalResult struct {
-	Value json.RawMessage `json:"value"`
-	Type  string          `json:"type"`
+// StateViewport is the window's size in CSS pixels and its pixel ratio.
+type StateViewport struct {
+	Width            float64 `json:"width"`
+	Height           float64 `json:"height"`
+	DevicePixelRatio float64 `json:"devicePixelRatio"`
+}
+
+// StateScroll is the window's scroll position.
+type StateScroll struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+// StateFrame is one iframe on the page.
+type StateFrame struct {
+	Src     string `json:"src"`
+	Visible bool   `json:"visible"`
+	Box     Box    `json:"box"`
+}
+
+// StateResult is the result of read.state: the facts agents used to write
+// eval for.
+type StateResult struct {
+	URL             string        `json:"url"`
+	Title           string        `json:"title"`
+	Origin          string        `json:"origin"`
+	ReadyState      string        `json:"readyState"`
+	VisibilityState string        `json:"visibilityState"`
+	HasFocus        bool          `json:"hasFocus"`
+	Viewport        StateViewport `json:"viewport"`
+	Scroll          StateScroll   `json:"scroll"`
+	Frames          []StateFrame  `json:"frames"`
+}
+
+// StorageItem is one key of localStorage or sessionStorage. Truncated says
+// the value was cut.
+type StorageItem struct {
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	Truncated bool   `json:"truncated"`
+}
+
+// StorageResult is the result of read.storage. Count is every key under the
+// prefix, which can exceed len(Items).
+type StorageResult struct {
+	Count int           `json:"count"`
+	Items []StorageItem `json:"items"`
+}
+
+// FetchResult is the result of read.fetch. When Truncated is true the rest of
+// the body is in the action's blob.
+type FetchResult struct {
+	Status     int               `json:"status"`
+	StatusText string            `json:"statusText"`
+	URL        string            `json:"url"`
+	Redirected bool              `json:"redirected"`
+	Headers    map[string]string `json:"headers"`
+	Body       string            `json:"body"`
+	Truncated  bool              `json:"truncated"`
 }
 
 // ScreenshotResult is the result of read.screenshot. The bytes are in the
@@ -143,6 +194,17 @@ type ScrollResult struct {
 	ScrollX  float64 `json:"scrollX"`
 	ScrollY  float64 `json:"scrollY"`
 	AtBottom bool    `json:"atBottom"`
+	// Container is where the --in element ended up, when there was one.
+	Container *ScrollContainer `json:"container,omitempty"`
+}
+
+// ScrollContainer is a scrolled element's own position.
+type ScrollContainer struct {
+	ScrollTop    float64 `json:"scrollTop"`
+	ScrollLeft   float64 `json:"scrollLeft"`
+	ScrollHeight float64 `json:"scrollHeight"`
+	ClientHeight float64 `json:"clientHeight"`
+	AtBottom     bool    `json:"atBottom"`
 }
 
 // DialogResult is the result of input.dialog.
@@ -153,7 +215,7 @@ type DialogResult struct {
 }
 
 // WaitForResult is the result of wait.for. What names the condition that
-// matched: "load", "text", "selector" or "url".
+// matched: "load", "text", "selector", "url", or "ms" for a plain sleep.
 type WaitForResult struct {
 	Matched  bool   `json:"matched"`
 	What     string `json:"what"`

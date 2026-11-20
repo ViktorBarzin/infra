@@ -28,8 +28,8 @@ func TestActionTypeValid(t *testing.T) {
 
 func TestActionTypesCoverTheProtocol(t *testing.T) {
 	all := ActionTypes()
-	if len(all) != 28 {
-		t.Fatalf("got %d action types, want 28 (30 commands minus status and stop, which are routes)", len(all))
+	if len(all) != 30 {
+		t.Fatalf("got %d action types, want 30 (32 commands minus status and stop, which are routes)", len(all))
 	}
 	seen := map[ActionType]bool{}
 	for _, a := range all {
@@ -43,7 +43,8 @@ func TestActionTypesCoverTheProtocol(t *testing.T) {
 	}
 	for _, want := range []ActionType{
 		ActionNavOpen, ActionNavBack, ActionNavForward, ActionNavReload, ActionNavURL,
-		ActionReadText, ActionReadHTML, ActionReadQuery, ActionReadEval, ActionReadScreenshot,
+		ActionReadText, ActionReadHTML, ActionReadQuery, ActionReadScreenshot,
+		ActionReadState, ActionReadStorage, ActionReadFetch,
 		ActionInputClick, ActionInputType, ActionInputFill, ActionInputSelect, ActionInputPress,
 		ActionInputHover, ActionInputScroll, ActionInputDialog,
 		ActionWaitFor,
@@ -74,7 +75,9 @@ func TestActionTypeLane(t *testing.T) {
 		{ActionNavBack, LaneSerial},
 		{ActionNavForward, LaneSerial},
 		{ActionNavURL, LaneSerial},
-		{ActionReadEval, LaneSerial},
+		{ActionReadState, LaneSerial},
+		{ActionReadStorage, LaneSerial},
+		{ActionReadFetch, LaneSerial},
 		{ActionInputClick, LaneSerial},
 		{ActionDiagNetwork, LaneSerial},
 	}
@@ -114,8 +117,8 @@ func TestActionStateTerminal(t *testing.T) {
 
 func TestCommandsCoverThirtyCLICommands(t *testing.T) {
 	all := Commands()
-	if len(all) != 30 {
-		t.Fatalf("got %d commands, want the 30 in protocol section 14", len(all))
+	if len(all) != 32 {
+		t.Fatalf("got %d commands, want the 32 in protocol section 14", len(all))
 	}
 	withAction := 0
 	for _, c := range all {
@@ -130,8 +133,8 @@ func TestCommandsCoverThirtyCLICommands(t *testing.T) {
 			}
 		}
 	}
-	if withAction != 28 {
-		t.Fatalf("%d commands map to an action type, want 28", withAction)
+	if withAction != 30 {
+		t.Fatalf("%d commands map to an action type, want 30", withAction)
 	}
 	for _, routeOnly := range []Command{CmdStatus, CmdStop} {
 		if _, ok := routeOnly.ActionType(); ok {
@@ -140,5 +143,29 @@ func TestCommandsCoverThirtyCLICommands(t *testing.T) {
 	}
 	if typ, ok := CmdCloseTab.ActionType(); !ok || typ != ActionTabClose {
 		t.Fatalf("close-tab maps to %q, %v", typ, ok)
+	}
+}
+
+func TestReadEvalIsGone(t *testing.T) {
+	// Removed in 0.2.0: the Chrome Web Store forbids running code that is
+	// not in the package, and read.eval ran whatever the agent sent.
+	if ActionType("read.eval").Valid() {
+		t.Fatal("read.eval is still a valid action type")
+	}
+	if Command("eval").Valid() {
+		t.Fatal("eval is still a valid command")
+	}
+	for _, c := range []struct {
+		cmd  Command
+		want ActionType
+	}{
+		{CmdState, ActionReadState},
+		{CmdStorage, ActionReadStorage},
+		{CmdFetch, ActionReadFetch},
+	} {
+		got, ok := c.cmd.ActionType()
+		if !ok || got != c.want {
+			t.Fatalf("%q maps to %q (%v), want %q", c.cmd, got, ok, c.want)
+		}
 	}
 }

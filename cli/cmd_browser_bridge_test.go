@@ -8,12 +8,13 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	bb "github.com/ViktorBarzin/browser-bridge/client"
 )
 
 // bridgePaths is every verb this group registers, including the group's own
-// help entry. The 30 protocol commands are checked separately against
+// help entry. The 32 protocol commands are checked separately against
 // bb.Commands(), so a command added to the protocol and forgotten here fails
 // TestBridgeRegistersEveryProtocolCommand rather than passing quietly.
 var bridgePaths = []string{
@@ -21,7 +22,8 @@ var bridgePaths = []string{
 	"browser bridge open", "browser bridge back", "browser bridge forward",
 	"browser bridge reload", "browser bridge url",
 	"browser bridge read-text", "browser bridge read-html", "browser bridge query",
-	"browser bridge eval", "browser bridge screenshot",
+	"browser bridge screenshot", "browser bridge state", "browser bridge storage",
+	"browser bridge fetch",
 	"browser bridge click", "browser bridge type", "browser bridge fill",
 	"browser bridge select", "browser bridge press", "browser bridge hover",
 	"browser bridge scroll", "browser bridge dialog",
@@ -71,8 +73,8 @@ func TestBridgeRegistersEveryProtocolCommand(t *testing.T) {
 			t.Errorf("protocol command %q has no verb", cmd)
 		}
 	}
-	if n := len(bb.Commands()); n != 30 {
-		t.Errorf("the protocol says 30 commands, the client package lists %d", n)
+	if n := len(bb.Commands()); n != 32 {
+		t.Errorf("the protocol says 32 commands, the client package lists %d", n)
 	}
 }
 
@@ -81,6 +83,7 @@ func TestBridgeTiers(t *testing.T) {
 		"browser bridge": true, "browser bridge url": true,
 		"browser bridge read-text": true, "browser bridge read-html": true,
 		"browser bridge query": true, "browser bridge screenshot": true,
+		"browser bridge state": true, "browser bridge storage": true,
 		"browser bridge console": true, "browser bridge network": true,
 		"browser bridge tabs": true, "browser bridge status": true,
 		"browser bridge ping": true, "browser bridge browsers": true,
@@ -231,8 +234,17 @@ func TestBridgeParams(t *testing.T) {
 			bb.ActionReadQuery, `{"selector":"a.nav","max":10}`},
 		{"query attrs", "query", []string{"a.nav", "--max", "3", "--attrs"},
 			bb.ActionReadQuery, `{"selector":"a.nav","max":3,"attrs":true}`},
-		{"eval", "eval", []string{"document.title", "--await"},
-			bb.ActionReadEval, `{"expression":"document.title","awaitPromise":true}`},
+		{"query filtered", "query", []string{"role=button", "--text", "/save/i", "--visible", "--attr", "aria-label", "--attr", "data-value"},
+			bb.ActionReadQuery, `{"selector":"role=button","max":10,"text":"/save/i","visibleOnly":true,"attrNames":["aria-label","data-value"]}`},
+		{"state", "state", nil, bb.ActionReadState, `{}`},
+		{"storage", "storage", []string{"--prefix", "tl:", "--max", "20"},
+			bb.ActionReadStorage, `{"prefix":"tl:","max":20}`},
+		{"storage session", "storage", []string{"--session-storage"},
+			bb.ActionReadStorage, `{"session":true}`},
+		{"fetch", "fetch", []string{"/api/x", "--method", "post", "--header", "x-a: 1", "--header", "accept:application/json", "--body", "{}", "--max", "100"},
+			bb.ActionReadFetch, `{"url":"/api/x","method":"POST","headers":{"accept":"application/json","x-a":"1"},"body":"{}","maxChars":100}`},
+		{"fetch plain", "fetch", []string{"https://example.com/a"},
+			bb.ActionReadFetch, `{"url":"https://example.com/a"}`},
 		{"screenshot", "screenshot", []string{"--full-page", "--selector", "#chart"},
 			bb.ActionReadScreenshot, `{"fullPage":true,"selector":"#chart"}`},
 		{"click selector", "click", []string{"button[type=submit]"},
@@ -254,6 +266,10 @@ func TestBridgeParams(t *testing.T) {
 		{"scroll by", "scroll", []string{"--by", "0,-400"}, bb.ActionInputScroll, `{"dy":-400}`},
 		{"scroll direction", "scroll", []string{"--direction", "down", "--amount", "800"},
 			bb.ActionInputScroll, `{"dy":800}`},
+		{"scroll in a container", "scroll", []string{"--in", ".kix-appview-editor", "--by", "0,550"},
+			bb.ActionInputScroll, `{"container":".kix-appview-editor","dy":550}`},
+		{"click a text locator", "click", []string{"text=View full activity details"},
+			bb.ActionInputClick, `{"selector":"text=View full activity details"}`},
 		{"dialog accept", "dialog", []string{"accept", "--text", "yes"},
 			bb.ActionInputDialog, `{"accept":true,"promptText":"yes"}`},
 		{"dialog dismiss", "dialog", []string{"dismiss"}, bb.ActionInputDialog, `{"accept":false}`},
@@ -264,6 +280,8 @@ func TestBridgeParams(t *testing.T) {
 			bb.ActionWaitFor, `{"selector":".spinner","gone":true}`},
 		{"wait-for url", "wait-for", []string{"--url", "/dashboard"},
 			bb.ActionWaitFor, `{"urlContains":"/dashboard"}`},
+		{"wait-for ms", "wait-for", []string{"--ms", "2500"},
+			bb.ActionWaitFor, `{"ms":2500}`},
 		{"console defaults to twenty", "console", nil, bb.ActionDiagConsole, `{"tail":20}`},
 		{"console errors", "console", []string{"--level", "error", "--head", "5"},
 			bb.ActionDiagConsole, `{"head":5,"level":"error"}`},
@@ -318,7 +336,9 @@ func TestBridgeParamsRejectsMissingArguments(t *testing.T) {
 	}{
 		{"open", nil, "open needs a url"},
 		{"query", nil, "query needs a selector"},
-		{"eval", nil, "eval needs an expression"},
+		{"fetch", nil, "fetch needs a url"},
+		{"fetch", []string{"/x", "--header", "nocolon"}, "--header takes <name>:<value>"},
+		{"wait-for", []string{"Ready", "--ms", "100"}, "--ms is a plain sleep"},
 		{"click", nil, "click needs a selector or --at"},
 		{"type", []string{"#user"}, "type needs a selector and the text"},
 		{"fill", []string{"#user"}, "fill needs a selector and a value"},
@@ -375,7 +395,18 @@ func TestRenderBridgeResult(t *testing.T) {
 			`{"count":2,"matches":[{"index":0,"tag":"a","text":"Home","visible":true},` +
 				`{"index":1,"tag":"a","text":"Docs","visible":false}]}`,
 			[]string{"2 matches", "[0]", "Home", "[1]", "Docs", "hidden"}},
-		{"eval", []string{"1+1"}, `{"value":2,"type":"number"}`, []string{"2"}},
+		{"state", nil,
+			`{"url":"https://e.com/a","title":"A","origin":"https://e.com","readyState":"complete","visibilityState":"visible","hasFocus":true,` +
+				`"viewport":{"width":1280,"height":720,"devicePixelRatio":2},"scroll":{"x":0,"y":40},"frames":[{"src":"https://e.com/f","visible":true,"box":{"x":0,"y":0,"width":300,"height":200}}]}`,
+			[]string{"https://e.com/a", "complete", "visible", "focused", "1280x720@2", "scroll 0,40", "https://e.com/f"}},
+		{"storage", nil, `{"count":3,"items":[{"key":"tl:a","value":"grid","truncated":false},{"key":"tl:b","value":"xx","truncated":true}]}`,
+			[]string{"3 keys", "tl:a=grid", "tl:b=xx", "cut"}},
+		{"fetch", []string{"/api/x"}, `{"status":200,"statusText":"OK","url":"https://e.com/api/x","redirected":false,"headers":{"content-type":"application/json"},"body":"{\"ok\":true}","truncated":false}`,
+			[]string{"200 OK", "https://e.com/api/x", "content-type: application/json", `{"ok":true}`}},
+		{"scroll", []string{"--in", ".pane", "--by", "0,550"},
+			`{"scrollX":0,"scrollY":0,"atBottom":false,"container":{"scrollTop":550,"scrollLeft":0,"scrollHeight":4000,"clientHeight":600,"atBottom":false}}`,
+			[]string{"550", "4000"}},
+		{"wait-for", []string{"--ms", "2000"}, `{"matched":true,"what":"ms","waitedMs":2000}`, []string{"slept", "2000ms"}},
 		{"click", []string{"#a"}, `{"clicked":true,"selector":"#a"}`, []string{"clicked", "#a"}},
 		{"click", []string{"#a"}, `{"clicked":false,"selector":"#a"}`, []string{"did not click", "#a"}},
 		{"type", []string{"#u", "hi"}, `{"typed":true,"chars":2}`, []string{"typed 2 characters"}},
@@ -766,5 +797,35 @@ func TestRenderStatusFlagsAClientOlderThanTheServer(t *testing.T) {
 	got := renderStatusResponse(&s)
 	if !strings.Contains(got, "rebuild") {
 		t.Errorf("a client %s against a server 9.9.9 says nothing about the mismatch:\n%s", bb.Version, got)
+	}
+}
+
+func TestBridgeHasNoEval(t *testing.T) {
+	// browser-bridge 0.2.0 removed eval: the Chrome Web Store forbids running
+	// code that is not in the extension. The verb must not offer it.
+	for _, c := range buildRegistry() {
+		if c.name() == "browser bridge eval" {
+			t.Fatal("browser bridge eval is still registered")
+		}
+	}
+	if _, err := parseBridgeArgs("eval", []string{"1+1"}); err == nil {
+		t.Fatal("parseBridgeArgs accepted eval")
+	}
+}
+
+func TestBridgeWaitForMsRaisesTheTimeoutToFit(t *testing.T) {
+	o, err := parseBridgeArgs("wait-for", []string{"--ms", "90000"})
+	if err != nil {
+		t.Fatalf("parseBridgeArgs: %v", err)
+	}
+	if got := bridgeTarget(o).Timeout; got != 95*time.Second {
+		t.Fatalf("timeout %v, want 95s: the sleep plus five seconds", got)
+	}
+	o, err = parseBridgeArgs("wait-for", []string{"--ms", "90000", "--timeout", "20000"})
+	if err != nil {
+		t.Fatalf("parseBridgeArgs: %v", err)
+	}
+	if got := bridgeTarget(o).Timeout; got != 20*time.Second {
+		t.Fatalf("an explicit --timeout must win, got %v", got)
 	}
 }

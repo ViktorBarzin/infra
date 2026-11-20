@@ -2,9 +2,14 @@ package wire
 
 import "encoding/json"
 
-// ActionType names one unit of work the extension can perform. There are 28,
-// one for each of the 30 CLI commands except status and stop, which are
+// ActionType names one unit of work the extension can perform. There are 30,
+// one for each of the 32 CLI commands except status and stop, which are
 // server routes and never reach the browser as an action.
+//
+// read.eval is gone since 0.2.0. It ran JavaScript the agent wrote, and the
+// Chrome Web Store forbids running code that is not in the package.
+// read.state, read.storage and read.fetch cover what agents used it for;
+// raw JavaScript belongs to `homelab browser run` in the cluster Chrome.
 type ActionType string
 
 // Navigation.
@@ -21,8 +26,10 @@ const (
 	ActionReadText       ActionType = "read.text"
 	ActionReadHTML       ActionType = "read.html"
 	ActionReadQuery      ActionType = "read.query"
-	ActionReadEval       ActionType = "read.eval"
 	ActionReadScreenshot ActionType = "read.screenshot"
+	ActionReadState      ActionType = "read.state"
+	ActionReadStorage    ActionType = "read.storage"
+	ActionReadFetch      ActionType = "read.fetch"
 )
 
 // Input.
@@ -92,8 +99,10 @@ var actionLanes = map[ActionType]Lane{
 	ActionReadText:       LaneSerial,
 	ActionReadHTML:       LaneSerial,
 	ActionReadQuery:      LaneSerial,
-	ActionReadEval:       LaneSerial,
 	ActionReadScreenshot: LaneSerial,
+	ActionReadState:      LaneSerial,
+	ActionReadStorage:    LaneSerial,
+	ActionReadFetch:      LaneSerial,
 	ActionInputClick:     LaneSerial,
 	ActionInputType:      LaneSerial,
 	ActionInputFill:      LaneSerial,
@@ -114,7 +123,8 @@ var actionLanes = map[ActionType]Lane{
 // the protocol groups the commands.
 var actionOrder = []ActionType{
 	ActionNavOpen, ActionNavBack, ActionNavForward, ActionNavReload, ActionNavURL,
-	ActionReadText, ActionReadHTML, ActionReadQuery, ActionReadEval, ActionReadScreenshot,
+	ActionReadText, ActionReadHTML, ActionReadQuery, ActionReadScreenshot,
+	ActionReadState, ActionReadStorage, ActionReadFetch,
 	ActionInputClick, ActionInputType, ActionInputFill, ActionInputSelect, ActionInputPress,
 	ActionInputHover, ActionInputScroll, ActionInputDialog,
 	ActionWaitFor,
@@ -222,7 +232,7 @@ type ActionStatus struct {
 	// Ok is present only when State is done.
 	Ok *bool `json:"ok,omitempty"`
 	// Result is the action's typed result, shaped per results.go. It is
-	// opaque here because one field carries 28 different shapes.
+	// opaque here because one field carries 30 different shapes.
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  *Error          `json:"error,omitempty"`
 	Blob   *BlobRef        `json:"blob,omitempty"`

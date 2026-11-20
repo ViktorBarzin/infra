@@ -60,8 +60,8 @@ type (
 	EmulateResult        = wire.EmulateResult
 	Error                = wire.Error
 	ErrorEnvelope        = wire.ErrorEnvelope
-	EvalParams           = wire.EvalParams
-	EvalResult           = wire.EvalResult
+	FetchParams          = wire.FetchParams
+	FetchResult          = wire.FetchResult
 	FillFailure          = wire.FillFailure
 	FillField            = wire.FillField
 	FillParams           = wire.FillParams
@@ -94,6 +94,15 @@ type (
 	ScreenshotResult     = wire.ScreenshotResult
 	ScrollParams         = wire.ScrollParams
 	ScrollResult         = wire.ScrollResult
+	ScrollContainer      = wire.ScrollContainer
+	StateFrame           = wire.StateFrame
+	StateParams          = wire.StateParams
+	StateResult          = wire.StateResult
+	StateScroll          = wire.StateScroll
+	StateViewport        = wire.StateViewport
+	StorageItem          = wire.StorageItem
+	StorageParams        = wire.StorageParams
+	StorageResult        = wire.StorageResult
 	SelectParams         = wire.SelectParams
 	SelectResult         = wire.SelectResult
 	ServerInfo           = wire.ServerInfo
@@ -135,10 +144,12 @@ const (
 	ActionNavOpen          = wire.ActionNavOpen
 	ActionNavReload        = wire.ActionNavReload
 	ActionNavURL           = wire.ActionNavURL
-	ActionReadEval         = wire.ActionReadEval
+	ActionReadFetch        = wire.ActionReadFetch
 	ActionReadHTML         = wire.ActionReadHTML
 	ActionReadQuery        = wire.ActionReadQuery
 	ActionReadScreenshot   = wire.ActionReadScreenshot
+	ActionReadState        = wire.ActionReadState
+	ActionReadStorage      = wire.ActionReadStorage
 	ActionReadText         = wire.ActionReadText
 	ActionTabActivate      = wire.ActionTabActivate
 	ActionTabAttach        = wire.ActionTabAttach
@@ -166,13 +177,15 @@ const (
 	CmdDetach              = wire.CmdDetach
 	CmdDialog              = wire.CmdDialog
 	CmdEmulate             = wire.CmdEmulate
-	CmdEval                = wire.CmdEval
+	CmdFetch               = wire.CmdFetch
 	CmdFill                = wire.CmdFill
 	CmdForward             = wire.CmdForward
 	CmdHover               = wire.CmdHover
 	CmdNetwork             = wire.CmdNetwork
 	CmdOpen                = wire.CmdOpen
 	CmdPing                = wire.CmdPing
+	CmdState               = wire.CmdState
+	CmdStorage             = wire.CmdStorage
 	CmdPress               = wire.CmdPress
 	CmdQuery               = wire.CmdQuery
 	CmdReadHTML            = wire.CmdReadHTML
@@ -285,7 +298,7 @@ const (
 	ProtocolVersion = wire.Version
 )
 
-// Helpers a CLI needs before it sends anything: what the 30 commands are,
+// Helpers a CLI needs before it sends anything: what the 32 commands are,
 // and whether an id the user typed is well formed.
 var (
 	ActionTypes    = wire.ActionTypes

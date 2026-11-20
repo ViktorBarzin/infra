@@ -594,7 +594,8 @@ func TestEveryCommandHasAClientMethod(t *testing.T) {
 	// method here is a command the verb cannot implement.
 	methods := map[wire.Command]bool{
 		wire.CmdOpen: true, wire.CmdBack: true, wire.CmdForward: true, wire.CmdReload: true, wire.CmdURL: true,
-		wire.CmdReadText: true, wire.CmdReadHTML: true, wire.CmdQuery: true, wire.CmdEval: true, wire.CmdScreenshot: true,
+		wire.CmdReadText: true, wire.CmdReadHTML: true, wire.CmdQuery: true, wire.CmdScreenshot: true,
+		wire.CmdState: true, wire.CmdStorage: true, wire.CmdFetch: true,
 		wire.CmdClick: true, wire.CmdType: true, wire.CmdFill: true, wire.CmdSelect: true, wire.CmdPress: true,
 		wire.CmdHover: true, wire.CmdScroll: true, wire.CmdDialog: true,
 		wire.CmdWaitFor: true,

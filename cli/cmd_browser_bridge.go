@@ -60,17 +60,22 @@ func browserBridgeCommands() []Command {
 		{Path: []string{"browser", "bridge", "url"}, Tier: r,
 			Summary: "print where a tab is: bridge url [--tab T]", Run: bridgeVerb("url")},
 
-		// Reading, 5.
+		// Reading, 7. eval is gone since browser-bridge 0.2.0: the Chrome Web
+		// Store forbids running code that is not in the extension.
 		{Path: []string{"browser", "bridge", "read-text"}, Tier: r,
 			Summary: "read a tab's text: bridge read-text [selector] [--max N] [--tab T]", Run: bridgeVerb("read-text")},
 		{Path: []string{"browser", "bridge", "read-html"}, Tier: r,
 			Summary: "read a tab's markup: bridge read-html [selector] [--inner] [--tab T]", Run: bridgeVerb("read-html")},
 		{Path: []string{"browser", "bridge", "query"}, Tier: r,
-			Summary: "match elements and report them: bridge query <selector> [--max N] [--attrs]", Run: bridgeVerb("query")},
-		{Path: []string{"browser", "bridge", "eval"}, Tier: w,
-			Summary: "evaluate an expression in the page: bridge eval <expr> [--await]", Run: bridgeVerb("eval")},
+			Summary: "match elements and report them: bridge query <locator> [--text T] [--visible] [--attr NAME]… [--max N] [--attrs]", Run: bridgeVerb("query")},
 		{Path: []string{"browser", "bridge", "screenshot"}, Tier: r,
 			Summary: "capture a tab to a file: bridge screenshot [--output P] [--full-page] [--selector S]", Run: bridgeVerb("screenshot")},
+		{Path: []string{"browser", "bridge", "state"}, Tier: r,
+			Summary: "url, title, focus, viewport, scroll and iframes of a tab: bridge state [--tab T]", Run: bridgeVerb("state")},
+		{Path: []string{"browser", "bridge", "storage"}, Tier: r,
+			Summary: "list the page's localStorage: bridge storage [--prefix P] [--max N] [--session-storage]", Run: bridgeVerb("storage")},
+		{Path: []string{"browser", "bridge", "fetch"}, Tier: w,
+			Summary: "fetch() inside the page, with its cookies: bridge fetch <url> [--method M] [--header K:V]… [--body B]", Run: bridgeVerb("fetch")},
 
 		// Input, 8.
 		{Path: []string{"browser", "bridge", "click"}, Tier: w,
@@ -86,13 +91,13 @@ func browserBridgeCommands() []Command {
 		{Path: []string{"browser", "bridge", "hover"}, Tier: w,
 			Summary: "hover an element: bridge hover <selector>", Run: bridgeVerb("hover")},
 		{Path: []string{"browser", "bridge", "scroll"}, Tier: w,
-			Summary: "scroll the page or an element into view: bridge scroll --to S | --by DX,DY", Run: bridgeVerb("scroll")},
+			Summary: "scroll the page, a pane, or an element into view: bridge scroll --to S | --by DX,DY [--in S]", Run: bridgeVerb("scroll")},
 		{Path: []string{"browser", "bridge", "dialog"}, Tier: w,
 			Summary: "answer an open JS dialog: bridge dialog accept|dismiss [--text T]", Run: bridgeVerb("dialog")},
 
 		// Waiting, 1.
 		{Path: []string{"browser", "bridge", "wait-for"}, Tier: w,
-			Summary: "wait for a load, a text, a selector or a url: bridge wait-for [text…] [--selector S]", Run: bridgeVerb("wait-for")},
+			Summary: "wait for a load, a text, a selector, a url, or N ms: bridge wait-for [text…] [--selector S] [--ms N]", Run: bridgeVerb("wait-for")},
 
 		// Diagnostics, 3.
 		{Path: []string{"browser", "bridge", "console"}, Tier: r,
@@ -139,7 +144,7 @@ func browserBridgeCommands() []Command {
 func bridgeGroupHelp(args []string) error {
 	if bad := bridgeUnknownSubcommand(args); bad != "" {
 		return bridgeFail("bridge", bridgeUsage(
-			"unknown command `browser bridge %s` (try: homelab browser bridge --help)", bad))
+			"unknown command `browser bridge %s`%s (try: homelab browser bridge --help)", bad, bridgeRemovedHint(bad)))
 	}
 	fmt.Print(bridgeHelp())
 	return nil
@@ -219,9 +224,19 @@ type bridgeOpts struct {
 	direction string
 	amount    int
 
+	// Reading, filters and the page-context commands.
+	visible        bool
+	attrNames      []string
+	prefix         string
+	sessionStorage bool
+	method         string
+	fetchHeaders   []string
+	container      string
+
 	// Waiting.
 	waitURL string
 	gone    bool
+	ms      int
 
 	// Diagnostics.
 	text        string
@@ -259,7 +274,7 @@ var bridgeBoolFlags = map[string]bool{
 	"inner": true, "attrs": true, "await": true, "full-page": true,
 	"double": true, "clear": true, "enter": true, "gone": true,
 	"count": true, "all": true, "reset": true, "mine": true,
-	"all-windows": true, "force": true,
+	"all-windows": true, "force": true, "visible": true, "session-storage": true,
 }
 
 // bridgeCommandFlags are the flags each command accepts beyond the globals.
@@ -271,18 +286,20 @@ var bridgeCommandFlags = map[string][]string{
 	"url":        {},
 	"read-text":  {"max"},
 	"read-html":  {"inner"},
-	"query":      {"max", "attrs"},
-	"eval":       {"await"},
+	"query":      {"max", "attrs", "text", "visible", "attr"},
 	"screenshot": {"output", "full-page", "selector"},
+	"state":      {},
+	"storage":    {"prefix", "max", "session-storage"},
+	"fetch":      {"method", "header", "body", "max"},
 	"click":      {"at", "double", "button"},
 	"type":       {"clear", "enter", "delay"},
 	"fill":       {"set"},
 	"select":     {"by"},
 	"press":      {"mod"},
 	"hover":      {},
-	"scroll":     {"to", "by", "direction", "amount"},
+	"scroll":     {"to", "by", "direction", "amount", "in"},
 	"dialog":     {"text"},
-	"wait-for":   {"selector", "gone", "url"},
+	"wait-for":   {"selector", "gone", "url", "ms"},
 	"console":    {"tail", "head", "level", "count", "clear"},
 	"network":    {"id", "type", "limit", "all", "body"},
 	"emulate": {"color-scheme", "cpu", "network", "geo", "user-agent",
@@ -344,6 +361,9 @@ func bridgeAllowedFlags(cmd string) map[string]bool {
 // dropped on the floor (see flagToken in homelab.go for what that cost).
 func parseBridgeArgs(cmd string, args []string) (bridgeOpts, error) {
 	o := bridgeOpts{cmd: cmd}
+	if _, ok := bridgeCommandFlags[cmd]; !ok {
+		return o, bridgeUsage("unknown command `browser bridge %s`%s (try: homelab browser bridge --help)", cmd, bridgeRemovedHint(cmd))
+	}
 	allowed := bridgeAllowedFlags(cmd)
 
 	atoi := func(s, flag string) (int, error) {
@@ -466,6 +486,24 @@ func parseBridgeArgs(cmd string, args []string) (bridgeOpts, error) {
 			o.waitURL = value
 		case "gone":
 			o.gone = true
+		case "ms":
+			if o.ms, err = atoi(value, "--ms"); err != nil {
+				return o, err
+			}
+		case "visible":
+			o.visible = true
+		case "attr":
+			o.attrNames = append(o.attrNames, value)
+		case "prefix":
+			o.prefix = value
+		case "session-storage":
+			o.sessionStorage = true
+		case "method":
+			o.method = value
+		case "header":
+			o.fetchHeaders = append(o.fetchHeaders, value)
+		case "in":
+			o.container = value
 		case "text":
 			o.text = value
 		case "tail":
@@ -601,13 +639,19 @@ func bridgeParams(o bridgeOpts) (bb.ActionType, json.RawMessage, error) {
 		if max == 0 {
 			max = 10
 		}
-		return bridgeAction(bb.ActionReadQuery, bb.QueryParams{Selector: sel, Max: max, Attrs: o.attrs})
-	case "eval":
-		expr := strings.Join(o.positional, " ")
-		if expr == "" {
-			return "", nil, bridgeUsage("eval needs an expression: homelab browser bridge eval <expression>")
+		return bridgeAction(bb.ActionReadQuery, bb.QueryParams{
+			Selector: sel, Max: max, Attrs: o.attrs, Text: o.text, VisibleOnly: o.visible, AttrNames: o.attrNames})
+	case "state":
+		return bridgeAction(bb.ActionReadState, bridgeNoParams{})
+	case "storage":
+		return bridgeAction(bb.ActionReadStorage, bb.StorageParams{
+			Session: o.sessionStorage, Prefix: o.prefix, Max: o.maxN})
+	case "fetch":
+		p, err := bridgeFetchParams(o)
+		if err != nil {
+			return "", nil, err
 		}
-		return bridgeAction(bb.ActionReadEval, bb.EvalParams{Expression: expr, AwaitPromise: o.await})
+		return bridgeAction(bb.ActionReadFetch, p)
 	case "screenshot":
 		return bridgeAction(bb.ActionReadScreenshot, bb.ScreenshotParams{
 			FullPage: o.fullPage, Selector: o.selector})
@@ -688,8 +732,11 @@ func bridgeParams(o bridgeOpts) (bb.ActionType, json.RawMessage, error) {
 		}
 
 	case "wait-for":
+		if o.ms > 0 && (len(o.positional) > 0 || o.selector != "" || o.waitURL != "") {
+			return "", nil, bridgeUsage("--ms is a plain sleep and cannot be combined with text, --selector or --url")
+		}
 		return bridgeAction(bb.ActionWaitFor, bb.WaitForParams{
-			Texts: o.positional, Selector: o.selector, Gone: o.gone, URLContains: o.waitURL})
+			Texts: o.positional, Selector: o.selector, Gone: o.gone, URLContains: o.waitURL, Ms: o.ms})
 
 	case "console":
 		p := bb.ConsoleParams{
@@ -790,7 +837,7 @@ func bridgeFillFields(o bridgeOpts) ([]bb.FillField, error) {
 }
 
 func bridgeScrollParams(o bridgeOpts) (bb.ScrollParams, error) {
-	p := bb.ScrollParams{Selector: o.to}
+	p := bb.ScrollParams{Selector: o.to, Container: o.container}
 	switch {
 	case o.by != "":
 		dx, dy, ok := bridgePair(o.by)
@@ -819,6 +866,42 @@ func bridgeScrollParams(o bridgeOpts) (bb.ScrollParams, error) {
 		return p, bridgeUsage("scroll needs --to <selector>, --by <dx>,<dy> or --direction <up|down|left|right>")
 	}
 	return p, nil
+}
+
+// bridgeFetchParams builds read.fetch from `fetch <url>` and its flags. The
+// method is upper-cased here so the page sees what a server expects.
+func bridgeFetchParams(o bridgeOpts) (bb.FetchParams, error) {
+	p := bb.FetchParams{URL: o.arg(0), Method: strings.ToUpper(o.method), MaxChars: o.maxN}
+	if p.URL == "" {
+		return p, bridgeUsage("fetch needs a url: homelab browser bridge fetch <url>")
+	}
+	for _, h := range o.fetchHeaders {
+		name, value, ok := strings.Cut(h, ":")
+		name = strings.TrimSpace(name)
+		if !ok || name == "" {
+			return p, bridgeUsage("--header takes <name>:<value>, got %q", h)
+		}
+		if p.Headers == nil {
+			p.Headers = map[string]string{}
+		}
+		p.Headers[name] = strings.TrimSpace(value)
+	}
+	if o.body != "" {
+		body := o.body
+		p.Body = &body
+	}
+	return p, nil
+}
+
+// bridgeRemovedHint names what replaced a command that no longer exists, so
+// an agent repeating an old habit learns the new one from the error.
+func bridgeRemovedHint(cmd string) string {
+	if cmd == "eval" {
+		return "; eval was removed in browser-bridge 0.2.0 because the Chrome Web Store forbids running" +
+			" code that is not in the extension. Use state, storage, fetch, query --text/--visible/--attr," +
+			" scroll --in, wait-for --ms, or a text= or role= locator; for raw JavaScript use homelab browser run"
+	}
+	return ""
 }
 
 func bridgeEmulateParams(o bridgeOpts) (bb.EmulateParams, error) {
@@ -963,6 +1046,13 @@ func bridgeTarget(o bridgeOpts) bb.Target {
 	}
 	if o.timeoutMs > 0 {
 		t.Timeout = time.Duration(o.timeoutMs) * time.Millisecond
+	} else if o.cmd == "wait-for" && o.ms > 0 {
+		// The sleep plus five seconds, inside the protocol's 600 s ceiling,
+		// so a long --ms is not cut short by the default action timeout.
+		t.Timeout = time.Duration(o.ms)*time.Millisecond + 5*time.Second
+		if t.Timeout > 600*time.Second {
+			t.Timeout = 600 * time.Second
+		}
 	}
 	return t
 }

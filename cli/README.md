@@ -259,12 +259,12 @@ the point: a half-filled form, a page behind a POST, an ephemeral login, a tab
 already open on their screen. Anti-bot walls stay with `browser run`, which
 needs no human at all.
 
-30 commands from the protocol plus `enrol`, `pair` and `browsers`:
+32 commands from the protocol plus `enrol`, `pair` and `browsers`:
 
 | Group | Commands |
 |---|---|
 | navigation | `open` `back` `forward` `reload` `url` |
-| reading | `read-text` `read-html` `query` `eval` `screenshot` |
+| reading | `read-text` `read-html` `query` `screenshot` `state` `storage` `fetch` |
 | input | `click` `type` `fill` `select` `press` `hover` `scroll` `dialog` |
 | waiting | `wait-for` |
 | diagnostics | `console` `network` `emulate` |
@@ -277,6 +277,20 @@ browser, not only one an agent opened. `tabs` lists them with owner `you` or
 `agent`. An unattached tab attaches itself on first use and Chrome raises its
 own debugging banner, which is never suppressed. Global flags: `--browser`,
 `--session`, `--timeout <ms>`, `--server`, `--json`.
+
+Every selector argument is a locator: plain CSS, `text=<words>` or
+`text=/regex/flags` (the innermost element with that text), or
+`role=<role>[name="<name>"]` (ARIA role and accessible name), so
+`click 'text=Save'` and `click 'role=link[name=Docs]'` need no JavaScript.
+There is no `eval` since browser-bridge 0.2.0: the Chrome Web Store forbids
+running code that is not in the extension. What agents used it for has typed
+commands: `query <loc> --text T --visible --attr NAME`, `scroll --in <loc>
+--by 0,500` for a pane that scrolls inside the page, `wait-for --ms N`, `state`
+(url, focus, viewport, scroll, iframes), `storage [--prefix P]
+[--session-storage]` and `fetch <url> [--method] [--header K:V] [--body]`,
+which runs inside the page with its cookies. Raw JavaScript stays with
+`browser run`. The full grammar is section 14 of the browser-bridge repo's
+`docs/protocol.md`.
 
 Exit codes are the protocol's, so a script can branch: 0 ok, 1 the action
 failed, 2 usage, 3 no browser connected, 4 the tab could not be resolved,

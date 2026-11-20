@@ -1,7 +1,7 @@
 # bridge/, a temporary vendored copy
 
 `client/` and `internal/wire/` are copied, unchanged, from
-`/home/wizard/code/browser-bridge` at commit `29d9b7d`. `homelab browser
+`/home/wizard/code/browser-bridge` at commit `b240ee6` (v0.2.0). `homelab browser
 bridge` imports `github.com/ViktorBarzin/browser-bridge/client`, the real
 import path, and `go.mod` here plus a `replace` in `../go.mod` point that path
 at this directory.

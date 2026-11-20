@@ -6,4 +6,4 @@ package client
 //
 // `homelab browser bridge` reports it, which is how a stale vendored copy of
 // this package becomes visible rather than mysterious.
-const Version = "0.1.0"
+const Version = "0.2.0"

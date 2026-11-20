@@ -54,9 +54,20 @@ func (c *Client) Query(ctx context.Context, t Target, p wire.QueryParams) (*wire
 	return runAction[wire.QueryParams, wire.QueryResult](ctx, c, t, wire.ActionReadQuery, p)
 }
 
-// Eval evaluates an expression in the page.
-func (c *Client) Eval(ctx context.Context, t Target, p wire.EvalParams) (*wire.EvalResult, error) {
-	return runAction[wire.EvalParams, wire.EvalResult](ctx, c, t, wire.ActionReadEval, p)
+// State reads the page's url, title, focus, viewport, scroll and iframes.
+func (c *Client) State(ctx context.Context, t Target) (*wire.StateResult, error) {
+	return runAction[wire.StateParams, wire.StateResult](ctx, c, t, wire.ActionReadState, wire.StateParams{})
+}
+
+// Storage lists localStorage, or sessionStorage, under a prefix.
+func (c *Client) Storage(ctx context.Context, t Target, p wire.StorageParams) (*wire.StorageResult, error) {
+	return runAction[wire.StorageParams, wire.StorageResult](ctx, c, t, wire.ActionReadStorage, p)
+}
+
+// Fetch runs fetch() inside the page, with the page's cookies. A truncated
+// body continues in the action's blob.
+func (c *Client) Fetch(ctx context.Context, t Target, p wire.FetchParams) (*wire.FetchResult, error) {
+	return runAction[wire.FetchParams, wire.FetchResult](ctx, c, t, wire.ActionReadFetch, p)
 }
 
 // Screenshot captures the tab. The bytes are in a blob; ScreenshotTo fetches

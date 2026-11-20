@@ -1,7 +1,8 @@
 package wire
 
-// Command is one of the 30 CLI commands in v1. Twenty-eight of them enqueue
-// an action; status and stop are server routes and never reach the browser.
+// Command is one of the 32 CLI commands. Thirty of them enqueue an action;
+// status and stop are server routes and never reach the browser. eval was
+// removed in 0.2.0, see ActionType.
 // The verb can drive its dispatch table from Commands.
 type Command string
 
@@ -14,13 +15,15 @@ const (
 	CmdURL     Command = "url"
 )
 
-// Reading, 5.
+// Reading, 7.
 const (
 	CmdReadText   Command = "read-text"
 	CmdReadHTML   Command = "read-html"
 	CmdQuery      Command = "query"
-	CmdEval       Command = "eval"
 	CmdScreenshot Command = "screenshot"
+	CmdState      Command = "state"
+	CmdStorage    Command = "storage"
+	CmdFetch      Command = "fetch"
 )
 
 // Input, 8.
@@ -72,8 +75,10 @@ var commandActions = map[Command]ActionType{
 	CmdReadText:   ActionReadText,
 	CmdReadHTML:   ActionReadHTML,
 	CmdQuery:      ActionReadQuery,
-	CmdEval:       ActionReadEval,
 	CmdScreenshot: ActionReadScreenshot,
+	CmdState:      ActionReadState,
+	CmdStorage:    ActionReadStorage,
+	CmdFetch:      ActionReadFetch,
 	CmdClick:      ActionInputClick,
 	CmdType:       ActionInputType,
 	CmdFill:       ActionInputFill,
@@ -96,7 +101,7 @@ var commandActions = map[Command]ActionType{
 
 var commandOrder = []Command{
 	CmdOpen, CmdBack, CmdForward, CmdReload, CmdURL,
-	CmdReadText, CmdReadHTML, CmdQuery, CmdEval, CmdScreenshot,
+	CmdReadText, CmdReadHTML, CmdQuery, CmdScreenshot, CmdState, CmdStorage, CmdFetch,
 	CmdClick, CmdType, CmdFill, CmdSelect, CmdPress, CmdHover, CmdScroll, CmdDialog,
 	CmdWaitFor,
 	CmdConsole, CmdNetwork, CmdEmulate,
@@ -104,14 +109,14 @@ var commandOrder = []Command{
 	CmdStatus, CmdPing, CmdStop,
 }
 
-// Commands lists all 30, in protocol order.
+// Commands lists all 32, in protocol order.
 func Commands() []Command {
 	out := make([]Command, len(commandOrder))
 	copy(out, commandOrder)
 	return out
 }
 
-// Valid reports whether c is one of the 30.
+// Valid reports whether c is one of the 32.
 func (c Command) Valid() bool {
 	if _, ok := commandActions[c]; ok {
 		return true

@@ -188,15 +188,36 @@ type QueryParams struct {
 	Selector string `json:"selector"`
 	Max      int    `json:"max,omitempty"`
 	Attrs    bool   `json:"attrs,omitempty"`
+	// Text keeps only matches whose text contains it, case ignored, or
+	// matches it when written /regex/flags.
+	Text string `json:"text,omitempty"`
+	// VisibleOnly drops matches the human cannot see.
+	VisibleOnly bool `json:"visibleOnly,omitempty"`
+	// AttrNames returns only these attributes, which wins over Attrs.
+	AttrNames []string `json:"attrNames,omitempty"`
 }
 
-// EvalParams drives read.eval.
-type EvalParams struct {
-	Expression   string `json:"expression"`
-	AwaitPromise bool   `json:"awaitPromise,omitempty"`
+// StateParams drives read.state, which takes nothing.
+type StateParams = EmptyParams
+
+// StorageParams drives read.storage.
+type StorageParams struct {
+	// Session reads sessionStorage instead of localStorage.
+	Session bool   `json:"session,omitempty"`
+	Prefix  string `json:"prefix,omitempty"`
+	Max     int    `json:"max,omitempty"`
 }
 
-// ScreenshotParams drives read.screenshot. The result is always a blob,
+// FetchParams drives read.fetch, a fetch() run inside the page so it carries
+// the page's cookies. Body is a pointer so an empty body and no body differ.
+type FetchParams struct {
+	URL      string            `json:"url"`
+	Method   string            `json:"method,omitempty"`
+	Headers  map[string]string `json:"headers,omitempty"`
+	Body     *string           `json:"body,omitempty"`
+	MaxChars int               `json:"maxChars,omitempty"`
+}
+
 // never inline bytes.
 type ScreenshotParams struct {
 	FullPage bool   `json:"fullPage,omitempty"`
@@ -255,9 +276,11 @@ type HoverParams struct {
 // ScrollParams drives input.scroll. With a selector it scrolls that element
 // into view; with DX or DY it scrolls the page by that many pixels.
 type ScrollParams struct {
-	Selector string  `json:"selector,omitempty"`
-	DX       float64 `json:"dx,omitempty"`
-	DY       float64 `json:"dy,omitempty"`
+	Selector string `json:"selector,omitempty"`
+	// Container scrolls that element by DX and DY instead of the window.
+	Container string  `json:"container,omitempty"`
+	DX        float64 `json:"dx,omitempty"`
+	DY        float64 `json:"dy,omitempty"`
 }
 
 // DialogParams drives input.dialog.
@@ -274,6 +297,8 @@ type WaitForParams struct {
 	Selector    string   `json:"selector,omitempty"`
 	Gone        bool     `json:"gone,omitempty"`
 	URLContains string   `json:"urlContains,omitempty"`
+	// Ms is a plain sleep, and cannot be combined with the conditions above.
+	Ms int `json:"ms,omitempty"`
 }
 
 // ConsoleParams drives diag.console.

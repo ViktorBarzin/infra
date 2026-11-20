@@ -98,15 +98,26 @@ func renderBridgeResult(o bridgeOpts, raw json.RawMessage) (string, error) {
 		}
 		return renderQueryResult(r), nil
 
-	case "eval":
-		r, err := bridgeDecode[bb.EvalResult](raw)
+	case "state":
+		r, err := bridgeDecode[bb.StateResult](raw)
 		if err != nil {
 			return "", err
 		}
-		if len(r.Value) == 0 {
-			return "(" + r.Type + ")", nil
+		return renderStateResult(r), nil
+
+	case "storage":
+		r, err := bridgeDecode[bb.StorageResult](raw)
+		if err != nil {
+			return "", err
 		}
-		return string(r.Value), nil
+		return renderStorageResult(r), nil
+
+	case "fetch":
+		r, err := bridgeDecode[bb.FetchResult](raw)
+		if err != nil {
+			return "", err
+		}
+		return renderFetchResult(r), nil
 
 	case "screenshot":
 		r, err := bridgeDecode[bb.ScreenshotResult](raw)
@@ -183,6 +194,13 @@ func renderBridgeResult(o bridgeOpts, raw json.RawMessage) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if c := r.Container; c != nil {
+			out := fmt.Sprintf("scrolled %s to %.0f of %.0f (shows %.0f)", o.container, c.ScrollTop, c.ScrollHeight, c.ClientHeight)
+			if c.AtBottom {
+				out += " (at its bottom)"
+			}
+			return out, nil
+		}
 		out := fmt.Sprintf("scrolled to %.0f,%.0f", r.ScrollX, r.ScrollY)
 		if r.AtBottom {
 			out += " (at the bottom of the page)"
@@ -214,6 +232,9 @@ func renderBridgeResult(o bridgeOpts, raw json.RawMessage) (string, error) {
 		}
 		if !r.Matched {
 			return fmt.Sprintf("no match after %dms (waiting for %s)", r.WaitedMs, r.What), nil
+		}
+		if r.What == "ms" {
+			return fmt.Sprintf("slept %dms", r.WaitedMs), nil
 		}
 		return fmt.Sprintf("matched %s in %dms", r.What, r.WaitedMs), nil
 
@@ -308,6 +329,63 @@ func renderBridgeResult(o bridgeOpts, raw json.RawMessage) (string, error) {
 			bridgePlural(r.AttachedTabs, "attached tab")), nil
 	}
 	return string(raw), nil
+}
+
+func renderStateResult(r *bb.StateResult) string {
+	var b strings.Builder
+	focus := "not focused"
+	if r.HasFocus {
+		focus = "focused"
+	}
+	fmt.Fprintf(&b, "%s  %s\n", r.URL, r.Title)
+	fmt.Fprintf(&b, "readyState %s, %s, %s, viewport %gx%g@%g, scroll %g,%g\n",
+		r.ReadyState, r.VisibilityState, focus,
+		r.Viewport.Width, r.Viewport.Height, r.Viewport.DevicePixelRatio, r.Scroll.X, r.Scroll.Y)
+	for i, f := range r.Frames {
+		shown := "hidden"
+		if f.Visible {
+			shown = "visible"
+		}
+		fmt.Fprintf(&b, "  frame[%d] %s  %s %gx%g at %g,%g\n", i, f.Src, shown, f.Box.Width, f.Box.Height, f.Box.X, f.Box.Y)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func renderStorageResult(r *bb.StorageResult) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d keys", r.Count)
+	if len(r.Items) < r.Count {
+		fmt.Fprintf(&b, ", showing %d (raise --max)", len(r.Items))
+	}
+	for _, it := range r.Items {
+		fmt.Fprintf(&b, "\n  %s=%s", it.Key, it.Value)
+		if it.Truncated {
+			b.WriteString("  (value cut at 2000 characters)")
+		}
+	}
+	return b.String()
+}
+
+func renderFetchResult(r *bb.FetchResult) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d %s  %s", r.Status, r.StatusText, r.URL)
+	if r.Redirected {
+		b.WriteString("  (redirected)")
+	}
+	names := make([]string, 0, len(r.Headers))
+	for name := range r.Headers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		fmt.Fprintf(&b, "\n%s: %s", name, r.Headers[name])
+	}
+	b.WriteString("\n\n")
+	b.WriteString(r.Body)
+	if r.Truncated {
+		b.WriteString("\n\n(truncated: the rest of the body is in the action's blob; raise --max to see more)")
+	}
+	return b.String()
 }
 
 func renderQueryResult(r *bb.QueryResult) string {
@@ -672,7 +750,7 @@ TABS BELONG TO THE HUMAN
 
 COMMANDS
   navigation   open back forward reload url
-  reading      read-text read-html query eval screenshot
+  reading      read-text read-html query screenshot state storage fetch
   input        click type fill select press hover scroll dialog
   waiting      wait-for
   diagnostics  console network emulate
