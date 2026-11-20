@@ -212,6 +212,35 @@ resource "kubernetes_deployment" "health" {
             name  = "DEV_AUTH_EMAIL"
             value = "vbarzin@gmail.com"
           }
+          # Photo food logging: meal photos and cafeteria-menu screenshots go to
+          # claude-agent-service in its no-tools mode (health config.py). The
+          # feature answers 503 when the token is absent, so optional = true.
+          env {
+            name  = "NUTRITION_VISION_ENABLED"
+            value = "true"
+          }
+          env {
+            name = "CLAUDE_AGENT_TOKEN"
+            value_from {
+              secret_key_ref {
+                name     = "health-kv-secrets"
+                key      = "claude_agent_token"
+                optional = true
+              }
+            }
+          }
+          # Connections (health ADR-0006): without the key the API answers 503
+          # instead of storing a credential unencrypted.
+          env {
+            name = "CONNECTION_ENCRYPTION_KEY"
+            value_from {
+              secret_key_ref {
+                name     = "health-kv-secrets"
+                key      = "connection_encryption_key"
+                optional = true
+              }
+            }
+          }
 
           volume_mount {
             name       = "uploads"
@@ -516,6 +545,25 @@ resource "kubernetes_manifest" "external_secret_kv" {
           remoteRef = {
             key      = "health"
             property = "push_vapid_subject"
+          }
+        },
+        # Photo food logging (health docs/plans/2026-11-20-photo-food-diary.md):
+        # a copy of secret/claude-agent-service api_bearer_token, the bearer the
+        # app sends to claude-agent-service's no-tools mode.
+        {
+          secretKey = "claude_agent_token"
+          remoteRef = {
+            key      = "health"
+            property = "claude_agent_token"
+          }
+        },
+        # Fernet key that encrypts per-user Connection credentials at rest (the
+        # Home Assistant body-composition Connector).
+        {
+          secretKey = "connection_encryption_key"
+          remoteRef = {
+            key      = "health"
+            property = "connection_encryption_key"
           }
         },
       ]
