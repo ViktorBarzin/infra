@@ -201,10 +201,12 @@ resource "kubernetes_role" "ci_deploy_tv" {
     resource_names = ["tv-deploy"]
     verbs          = ["get", "patch"]
   }
+  # ghcr-credentials: publish-tv's registry-auth step reads it to pull the
+  # TV build from ghcr (tv .woodpecker/publish-tv.yml).
   rule {
     api_groups     = [""]
     resources      = ["secrets"]
-    resource_names = ["tv-guard-secrets"]
+    resource_names = ["tv-guard-secrets", "ghcr-credentials"]
     verbs          = ["get"]
   }
 }
