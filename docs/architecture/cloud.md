@@ -344,8 +344,8 @@ egress over IPv4 only. The console gets that address as
 `CLOUD_OUTBOUND_IPV4` (`deploy_rules.tf`) and shows it in `/help/apps`, the
 Connect dialog and `cloud help apps`. A new WAN address reaches Cloud with
 the next apply of `stacks/cloud`. Since 2026-11-19 CrowdSec may ban the
-home address for every scenario except the two crawl scenarios, which log
-only for it (`docs/agents/security.md`, "Open risk").
+home address for probing and attack scenarios; the crawl and rate-limit
+scenarios log only for it (`docs/agents/security.md`, "Open risk").
 
 ## A request to a Project App, and what admission allows
 

@@ -5,9 +5,9 @@
 variable "tls_secret_name" { type = string }
 variable "mysql_host" { type = string }
 variable "postgresql_host" { type = string }
-# The home WAN IPv4 (config.tfvars): the crawl scenarios log only for it,
-# every other scenario may ban it (modules/crowdsec/main.tf,
-# crowdsec_home_crawl_yaml).
+# The home WAN IPv4 (config.tfvars): the crawl and rate-limit scenarios log
+# only for it, the others may ban it (modules/crowdsec/main.tf,
+# crowdsec_home_log_only_*).
 variable "public_ip" { type = string }
 
 data "vault_kv_secret_v2" "secrets" {

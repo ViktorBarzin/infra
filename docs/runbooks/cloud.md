@@ -775,22 +775,35 @@ If Cloud's `APP_PORT` changes, change `cloud_app_port` in the same release.
 
 Project pods leave through the home WAN, so a request from a Project App to
 a homelab host through Cloudflare reaches Traefik with the household's
-address. Since 2026-11-19 (Viktor's decision, V8 follow-up) every CrowdSec
-scenario may ban that address, except `crowdsecurity/http-crawl-non_statics`
-and `viktor/distributed-crawl-range`, which log only for it. Evidence: a
-log-only shadow CrowdSec counted 0 overflows for the address in 3 days
-(2026-11-16 to 11-19); it was removed with this change.
+address. Since 2026-11-19 (Viktor's decision, V8 follow-up) probing and
+attack scenarios may ban that address. These four log only for it:
+
+- `crowdsecurity/http-crawl-non_statics` and `viktor/distributed-crawl-range`
+  (crawl, named in the decision);
+- `crowdsecurity/http-429-abuse` and `crowdsecurity/http-403-abuse` (rate
+  limits). They are neither probing nor attack, so the lead read the
+  decision as log-only for them, the conservative reading for the household.
+
+Evidence: a log-only shadow CrowdSec counted 0 overflows for the address in
+3 days (2026-11-16 to 11-19); it was removed with this change.
 
 How it works (`stacks/crowdsec/modules/crowdsec/main.tf`,
-`crowdsec_home_crawl_yaml`):
+`crowdsec_home_log_only_*`, and `lapi-reconcile.sh`):
 
 - The address is in neither the parser whitelist nor the LAPI allowlist
-  `trusted-infra`. The value comes from `config.tfvars` `public_ip`.
-- Two postoverflow whitelists on the cluster agents drop the crawl overflows
-  whose source is the address or a registered prefix that holds it. The
-  agent logs each one and sends no alert: no decision, no Central API signal.
+  `trusted-infra`. The value comes from `config.tfvars` `public_ip` and is
+  never in git.
+- Two postoverflow whitelists on the cluster agents (stages `s00-enrich` and
+  `s01-whitelist`) drop the overflows of those four scenarios whose source is
+  the address or a registered prefix that holds it. The agent logs each one
+  and sends no alert: no decision, no Central API signal.
+- Blocklists may not ban the address. Every 5 minutes the
+  `crowdsec-lapi-reconcile` CronJob deletes decisions that hold it with
+  origin `CAPI`, `lists` or `cscli-import`. It keeps origin `crowdsec` (our
+  scenarios) and `cscli` (manual bans). A blocklist ban can last up to 5
+  minutes before the CronJob deletes it.
 - `docs/agents/security.md`, "Open risk", lists the other effects of leaving
-  the allowlist (blocklists, AppSec 403s, signals).
+  the allowlist (AppSec 403s, signals).
 
 A ban on the address locks the household and every Project App out of every
 homelab host behind Cloudflare for its duration, 4h by default.
@@ -798,27 +811,37 @@ homelab host behind Cloudflare for its duration, 4h by default.
 ```sh
 HOME_IP=$(sed -n 's/^public_ip *= *"\([^"]*\)".*/\1/p' ~/code/infra/config.tfvars)
 
-# Crawl overflows that logged only:
-homelab logs query '{namespace="crowdsec", container="crowdsec-agent"} |= "home address, crawl scenario"' --since 7d
+# Overflows that logged only:
+homelab logs query '{namespace="crowdsec", container="crowdsec-agent"} |= "home address, log-only scenario"' --since 7d
 
-# Is the address banned? (a Range ban that holds it counts too)
-homelab crowdsec decisions | grep -F "$HOME_IP"
+# Is the address banned? --all includes Central API decisions, and --ip also
+# lists a Range decision that holds the address (checked on v1.8.1):
+kubectl -n crowdsec exec deploy/crowdsec-lapi -- cscli decisions list --all --ip "$HOME_IP"
 
 # Which scenario, and from which hosts and paths (household or a Project App).
 # --ip also lists every blocklist import, so drop those:
 kubectl -n crowdsec exec deploy/crowdsec-lapi -- cscli alerts list --ip "$HOME_IP" | grep -v import
 kubectl -n crowdsec exec deploy/crowdsec-lapi -- cscli alerts inspect <id> --details
 
-# Lift a ban:
+# Lift a ban: give the value the list shows, the address or the Range.
 homelab crowdsec unban "$HOME_IP"
 ```
 
-A hand-added allowlist entry does not last: the `crowdsec-lapi-reconcile`
-CronJob makes `trusted-infra` equal to `lapi_allowlist` every 5 minutes.
+A hand-added allowlist entry does not last: the CronJob makes
+`trusted-infra` equal to `lapi_allowlist` every 5 minutes.
+
 Rollback: revert the commit that removed the address from the whitelist and
 the allowlist, then apply `stacks/crowdsec`. The agents restart with the
 address whitelisted again, and the CronJob adds it back to `trusted-infra`
-within 5 minutes.
+within 5 minutes. The revert also recreates the `crowdsec-shadow` instance.
+Decisions made before the revert stay until they expire: lift each with
+`homelab crowdsec unban <ip|cidr>`.
+
+Follow-up: the crawl alert in
+`stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl` still has
+a comment about `crowdsec-shadow`. Its `job="crowdsec-agent"` filter is
+still correct. Fix the comment with the next change to that stack, because
+any change to it applies the whole monitoring stack.
 
 ## Restart
 

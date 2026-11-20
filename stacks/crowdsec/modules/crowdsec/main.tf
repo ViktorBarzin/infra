@@ -15,7 +15,7 @@ variable "crowdsec_dash_machine_password" {
 variable "tier" { type = string }
 variable "public_ip" {
   type        = string
-  description = "The home WAN IPv4 (config.tfvars public_ip). The crawl scenarios log only for it; every other scenario may ban it."
+  description = "The home WAN IPv4 (config.tfvars public_ip). The crawl and rate-limit scenarios log only for it; the others may ban it."
   validation {
     condition     = can(regex("^\\d{1,3}(\\.\\d{1,3}){3}$", var.public_ip)) && can(cidrhost("${var.public_ip}/32", 0))
     error_message = "public_ip must be one IPv4 address."
@@ -332,8 +332,8 @@ locals {
       reason: "Trusted IP - never block"
       # The home address is NOT listed since 2026-11-19 (Viktor's decision,
       # Cloud Render-parity V8 follow-up): every scenario may ban it except the
-      # two crawl scenarios, which the postoverflow whitelist
-      # crowdsec_home_crawl_yaml below drops for it.
+      # crawl and rate-limit scenarios, which the postoverflow whitelists
+      # crowdsec_home_log_only_* below drop for it.
       # London is deliberately NOT listed (Viktor, 2026-10-02): its addresses
       # are treated like any public IP. Since the Flint took the Hyperoptic
       # line directly, the London IPv4 137.220.71.46 is a carrier-grade NAT
@@ -551,10 +551,14 @@ locals {
 # Cloud's Project pods leave through the home WAN, so a request from a Project
 # App to a homelab host through Cloudflare reaches Traefik with the household's
 # address. That address is in neither the parser whitelist nor the LAPI
-# allowlist any more, so every scenario may ban it, except the two crawl
-# scenarios: for them it stays log-only. Evidence: 3 days of a log-only shadow
-# instance (2026-11-16 to 11-19) showed 0 overflows for it (http-crawl-non_statics
-# 3,942 pours, distributed-crawl-range 154, http-probing 26).
+# allowlist any more, so probing and attack scenarios may ban it. The two
+# crawl scenarios stay log-only for it, as decided. The two rate-limit
+# scenarios (http-429-abuse, http-403-abuse) are neither probing nor attack,
+# so they stay log-only too (the lead's reading of the decision, the
+# conservative one for the household). Evidence: 3 days of a log-only shadow
+# instance (2026-11-16 to 11-19) showed 0 overflows for the address
+# (http-crawl-non_statics 3,942 pours, distributed-crawl-range 154,
+# http-probing 26).
 #
 # Mechanism: POSTOVERFLOW whitelists (docs.crowdsec.net, "Postoverflow
 # whitelists"), mounted on the cluster agents, the only ones that run these
@@ -567,41 +571,47 @@ locals {
 # distributed-crawl-range is Range-scoped: its source is the registered prefix,
 # and a ban on a prefix that contains the home address bans the household too.
 # So the expression matches any prefix that contains the address, as the LAPI
-# allowlist did for every scenario. http-crawl-non_statics is Ip-scoped and
-# matches the address itself.
+# allowlist did for every scenario. The other three are Ip-scoped and match
+# the address itself.
 #
-# Two files, because a Range overflow never reaches stage s01-whitelist here:
-# the agent stops processing an overflow at the first postoverflow stage where
-# no node succeeds, and the hub's only s00-enrich node, crowdsecurity/rdns, accepts
-# Ip-scoped overflows only (tested on v1.8.1, 2026-11-20). So the Ip file sits
-# in s01-whitelist, after rdns, and the Range file sits in s00-enrich. The
-# Range file's filter is the whole match, so it touches only a crawl overflow
-# on a prefix that holds the home address; every other Range overflow stops at
-# s00-enrich as before. Neither depends on node order.
+# Two files. The agent stops processing an overflow at the first postoverflow
+# stage where no node succeeds, and the hub's only s00-enrich node,
+# crowdsecurity/rdns, accepts Ip-scoped overflows only, so a Range overflow
+# never reaches s01-whitelist (tested on v1.8.1, 2026-11-20).
+#   - s00-enrich: filter = the whole match, any scope. It succeeds only for a
+#     matching overflow, so every other overflow passes s00-enrich exactly as
+#     before. It does not depend on rdns.
+#   - s01-whitelist: the same match. It catches an Ip overflow when rdns ran
+#     first in s00-enrich and moved it on (node order inside a stage).
 #
 # If the expression fails to run, CrowdSec treats the overflow as not
 # whitelisted and bans, so var.public_ip is validated as an IPv4.
 locals {
-  home_crawl_scenarios = ["crowdsecurity/http-crawl-non_statics", "viktor/distributed-crawl-range"]
-  home_crawl_match     = "evt.Overflow.Alert.GetScenario() in ${jsonencode(local.home_crawl_scenarios)} && any(evt.Overflow.GetSources(), {# == \"${var.public_ip}\" || IpInRange(\"${var.public_ip}\", #)})"
-  home_crawl_whitelist = <<-YAML
+  home_log_only_scenarios = [
+    "crowdsecurity/http-crawl-non_statics",
+    "viktor/distributed-crawl-range",
+    "crowdsecurity/http-429-abuse",
+    "crowdsecurity/http-403-abuse",
+  ]
+  home_log_only_match     = "evt.Overflow.Alert.GetScenario() in ${jsonencode(local.home_log_only_scenarios)} && any(evt.Overflow.GetSources(), {# == \"${var.public_ip}\" || IpInRange(\"${var.public_ip}\", #)})"
+  home_log_only_whitelist = <<-YAML
     whitelist:
-      reason: "home address, crawl scenario, log only (decision 2026-11-19)"
+      reason: "home address, log-only scenario (decision 2026-11-19)"
       expression:
-        - '${local.home_crawl_match}'
+        - '${local.home_log_only_match}'
   YAML
-  # postoverflows/s01-whitelist: Ip-scoped overflows.
-  crowdsec_home_crawl_yaml = <<-YAML
-    name: viktor/home-crawl-log-only
-    description: "The home address: the crawl scenarios log only, every other scenario may ban it (Ip scope)"
-    ${chomp(local.home_crawl_whitelist)}
+  # postoverflows/s00-enrich
+  crowdsec_home_log_only_s00_yaml = <<-YAML
+    name: viktor/home-log-only-s00
+    description: "The home address: crawl and rate-limit scenarios log only, the others may ban it"
+    filter: '${local.home_log_only_match}'
+    ${chomp(local.home_log_only_whitelist)}
   YAML
-  # postoverflows/s00-enrich: Range-scoped overflows.
-  crowdsec_home_crawl_range_yaml = <<-YAML
-    name: viktor/home-crawl-log-only-range
-    description: "The home address: the crawl scenarios log only, every other scenario may ban it (Range scope)"
-    filter: 'evt.Overflow.Alert.GetScope() == "Range" && ${local.home_crawl_match}'
-    ${chomp(local.home_crawl_whitelist)}
+  # postoverflows/s01-whitelist
+  crowdsec_home_log_only_s01_yaml = <<-YAML
+    name: viktor/home-log-only
+    description: "The home address: crawl and rate-limit scenarios log only, the others may ban it"
+    ${chomp(local.home_log_only_whitelist)}
   YAML
 }
 
@@ -615,17 +625,17 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
   }
 
   data = {
-    "whitelist.yaml"                 = local.crowdsec_whitelist_yaml
-    "home-crawl-log-only.yaml"       = local.crowdsec_home_crawl_yaml
-    "home-crawl-log-only-range.yaml" = local.crowdsec_home_crawl_range_yaml
+    "whitelist.yaml"         = local.crowdsec_whitelist_yaml
+    "home-log-only-s00.yaml" = local.crowdsec_home_log_only_s00_yaml
+    "home-log-only.yaml"     = local.crowdsec_home_log_only_s01_yaml
   }
 
   lifecycle {
-    # A renamed crawl scenario would silently stop matching and ban the
-    # household for a crawl.
+    # A renamed scenario would silently stop matching and ban the household
+    # for a crawl or a rate limit.
     precondition {
-      condition     = alltrue([for n in local.home_crawl_scenarios : strcontains(join("\n", values(kubernetes_config_map.crowdsec_custom_scenarios.data)), "name: ${n}\n")])
-      error_message = "Every scenario in local.home_crawl_scenarios must be defined in crowdsec_custom_scenarios."
+      condition     = alltrue([for n in local.home_log_only_scenarios : strcontains(join("\n", values(kubernetes_config_map.crowdsec_custom_scenarios.data)), "name: ${n}\n")])
+      error_message = "Every scenario in local.home_log_only_scenarios must be defined in crowdsec_custom_scenarios."
     }
   }
 }
@@ -716,7 +726,7 @@ resource "helm_release" "crowdsec" {
   repository = "https://crowdsecurity.github.io/helm-charts"
   chart      = "crowdsec"
 
-  values        = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host, FIREWALL_CROWDSEC_API_KEY = var.firewall_bouncer_key, TRAEFIK_CROWDSEC_API_KEY = var.traefik_bouncer_key, C2MIRROR_CROWDSEC_API_KEY = var.c2mirror_bouncer_key, whitelist_checksum = sha256(local.crowdsec_whitelist_yaml), home_crawl_checksum = sha256(join("", [local.crowdsec_home_crawl_yaml, local.crowdsec_home_crawl_range_yaml])) })]
+  values        = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host, FIREWALL_CROWDSEC_API_KEY = var.firewall_bouncer_key, TRAEFIK_CROWDSEC_API_KEY = var.traefik_bouncer_key, C2MIRROR_CROWDSEC_API_KEY = var.c2mirror_bouncer_key, whitelist_checksum = sha256(local.crowdsec_whitelist_yaml), home_log_only_checksum = sha256(join("", [local.crowdsec_home_log_only_s00_yaml, local.crowdsec_home_log_only_s01_yaml])) })]
   timeout       = 1200
   wait          = true
   wait_for_jobs = true
@@ -2104,6 +2114,8 @@ resource "kubernetes_config_map" "crowdsec_lapi_reconcile" {
     "lapi-reconcile.sh" = file("${path.module}/lapi-reconcile.sh")
     "allowlist.txt"     = join("", [for e in local.lapi_allowlist : "${e.value}\t${e.comment}\n"])
     "allowlist-dns.txt" = join("", [for e in local.lapi_allowlist_dns : "${e.name}\t${e.comment}\n"])
+    # lapi-reconcile.sh deletes blocklist decisions that hold it.
+    "home-ip" = var.public_ip
   }
 }
 
@@ -2210,6 +2222,7 @@ resource "kubernetes_cron_job_v1" "crowdsec_lapi_reconcile" {
                 {
                   printf "OPNSENSE_AGENT_PASSWORD='%s'\n" "$(cat /agent/password)"
                   printf "JOURNALS_AGENT_PASSWORD='%s'\n" "$(cat /journals-agent/password)"
+                  printf "HOME_IP='%s'\n" "$(cat /config/home-ip)"
                   printf "cat > /tmp/allowlist.txt <<'ALLOWLIST'\n"
                   cat /config/allowlist.txt
                   printf "ALLOWLIST\n"

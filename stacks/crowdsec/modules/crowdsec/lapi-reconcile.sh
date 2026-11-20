@@ -1,7 +1,8 @@
 # Runs inside a LAPI pod (sh -s, from the crowdsec-lapi-reconcile CronJob).
-# The CronJob prepends OPNSENSE_AGENT_PASSWORD=... and JOURNALS_AGENT_PASSWORD=...
-# on stdin, so the passwords never appear in a command line the Kubernetes API
-# records.
+# The CronJob prepends OPNSENSE_AGENT_PASSWORD=..., JOURNALS_AGENT_PASSWORD=...
+# and HOME_IP=... on stdin, so the passwords never appear in a command line the
+# Kubernetes API records, and the home address never appears in git.
+# 0. Blocklist decisions that hold the home address are deleted (see below).
 # 1. Allowlist "trusted-infra" = exactly the values in /tmp/allowlist.txt
 #    (value<TAB>comment per line, written by the CronJob before this runs),
 #    plus the current IPv4 of each name in /tmp/allowlist-dns.txt
@@ -12,6 +13,20 @@
 set -eu
 LIST=trusted-infra
 WANT=/tmp/allowlist.txt
+
+# Since 2026-11-19 our own scenarios may ban the home address (origin
+# crowdsec; docs/runbooks/cloud.md, "CrowdSec and the home address"), but
+# blocklists may not: it is out of trusted-infra, so the LAPI would store
+# what the Central API (CAPI), subscribed lists (lists) and our imports
+# (cscli-import) say about it. Delete those. --ip also matches a Range
+# decision that holds the address. Manual cscli bans stay. First, so a DNS
+# failure below cannot skip it.
+[ -n "${HOME_IP:-}" ] || { echo "HOME_IP is empty" >&2; exit 1; }
+for origin in CAPI lists cscli-import; do
+  out=$(cscli decisions delete --ip "$HOME_IP" --origin "$origin" 2>&1) || { echo "$out" >&2; exit 1; }
+  n=$(printf '%s\n' "$out" | sed -n 's/.*msg="\([0-9]*\) decision(s) deleted".*/\1/p')
+  echo "home address: ${n:-?} $origin decision(s) deleted"
+done
 
 if ! cscli allowlists inspect "$LIST" >/dev/null 2>&1; then
   cscli allowlists create "$LIST" -d "Our own addresses; LAPI never bans them (stacks/crowdsec lapi_allowlist)"
