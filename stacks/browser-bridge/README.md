@@ -74,9 +74,11 @@ flowchart TD
 **Why `/crx` has to be open.** Chrome's extension updater sends no cookie and
 cannot run an OIDC flow, and `curl -fsSL https://browser-bridge.viktorbarzin.me/install | sh`
 cannot either. Forward-auth on those paths would break both installing and
-updating. Four things are served under them and none carries user data: the
+updating. Six things are served under them and none carries user data: the
 update manifest `/crx/update.xml`, the signed extension `/crx/browser_bridge.crx`,
-the installer `/crx/install.sh`, and a 302 at `/install` that keeps the
+the same extension as a zip for Load unpacked `/crx/browser_bridge.zip`, the
+installer `/crx/install.sh`, the Windows installer `/crx/install.ps1`
+(`irm .../crx/install.ps1 | iex`), and a 302 at `/install` that keeps the
 one-liner short. No handler under that prefix reads an identity,
 `traefik-strip-auth-headers` removes any inbound `X-authentik-*`, and the
 server ignores identity headers entirely unless the request also carries the
