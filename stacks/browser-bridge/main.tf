@@ -320,6 +320,14 @@ resource "kubernetes_deployment" "browser_bridge" {
             }
           }
           env {
+            # The id the Chrome Web Store gave its copy of the extension
+            # (unlisted item, publisher vbarzin@gmail.com). The store signs
+            # that copy with its own key, so it cannot share BB_EXTENSION_ID;
+            # enrolment accepts both. Not a secret: it is in the store URL.
+            name  = "BB_STORE_EXTENSION_ID"
+            value = "ieemnanbkklejolafdipiagoldakinkb"
+          }
+          env {
             # Turns POST /v1/provision/tokens on. Empty would turn it off
             # rather than leave it open, and the server refuses a token
             # shorter than 32 characters at boot.
