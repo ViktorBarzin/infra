@@ -28,7 +28,7 @@ unlike GPIO18 (PWM), which rpi-london used.
 | `play.py` | plays one pattern on the strip until SIGINT, then clears it |
 | `server.py` | the HTTP control Home Assistant talks to; starts and stops `play.py` |
 | `preview.py` | draws each pattern as an animated WebP for the dashboard (devvm only, needs Pillow) |
-| `dashboard.py` | rebuilds the pattern section of the `livia-strip` dashboard from `PATTERNS` |
+| `dashboard.py` | rebuilds the pattern sections of the `livia-strip` dashboard from `PATTERNS`, one per group |
 
 A pattern yields `(pixels, delay)` frames, one `(r, g, b)` per LED. A delay of
 `None` marks a still frame: `play.py` keeps it and sends it again once a
