@@ -814,9 +814,11 @@ HOME_IP=$(sed -n 's/^public_ip *= *"\([^"]*\)".*/\1/p' ~/code/infra/config.tfvar
 # Overflows that logged only:
 homelab logs query '{namespace="crowdsec", container="crowdsec-agent"} |= "home address, log-only scenario"' --since 7d
 
-# Is the address banned? --all includes Central API decisions, and --ip also
-# lists a Range decision that holds the address (checked on v1.8.1):
-kubectl -n crowdsec exec deploy/crowdsec-lapi -- cscli decisions list --all --ip "$HOME_IP"
+# Is the address banned? Prints each decision that holds it, an Ip or a
+# Range, Central API ones included (--all). Do not use --ip here: it also
+# prints every decision of the blocklist imports (16,000+ rows on 2026-11-20).
+kubectl -n crowdsec exec deploy/crowdsec-lapi -- cscli decisions list --all -o raw |
+  HOME_IP="$HOME_IP" python3 -c 'import csv,ipaddress,os,sys; h=ipaddress.ip_address(os.environ["HOME_IP"]); [print(r["id"],r["source"],r["ip"],r["reason"],r["expiration"]) for r in csv.DictReader(sys.stdin) if h in ipaddress.ip_network(r["ip"].split(":",1)[1],strict=False)]'
 
 # Which scenario, and from which hosts and paths (household or a Project App).
 # --ip also lists every blocklist import, so drop those:
@@ -829,6 +831,21 @@ homelab crowdsec unban "$HOME_IP"
 
 A hand-added allowlist entry does not last: the CronJob makes
 `trusted-infra` equal to `lapi_allowlist` every 5 minutes.
+
+Verified live on 2026-11-20 after the apply of `stacks/crowdsec` (from the
+workstation: Woodpecker pipeline #4183 was killed by the next push, and
+#4184 did not apply this stack):
+
+- All 5 agents list `viktor/home-log-only` and `viktor/home-log-only-s00`
+  as enabled, and their logs have no error lines.
+- `cscli explain` of one access line from the address: the parser
+  whitelist leaves it unchanged, and it reaches the
+  `http-crawl-non_statics` and `distributed-crawl-range` buckets. Before,
+  the whitelist dropped it.
+- The CronJob run at 00:50 UTC succeeded: 0 CAPI, lists and cscli-import
+  decisions deleted, `trusted-infra` 48 entries with 1 removed, and the
+  address is no longer in it.
+- The check above found no decision that holds the address among 16,783.
 
 Rollback: revert the commit that removed the address from the whitelist and
 the allowlist, then apply `stacks/crowdsec`. The agents restart with the
