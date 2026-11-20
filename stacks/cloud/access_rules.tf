@@ -393,7 +393,7 @@ locals {
   # tests/cloud-access.test.sh sends the Jobs Cloud's own code builds.
   cloud_pg_task = {
     container = "pg"
-    image     = "docker.io/library/postgres:18.7-trixie@sha256:e754b839f447639b7004895f4d8a4bfcb4e9dbe3a1bc035f27f646562a16fd61"
+    image     = "docker.io/library/postgres:18.7-trixie@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a"
     # The image's postgres user, who owns the manual dump directory
     # (stacks/dbaas postgresql-backup makes it).
     uid = 999
