@@ -1,0 +1,108 @@
+rule_files:
+  - garage.rules.yml
+evaluation_interval: 1m
+tests:
+  # Healthy: scraped, one ready pod, fresh backup, disks at 50%.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="garage"}'
+        values: '1x60'
+      - series: 'kube_deployment_status_replicas_available{namespace="garage",deployment="garage"}'
+        values: '1x60'
+      - series: 'garage_local_disk_avail{job="garage",volume="data"}'
+        values: '50x60'
+      - series: 'garage_local_disk_total{job="garage",volume="data"}'
+        values: '100x60'
+      - series: 'backup_last_success_timestamp{job="garage-backup"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 59m
+        alertname: GarageDown
+        exp_alerts: []
+      - eval_time: 59m
+        alertname: GarageDiskFull
+        exp_alerts: []
+      - eval_time: 59m
+        alertname: GarageBackupStale
+        exp_alerts: []
+      - eval_time: 59m
+        alertname: GarageBackupNeverRun
+        exp_alerts: []
+  # Scrape fails while the pod is ready: down after 5 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="garage"}'
+        values: '0x20'
+      - series: 'kube_deployment_status_replicas_available{namespace="garage",deployment="garage"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: GarageDown
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: GarageDown
+        exp_alerts:
+          - exp_labels: {severity: critical, subsystem: cloud}
+  # No series at all (never deployed, Secret missing): down too.
+  - interval: 1m
+    input_series:
+      - series: 'unrelated_metric'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: GarageDown
+        exp_alerts:
+          - exp_labels: {severity: critical, subsystem: cloud}
+  # Scraped but no ready pod.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="garage"}'
+        values: '1x20'
+      - series: 'kube_deployment_status_replicas_available{namespace="garage",deployment="garage"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: GarageDown
+        exp_alerts:
+          - exp_labels: {severity: critical, subsystem: cloud}
+  # Metadata volume at 90%.
+  - interval: 1m
+    input_series:
+      - series: 'garage_local_disk_avail{job="garage",volume="metadata"}'
+        values: '10x30'
+      - series: 'garage_local_disk_total{job="garage",volume="metadata"}'
+        values: '100x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: GarageDiskFull
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: GarageDiskFull
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, job: garage, volume: metadata}
+  # Last success 27 h before the evaluation: stale. Timestamps are seconds.
+  - interval: 1m
+    input_series:
+      - series: 'backup_last_success_timestamp{job="garage-backup"}'
+        values: '0x1700'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: GarageBackupStale
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: GarageBackupStale
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, job: garage-backup}
+  # Never pushed.
+  - interval: 1h
+    input_series:
+      - series: 'unrelated_metric'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 47h
+        alertname: GarageBackupNeverRun
+        exp_alerts: []
+      - eval_time: 49h
+        alertname: GarageBackupNeverRun
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, job: garage-backup}

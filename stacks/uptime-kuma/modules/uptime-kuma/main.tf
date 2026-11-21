@@ -854,6 +854,24 @@ locals {
       retry_interval              = 60
       max_retries                 = 3
     },
+    {
+      # Garage's S3 port, the store behind Cloud Buckets (stacks/garage).
+      # A TCP check: S3 answers 403 to an anonymous request, and the admin
+      # port is closed to this namespace. The garage NetworkPolicy admits
+      # uptime-kuma on 3900 for this monitor.
+      name                        = "Garage S3 (garage)"
+      type                        = "port"
+      database_connection_string  = null
+      database_password_vault_key = null
+      hostname                    = "garage.garage.svc.cluster.local"
+      port                        = 3900
+      url                         = null
+      accepted_statuscodes        = null
+      ignore_tls                  = null
+      interval                    = 60
+      retry_interval              = 60
+      max_retries                 = 3
+    },
   ]
 }
 
