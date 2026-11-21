@@ -114,6 +114,27 @@ the `spotArea` clean type.
 - The camera failed with `20303` while the robot was idle on the dock. The
   stream started once the robot was out cleaning.
 
+### Daily clean of the kitchen and living room
+
+Viktor asked on 2026-11-21 for one clean a day of the kitchen and living
+room, on weekdays or when everyone is out. HA London automation
+`automation.yiko_daily_kitchen_and_living_room_clean` (id `yiko_daily_clean`,
+UI-managed, in `/config/automations.yaml`) does it.
+
+| Part | Value |
+|---|---|
+| Triggers | 12:30 every day; `zone.home` below 1 for 10 min |
+| Runs when | the 12:30 trigger on Monday to Friday, or nobody is home (any day) |
+| Skips when | outside 08:00-21:00, it already ran today (its own `last_triggered`), `vacuum.yiko` is not `docked`, battery under 50%, `sensor.yiko_error` is not 0, or `script.yiko_photo` is on |
+| Action | `clean_V2` `{"act":"start","content":{"type":"freeClean","value":"1,4,8"}}` |
+| Work mode | whatever `select.yiko_work_mode` is set to (vacuum and mop on 2026-11-21) |
+
+`freeClean` takes `<passes>,<room id>,<room id>...` (deebot-client
+`CleanAreaV2`). Room 8 is the living room; it has no name on the map. To change
+the rooms, edit the `value` in the HA automation editor. The automation sends no
+notification. Its trace in the HA automation editor shows why a run was
+skipped. Bank holidays count as weekdays.
+
 ### Drive Yiko by hand
 
 `homelab ha yiko drive forward|backward <cm>`, `turn left|right [deg]`, `stop`
