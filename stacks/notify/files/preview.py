@@ -189,11 +189,11 @@ class Skip(Exception):
 
 
 def _words(command: str) -> list:
-    return re.findall(r'"(?:\\.|[^"\\])*"|\S+', command)
+    return re.findall(r'"(?:\\.|[^"\\])*"|`[^`]*`|\S+', command)
 
 
 def _pipes(pipeline: str) -> list:
-    return [p.strip() for p in re.findall(r'(?:"(?:\\.|[^"\\])*"|[^|"])+', pipeline)]
+    return [p.strip() for p in re.findall(r'(?:"(?:\\.|[^"\\])*"|`[^`]*`|[^|"`])+', pipeline)]
 
 
 def _parse(text: str) -> list:
@@ -233,6 +233,8 @@ def render(text: str, labels: dict, value: float, prom, at=None) -> str:
     def operand(word, dot):
         if word.startswith('"'):
             return bytes(word[1:-1], "utf-8").decode("unicode_escape")
+        if word.startswith("`"):
+            return word[1:-1]  # a Go raw string: no escapes
         if word in ("$value", ".Value"):
             return value
         if word == ".":

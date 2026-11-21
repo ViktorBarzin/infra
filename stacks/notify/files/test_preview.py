@@ -67,6 +67,10 @@ class RenderTest(unittest.TestCase):
         text = 'Up: {{ with query "sum(up{job=\\"x\\"})" }}{{ . | first | value | printf "%.0f" }}{{ end }} targets'
         self.assertEqual(self.r(text, prom=prom, at=100.0), "Up: 7 targets")
 
+    def test_with_query_takes_a_backtick_string(self):
+        prom = FakeProm({('max(t{entity="sensor.x"})', None): [row(22.5)]})
+        self.assertEqual(self.r('{{ with query `max(t{entity="sensor.x"})` }}{{ . | first | value | printf "%.1f" }}{{ end }} C', prom=prom), "22.5 C")
+
     def test_with_query_without_result_drops_the_block(self):
         self.assertEqual(self.r('A{{ with query "nothing" }}B{{ . | first | value }}{{ end }}C'), "AC")
 

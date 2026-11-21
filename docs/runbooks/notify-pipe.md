@@ -46,6 +46,10 @@ Write the rule as usual, without any routing label: `scripts/check-no-notify-pag
 
 Slack posts keep the old Alertmanager layout and use `summary` (and, in the security lane, `description` and `runbook`).
 
+## Alerts on Home Assistant sensors (ha-sofia)
+
+Prometheus scrapes every ha-sofia entity (job `haos`) as `haos_*` metrics with an `entity` label: `haos_sensor_unit_percent{entity="sensor.disk_usage_percent"}`, `haos_sensor_temperature_celsius{...}`, `haos_binary_sensor_state{...}`, `haos_entity_available{...}`. Find a sensor's metric with `homelab metrics query '{entity="sensor.x"}'`. An alert on such a sensor is a Prometheus rule in the group "Sofia home (Home Assistant)" in `prometheus_chart_values.tpl`. emo is subscribed to that whole group on his phone, so a rule added there reaches him with no other step; others switch it on at the page. Home Assistant keeps the automations that act (reload an integration, set a helper, switch something), household events (doors, alarm, cameras) and notifications that need iOS-only options. ha-sofia's own `AGENTS.md`, "Alerts", tells emo's agent the same. Moved from ha-sofia on 2026-11-21: "Disk usage alert" (now `HaSofiaDiskUsageHigh`), "Гараж — прегряване" (now `GarageOverheating`), and "UPS running on battery notification" (replaced by `UPSOnBatteryEmail`, which emo and Viktor get on the phone).
+
 ## Test an alert
 
 Each row's **Test** button sends the signed-in person one Notification built like a real one, with "Test: " in front of the title, on exactly the Channels selected on the row: a Slack channel target such as #alerts gets the test too. Only a row that is off falls back to the first Channel set up, and the answer says so; a selected Channel that is not set up is reported, not replaced. The values come from the best source available (`files/preview.py`): the alert firing now; the rule evaluated at the last time `ALERTS` shows it firing, within 26 weeks; for a plain `A > N` rule, A's current series and a value past N; else label values from the rule's metrics. Six tests a minute per person.

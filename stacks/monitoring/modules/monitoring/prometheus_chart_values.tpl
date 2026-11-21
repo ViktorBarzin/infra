@@ -2908,6 +2908,47 @@ serverFiles:
               subsystem: vpn
             annotations:
               summary: "Tailscale subnet-router probe has not reported in {{ $value | printf \"%.0f\" }}s (>2 missed runs) — the probe CronJob or its tag:probe pre-auth key may be broken; LAN reachability is UNVERIFIED, not necessarily broken"
+      # Alerts on Home Assistant sensors at ha-sofia (the Sofia home). emo builds
+      # the sensors in Home Assistant; Prometheus scrapes every HA entity as
+      # haos_* metrics with an `entity` label (job haos), and the alert rules
+      # live here. emo is subscribed to this whole group on his phone at
+      # notify.viktorbarzin.me, and a group choice covers rules added later, so a
+      # new rule here reaches him with no other step. Rules move here from
+      # ha-sofia automations that only notified; automations that also act
+      # (reload an integration, set a helper, switch something) stay in Home
+      # Assistant. How emo adds one: ha-sofia's AGENTS.md, "Alerts". Text for
+      # people: notification_* annotations in Bulgarian, summary in English.
+      - name: "Sofia home (Home Assistant)"
+        rules:
+          # Was the ha-sofia automation "Disk usage alert" (2026-11-21).
+          - alert: HaSofiaDiskUsageHigh
+            expr: max(haos_sensor_unit_percent{job="haos", entity="sensor.disk_usage_percent"}) > 70
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "ha-sofia's disk is {{ $value | printf \"%.0f\" }}% full (threshold 70%): check storage and consider a lower recorder purge_keep_days"
+              notification_title: "ha-sofia: дискът е {{ $value | printf \"%.0f\" }}% пълен"
+              notification_body: "Дискът на Home Assistant в София е запълнен над 70%. Провери мястото; може да намалиш purge_keep_days на recorder."
+              notification_resolved_title: "ha-sofia: дискът отново е под 70%"
+              notification_resolved_body: "Мястото на диска на Home Assistant в София е нормално."
+          # Was the ha-sofia automation "Гараж — прегряване (независим пазач)"
+          # (2026-11-21): R730 inlet above 34 °C (its rated ceiling is 35) or the
+          # garage above 30 °C. The two sensors come by separate paths (iDRAC
+          # REST and Tuya cloud), so one frozen source does not blind it.
+          - alert: GarageOverheating
+            expr: |
+              max(haos_sensor_temperature_celsius{job="haos", entity="sensor.r730_system_board_inlet_temperature"}) > 34
+              or max(haos_sensor_temperature_celsius{job="haos", entity="sensor.temperatura_vlazhnost_garazh_temperature"}) > 30
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: 'Garage overheating: R730 inlet {{ with query `max(haos_sensor_temperature_celsius{entity="sensor.r730_system_board_inlet_temperature"})` }}{{ . | first | value | printf "%.1f" }}{{ end }} °C (limit 34, rated ceiling 35), garage {{ with query `max(haos_sensor_temperature_celsius{entity="sensor.temperatura_vlazhnost_garazh_temperature"})` }}{{ . | first | value | printf "%.1f" }}{{ end }} °C (limit 30)'
+              notification_title: "Гаражът прегрява"
+              notification_body: 'Вход на R730: {{ with query `max(haos_sensor_temperature_celsius{entity="sensor.r730_system_board_inlet_temperature"})` }}{{ . | first | value | printf "%.1f" }}{{ end }} °C (каталожен таван 35 °C). Гараж: {{ with query `max(haos_sensor_temperature_celsius{entity="sensor.temperatura_vlazhnost_garazh_temperature"})` }}{{ . | first | value | printf "%.1f" }}{{ end }} °C. Влажност: {{ with query `max(haos_sensor_humidity_percent{entity="sensor.temperatura_vlazhnost_garazh_humidity"})` }}{{ . | first | value | printf "%.0f" }}{{ end }} %.'
+              notification_resolved_title: "Гаражът вече не прегрява"
+              notification_resolved_body: "Входът на R730 е под 34 °C и гаражът е под 30 °C."
       - name: Power
         rules:
           - alert: OnBattery
