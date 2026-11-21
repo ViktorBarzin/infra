@@ -60,6 +60,7 @@ locals {
     "478" = "alexa-assistant"          # ViktorBarzin/alexa-assistant
     "511" = "reels"                    # ViktorBarzin/trip-reel
     "512" = "cloud"                    # ViktorBarzin/cloud
+    "545" = "infra-map"                # ViktorBarzin/infra-map
     "7"   = "realestate-crawler"       # immovika/realestate-crawler
     "9"   = "ebook2audiobook"          # ViktorBarzin/audiblez-web
     "10"  = "tv"                       # ViktorBarzin/tv
