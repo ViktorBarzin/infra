@@ -568,7 +568,10 @@ resource "kubernetes_deployment" "gotenberg" {
       }
       spec {
         container {
-          image = "gotenberg/gotenberg:9.6.0"
+          # Held on 8.x (renovate.json5 allowedVersions "<9"): Gotenberg 9
+          # rejects the 'pdfa' form field paperless's client still sends, so
+          # every office-file consume failed on 9.x (infra#220).
+          image = "gotenberg/gotenberg:8.40.0"
           name  = "gotenberg"
           # docker-compose `command:` == k8s `args` (overrides CMD, keeps the
           # image's tini ENTRYPOINT). Paperless's recommended hardening flags.

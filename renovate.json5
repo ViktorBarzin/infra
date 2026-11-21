@@ -235,6 +235,11 @@
       allowedVersions: "<14", // legacy 14.x and 20.04.x tags; current upstream is 5.x
     },
     {
+      description: "Gotenberg stays on 8.x until paperless-ngx's gotenberg-client speaks Gotenberg 9. Gotenberg 9 renamed the LibreOffice form field 'pdfa' to 'nativePdfa' and returns 400 for the old name, which paperless (3.5.1, gotenberg-client 1.0.0) still sends for PDF/A output. The 8.40.0 -> 9.3.0 bump applied cleanly and silently broke every .doc/.docx/.xlsx consume from 2026-11-10 (infra#220). Remove this rule once a paperless release sends the new field",
+      matchPackageNames: ["gotenberg/gotenberg", "docker.io/gotenberg/gotenberg"],
+      allowedVersions: "<9",
+    },
+    {
       description: "listenarr publishes only canary-X.Y.Z tags (plus a floating canary). Docker versioning cannot read a non-numeric prefix, so canary-0.2.47 would never be offered a newer one (Keel cutover B07, 2026-10-10)",
       matchPackageNames: ["ghcr.io/therobbiedavis/listenarr"],
       versioning: "regex:^canary-(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$",
