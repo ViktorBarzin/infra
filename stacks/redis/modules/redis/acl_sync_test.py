@@ -78,6 +78,35 @@ def test_count_default_outside_ignores_allowed_pods_and_laddr():
     assert acl_sync.count_default_outside(CLIENTS, set()) == 3
 
 
+def test_default_outside_describes_each_unexpected_client():
+    clients = (
+        "id=3 addr=10.0.0.1:1 laddr=10.0.0.9:6379 fd=8 name= age=9 idle=0 flags=N db=0 cmd=get user=default lib-name=\n"
+        "id=5 addr=10.0.0.3:41000 laddr=10.0.0.1:6379 fd=10 name=worker age=120 idle=7 flags=N db=0 "
+        "sub=0 psub=0 qbuf=0 argv-mem=0 tot-mem=1 cmd=hgetall user=default redir=-1 resp=2 lib-name=redis-py lib-ver=5.0\n"
+        "id=6 addr=[fd00::7]:2 laddr=10.0.0.9:6379 fd=11 age=1 idle=1 cmd=ping user=default\n"
+        "id=7 addr=10.0.0.4:1 laddr=10.0.0.1:6379 fd=12 name=x age=1 idle=1 cmd=get user=immich\n"
+    )
+    found = acl_sync.default_outside(clients, {"10.0.0.1"})
+    assert [c.ip for c in found] == ["10.0.0.3", "fd00::7"]
+    assert found[0].fields == {
+        "addr": "10.0.0.3:41000", "name": "worker", "age": "120", "idle": "7",
+        "cmd": "hgetall", "lib-name": "redis-py", "lib-ver": "5.0",
+    }
+    # Missing fields print as empty, never fall back to laddr= or other keys.
+    assert found[1].fields["addr"] == "[fd00::7]:2"
+    assert found[1].fields["name"] == ""
+    assert acl_sync.count_default_outside(clients, {"10.0.0.1"}) == 2
+
+
+def test_default_outside_line_is_bounded_and_has_only_the_named_fields():
+    long_name = "n" * 300
+    clients = f"id=5 addr=10.0.0.3:1 laddr=x fd=1 name={long_name} age=1 idle=1 cmd=get user=default qbuf=99\n"
+    (client,) = acl_sync.default_outside(clients, set())
+    line = acl_sync.describe_unexpected(client)
+    assert line == "unexpected default client: addr=10.0.0.3:1 name=" + "n" * 64 + " age=1 idle=1 cmd=get lib-name= lib-ver="
+    assert "qbuf" not in line and "laddr" not in line and "n" * 65 not in line
+
+
 def test_pod_ips_from_a_pod_list():
     doc = {"items": [
         {"status": {"podIP": "10.0.0.1", "podIPs": [{"ip": "10.0.0.1"}, {"ip": "fd00::1"}]}},
@@ -529,6 +558,24 @@ def test_partial_exec_is_reported_and_saved(box):
     saved = (box.data / "acl" / "users.acl").read_text()
     assert "user immich " in saved
     assert sync(box, pw).ok
+
+
+@needs_docker
+def test_unexpected_default_client_line_from_a_real_client_list_holds_no_secret(box):
+    pw = fake_passwords()
+    box.init(pw[ADMIN_USER])
+    box.start()
+    stranger = box.connect()  # a client on default from an address no rybbit pod has
+    stranger.call("CLIENT", "SETNAME", "stranger")
+    stranger.call("SET", "k", pw["immich"])  # a secret in a command's arguments
+    result = acl_sync.run(USERS, lambda: dict(pw), box.connect, set)
+    stranger.close()
+    found = [c for c in result.default_unexpected_clients if c.fields["name"] == "stranger"]
+    assert len(found) == 1
+    line = acl_sync.describe_unexpected(found[0])
+    assert " cmd=set " in line
+    assert found[0].fields["age"].isdigit() and found[0].fields["idle"].isdigit()
+    assert not any(p in line for p in pw.values())
 
 
 @needs_docker
