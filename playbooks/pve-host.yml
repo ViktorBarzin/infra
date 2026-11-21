@@ -931,8 +931,9 @@
     # ---- Infra (stacks/infra-map) read-only token --------------------------
     # Infra draws the Proxmox guests with their NICs and Bridges. Its token
     # gets the built-in role PVEAuditor (audit privileges only, no change and
-    # no console) on /vms and /nodes/pve, for both the user and the
-    # privilege-separated token. The secret goes to Vault with `kv patch`,
+    # no console) on /vms, /nodes/pve and /sdn/zones/localnetwork, for both
+    # the user and the privilege-separated token. Without the SDN zone,
+    # /nodes/pve/network hides the host's Linux bridges and their ports. The secret goes to Vault with `kv patch`,
     # because secret/infra-map also holds the app's sign-in keys, which a
     # `put` would wipe. Rotate: `pveum user token remove infra-map@pve read`,
     # then rerun with --tags infra-map.
@@ -944,7 +945,7 @@
       tags: infra-map
 
     - name: Create the infra-map user
-      ansible.builtin.command: pveum user add infra-map@pve --comment "Infra (stacks/infra-map), read only. PVEAuditor on /vms and /nodes/pve."
+      ansible.builtin.command: pveum user add infra-map@pve --comment "Infra (stacks/infra-map), read only. PVEAuditor on /vms, /nodes/pve and /sdn/zones/localnetwork."
       when: "'infra-map@pve' not in (pve_infra_map_users.stdout | from_json | map(attribute='userid'))"
       tags: infra-map
 
@@ -992,7 +993,7 @@
       ansible.builtin.command: >-
         pveum acl modify {{ item.0 }} --roles PVEAuditor
         {{ '--tokens' if '!' in item.1 else '--users' }} '{{ item.1 }}' --propagate 1
-      loop: "{{ ['/vms', '/nodes/pve'] | product(['infra-map@pve', 'infra-map@pve!read']) | list }}"
+      loop: "{{ ['/vms', '/nodes/pve', '/sdn/zones/localnetwork'] | product(['infra-map@pve', 'infra-map@pve!read']) | list }}"
       when: >-
         (pve_infra_map_acl.stdout | from_json
          | selectattr('path', 'equalto', item.0)
