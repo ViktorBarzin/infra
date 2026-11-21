@@ -99,3 +99,14 @@ func TestMessageWATypesNewlineAsShiftEnter(t *testing.T) {
 		t.Error("message_wa.js typeHuman no longer types a newline as Shift+Enter")
 	}
 }
+
+// A bot contact (Muse) sends "rich_response" messages with no
+// span.copyable-text; read must not filter rows on it (infra#219).
+func TestMessageWAReadKeepsRowsWithoutCopyableText(t *testing.T) {
+	if strings.Contains(messageWAJS, `.filter((e) => e.querySelector('span.copyable-text'))`) {
+		t.Error("message_wa.js read filters rows on span.copyable-text again; bot replies would vanish")
+	}
+	if !strings.Contains(messageWAJS, "WAWebCollections") {
+		t.Error("message_wa.js read no longer takes direction from the WhatsApp store")
+	}
+}

@@ -47,6 +47,24 @@ async function ensureLoggedIn() {
     throw new Error('WhatsApp Web is not logged in (no chat list appeared). Log in via noVNC at chrome.viktorbarzin.me, then retry.');
   }
   await sleep(1200);
+  await dismissPopups();
+}
+
+// dismissPopups clears an announcement dialog ("What's new on WhatsApp Web" /
+// Continue, "Start Dogfooding on Web" / Dismiss) that WhatsApp shows after a
+// re-link or an update. It covers the chat list, so every later click times
+// out after 30s. Only a button with a harmless label is clicked.
+async function dismissPopups() {
+  for (let i = 0; i < 3; i++) {
+    const popup = page.locator('[data-testid="confirm-popup"]').first();
+    if (await popup.count() === 0) return;
+    const btn = popup.getByRole('button', { name: /^(continue|dismiss|ok|got it|close|not now)$/i }).first();
+    if (await btn.count() === 0) return;
+    const label = ((await btn.innerText().catch(() => '')) || '').trim();
+    await btn.click({ timeout: 5000 }).catch(() => {});
+    log(`dismissed a WhatsApp popup (${JSON.stringify(label)})`);
+    await sleep(800);
+  }
 }
 
 // openExact opens the chat whose row title is `title`, ignoring case, and
@@ -160,26 +178,63 @@ async function doSend() {
 async function doRead() {
   if (!TO) throw new Error('read requires --to');
   const opened = await openFuzzy(TO);
-  // WhatsApp Web (2026) exposes no direction on the message DOM — the old
-  // .message-in/.message-out classes, the tick-icon (data-icon="msg-*"), and the
-  // span.copyable-text[data-pre-plain-text] sender are ALL gone. The robust,
-  // build-independent signal is geometry: outgoing bubbles are right-aligned in
-  // the conversation column (#main), incoming left. Classify by the bubble's
-  // centre-x vs the column midpoint.
-  const msgs = await page.evaluate((limit) => {
+  // Which message is ours comes from WhatsApp's own store (msg.id.fromMe,
+  // keyed by the row's data-id). It needs page.evaluate's third argument
+  // false (main world, where window.require lives); if the store is not
+  // reachable, the row's own signals below are used instead.
+  const fromMe = await page.evaluate(() => {
+    try {
+      const C = window.require('WAWebCollections');
+      const out = {};
+      for (const chat of C.Chat.getModelsArray()) {
+        for (const m of chat.msgs.getModelsArray()) out[m.id.id] = !!m.id.fromMe;
+      }
+      return out;
+    } catch (e) {
+      return {};
+    }
+  }, null, false).catch(() => ({}));
+  // Every message row counts, not only rows with a span.copyable-text: a bot
+  // contact such as Muse sends "rich_response" messages (text answers and
+  // "Browser / Working" cards) that have no copyable-text span at all, and
+  // filtering on it dropped every incoming message (infra#219). WhatsApp Web
+  // has no .message-in/.message-out classes either. Direction, in order: the
+  // store, the row's sender label ("You:" or "<name>:"), then geometry
+  // (outgoing bubbles sit right of the column's midline).
+  const msgs = await page.evaluate(([limit, fromMe]) => {
     const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
     const anchor = document.querySelector('#main') || document.querySelector('div[role="application"]') || document.body;
     const p = anchor.getBoundingClientRect();
     const mid = p.left + p.width / 2;
-    const els = [...anchor.querySelectorAll('div[data-id]')].filter((e) => e.querySelector('span.copyable-text'));
-    return els.slice(-limit).map((e) => {
-      const cp = e.querySelector('span.copyable-text');
-      const r = cp.getBoundingClientRect();
-      const dir = r.left + r.width / 2 > mid ? 'out' : 'in';
-      const inner = cp.querySelector('span.selectable-text, span._ao3e') || cp;
-      return { dir, text: clean(inner.innerText).slice(0, 1500) };
-    }).filter((m) => m.text);
-  }, LIMIT);
+    const rows = [...anchor.querySelectorAll('div[data-id]')]
+      .filter((e) => !e.parentElement.closest('div[data-id]')) // outermost rows only
+      .map((e) => {
+        const id = e.getAttribute('data-id') || '';
+        const cp = e.querySelector('span.copyable-text');
+        // The whole copyable-text span: its first selectable-text child holds
+        // only the first item of a "- " list.
+        const text = clean((cp || e).innerText).slice(0, 1500);
+        let dir = null;
+        const key = id.includes('_') ? id.split('_')[2] || id : id;
+        if (key in fromMe) dir = fromMe[key] ? 'out' : 'in';
+        else if (id.startsWith('true_')) dir = 'out';
+        else if (id.startsWith('false_')) dir = 'in';
+        if (!dir) {
+          const labels = [...e.querySelectorAll('[aria-label]')].map((l) => l.getAttribute('aria-label').trim());
+          if (labels.includes('You:')) dir = 'out';
+          else if (labels.some((l) => /\S:$/.test(l))) dir = 'in';
+        }
+        if (!dir) {
+          // The bubble: the first text-bearing box narrower than the row.
+          const box = [...e.querySelectorAll('div')].map((d) => d.getBoundingClientRect())
+            .find((r) => r.width > 40 && r.width < p.width * 0.9) || (cp || e).getBoundingClientRect();
+          dir = box.left + box.width / 2 > mid ? 'out' : 'in';
+        }
+        return { dir, text };
+      })
+      .filter((m) => m.text);
+    return rows.slice(-limit);
+  }, [LIMIT, fromMe]);
   console.log(`--- ${opened} (last ${msgs.length}) ---`);
   for (const m of msgs) console.log((m.dir === 'out' ? '→ ' : '← ') + m.text);
   return { read: msgs.length, opened };
