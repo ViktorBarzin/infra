@@ -1057,8 +1057,8 @@ if tb_file.exists():
         ("token-unset", lambda o: o["spec"]["template"]["spec"].pop("automountServiceAccountToken"), TRUN),
         ("configmap-volume", lambda o: o["spec"]["template"]["spec"]["volumes"].append({"name": "x", "configMap": {"name": "edge-menu"}}), TRUN),
         ("on-failure", lambda o: o["spec"]["template"]["spec"].update({"restartPolicy": "OnFailure"}), TRUN),
-        ("other-secret", env_add({"name": "X", "valueFrom": {"secretKeyRef": {"name": "edge-menu", "key": "secret"}}}), "plain values and keys of Secret pg-"),
-        ("fieldref", env_add({"name": "X", "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}}), "plain values and keys of Secret pg-"),
+        ("other-secret", env_add({"name": "X", "valueFrom": {"secretKeyRef": {"name": "edge-menu", "key": "secret"}}}), "plain values and keys of the Secret of its target"),
+        ("fieldref", env_add({"name": "X", "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}}), "plain values and keys of the Secret of its target"),
         ("writable-root", sec("readOnlyRootFilesystem", False), "read-only root filesystem"),
         ("escalation", sec("allowPrivilegeEscalation", True), "read-only root filesystem"),
         ("caps", lambda o: tc(o)["securityContext"].update({"capabilities": {"drop": ["ALL"], "add": ["NET_RAW"]}}), "read-only root filesystem|violates PodSecurity|forbidden"),
@@ -1073,13 +1073,47 @@ if tb_file.exists():
         ("owned", lambda o: o["metadata"].update({"ownerReferences": [{"apiVersion": "apps/v1", "kind": "Deployment", "name": "app-menu", "uid": "00000000-0000-4000-8000-000000000061"}]}), "has no owner"),
         ("label-mismatch", lambda o: o["metadata"]["labels"].update({SERVICE: "recipes"}), "carries its pod's Cloud labels"),
         ("no-session", lambda o: [o["metadata"]["labels"].pop("cloud.viktorbarzin.me/session"), o["spec"]["template"]["metadata"]["labels"].pop("cloud.viktorbarzin.me/session")], "carries its pod's Cloud labels"),
-        ("other-target", tb_labels("cloud.viktorbarzin.me/target", "app"), "carries its pod's Cloud labels"),
+        ("other-target", tb_labels("cloud.viktorbarzin.me/target", "app"), "carries its pod's Cloud labels|the Secret of its target"),
         # Relabelled, it leaves this policy for cloud-managed-job, which
         # refuses every Job but a migrate Job.
         ("app-component", tb_labels(COMPONENT, "app"), "a Job is a Deploy's migrations"),
     ]
     for name, change, expect in TB_RULES:
         case(f"toolbox-{name}", "kr", expect, f"toolbox Job with {name}", variant(tb, change))
+
+    # A Key Value toolbox (B27, `cloud kv-cli`): target keyvalue, the redis
+    # image infra pins and REDISCLI_AUTH from kv-<its Key Value>.
+    infra_tb_file = dump / "infra-toolbox.json"
+    if infra_tb_file.exists():
+        infra_tb = json.loads(infra_tb_file.read_text())
+        kv_image = infra_tb["images"]["keyvalue"]
+        svc = tb["metadata"]["labels"][SERVICE]
+
+        def kv_env(secret):
+            return [{"name": "REDISCLI_AUTH", "valueFrom": {"secretKeyRef": {"name": secret, "key": "password"}}},
+                    {"name": "HOME", "value": "/tmp"}]
+
+        def as_kv(o):
+            tb_labels("cloud.viktorbarzin.me/target", "keyvalue")(o)
+            tc(o).update({"image": kv_image, "env": kv_env("kv-" + svc)})
+
+        kv = variant(tb, as_kv)
+        case("toolbox-kv-job", "kr", "ok", "the Key Value toolbox Job for `cloud kv-cli`", kv)
+        case("toolbox-kv-pod", "ka", "ok", "a pod the Job controller makes from the Key Value toolbox Job", tb_pod(kv))
+        KV_RULES = [
+            ("pg-secret", lambda o: tc(o).update({"env": kv_env("pg-" + svc)}), "plain values and keys of the Secret of its target"),
+            ("other-kv-secret", lambda o: tc(o).update({"env": kv_env("kv-other")}), "plain values and keys of the Secret of its target"),
+            ("postgres-image", lambda o: tc(o).update({"image": tb["spec"]["template"]["spec"]["containers"][0]["image"]}), "runs the image of its target"),
+        ]
+        for name, change, expect in KV_RULES:
+            case(f"toolbox-kv-{name}", "kr", expect, f"Key Value toolbox Job with {name}", variant(kv, change))
+        # The pod side of the same rule (cloud-managed-pod).
+        case("toolbox-kv-pod-pg-secret", "ka", "plain values and keys of the Secret of its target",
+             "a Key Value toolbox pod reading pg-<service>", tb_pod(variant(kv, lambda o: tc(o).update({"env": kv_env("pg-" + svc)}))))
+        case("toolbox-pg-kv-secret", "kr", "plain values and keys of the Secret of its target",
+             "a psql toolbox Job reading kv-<service>", variant(tb, lambda o: tc(o).update({"env": kv_env("kv-" + svc)})))
+        case("toolbox-pg-redis-image", "kr", "runs the image of its target",
+             "a psql toolbox Job running the redis image", variant(tb, lambda o: tc(o).update({"image": kv_image})))
 
     # No Deployment runs toolbox pods: they come from a Job only.
     def tb_deployment(o):

@@ -421,8 +421,11 @@ locals {
   # own Secret pg-<name>, has no Kubernetes token, a read-only root and
   # only /tmp, and reaches only DNS and the CNPG primary (the egress floor).
   # The image is the one Cloud runs (the cloud repo's TOOLBOX_IMAGES), fed
-  # to the reconciler as TOOLBOX_POSTGRES_IMAGE from here (deploy_rules.tf),
-  # so a Renovate bump moves both. Key Value (Batch 4) adds an image.
+  # to the reconciler as TOOLBOX_POSTGRES_IMAGE and TOOLBOX_KEYVALUE_IMAGE
+  # from here (deploy_rules.tf), so a Renovate bump moves both. A Key Value
+  # toolbox (B27, `cloud kv-cli`, target keyvalue) runs redis-cli with the
+  # Key Value's own ACL user from Secret kv-<name>: REDISCLI_AUTH holds the
+  # password, the console passes the user and host as arguments.
   cloud_toolbox = {
     component = "toolbox"
     container = "toolbox"
@@ -430,10 +433,17 @@ locals {
     name_re       = "^toolbox-[0-9a-f]{9}$"
     session_label = "cloud.viktorbarzin.me/session"
     target_label  = "cloud.viktorbarzin.me/target"
-    # The Postgres Secret modules/postgres writes, pg-<its name>.
-    secret_prefix = "pg-"
+    # The Secret of the toolbox's target: pg-<name> (modules/postgres) or
+    # kv-<name> (modules/keyvalue).
+    secret_prefixes = {
+      postgres = "pg-"
+      keyvalue = "kv-"
+    }
     images = {
       postgres = "docker.io/library/postgres:18-alpine@sha256:b6972e1115a4ff8eba5d7f7d19184926d1e16d7d1136ae1e1a7ebf286da0f015"
+      # The shared Redis's own version (stacks/redis), so redis-cli speaks
+      # every command the server knows.
+      keyvalue = "docker.io/library/redis:8.10.3-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3"
     }
     # Cloud's TOOLBOX_DEADLINE_SECONDS: 2 min to start, the 1 h session
     # cap and a minute.
@@ -959,8 +969,23 @@ locals {
         # Project policy can undo it. Rollback: revert the commit that added
         # it and apply stacks/cloud.
         { action = "Deny", protocol = "TCP", destination = { ports = local.cloud_egress_denied_tcp_ports } },
-        # A psql toolbox (B22) reaches DNS and the CNPG primary above and
-        # nothing else: no internet, no other pod, even its own namespace's.
+        # The shared Redis, for Key Value (B27): each Project logs in as its
+        # own ACL user, confined to its key prefix (stacks/redis acl_sync.py).
+        # Passed, not allowed: Cloud's Project policy allows it only for a
+        # Project with a Key Value. Before the toolbox Deny, so a kv-cli
+        # toolbox reaches Redis; a psql toolbox gets no Redis credential.
+        {
+          action   = "Pass"
+          protocol = "TCP"
+          destination = {
+            namespaceSelector = "projectcalico.org/name == 'redis'"
+            selector          = "app == 'redis-v2'"
+            ports             = [6379]
+          }
+        },
+        # A toolbox (B22) reaches DNS and the CNPG primary above, and Redis
+        # where the Project policy allows it, and nothing else: no internet,
+        # no other pod, even its own namespace's.
         { action = "Deny", source = { selector = "${local.cloud_component_label} == '${local.cloud_toolbox.component}'" } },
         # Pods in a managed namespace: the Project policy allows only its own
         # namespace. A GlobalNetworkPolicy cannot say "the same namespace".
@@ -1201,10 +1226,12 @@ locals {
       expression = "@JOB (has(@S.restartPolicy) && @S.restartPolicy == 'Never' && @S.containers.all(c, !has(c.lifecycle) && !has(c.ports) && !has(c.livenessProbe) && !has(c.readinessProbe) && !has(c.startupProbe)))"
       message    = "in a Cloud namespace, a one-off job pod runs once (restartPolicy Never), listens on no port and has no probe or lifecycle hook"
     },
-    # A psql toolbox pod (local.cloud_toolbox, B22): one container that only
-    # sleeps, in Cloud's pinned image, with the Postgres role of its own
-    # Service from Secret pg-<service>, no token, a read-only root and only
-    # emptyDir volumes. The console runs psql in it through pods/exec.
+    # A toolbox pod (local.cloud_toolbox, B22 and B27): one container that
+    # only sleeps, in Cloud's pinned image, with the credentials of its own
+    # Service from the Secret of its target (pg-<service> for psql,
+    # kv-<service> for redis-cli), no token, a read-only root and only
+    # emptyDir volumes. The console runs psql or redis-cli in it through
+    # pods/exec.
     {
       expression = "@TBX (size(@S.containers) == 1 && @S.containers[0].name == '${local.cloud_toolbox.container}' && @S.containers[0].image in ${jsonencode(values(local.cloud_toolbox.images))} && has(@S.containers[0].command) && size(@S.containers[0].command) == 2 && @S.containers[0].command[0] == 'sleep' && @S.containers[0].command[1].matches('^[0-9]{1,6}$') && (!has(@S.containers[0].args) || size(@S.containers[0].args) == 0))"
       message    = "in a Cloud namespace, a toolbox pod has one container, ${local.cloud_toolbox.container}, running ${join(" or ", values(local.cloud_toolbox.images))} with the command sleep <seconds> and no args"
@@ -1214,8 +1241,8 @@ locals {
       message    = "in a Cloud namespace, a toolbox pod runs once (restartPolicy Never) with no service account token and only emptyDir volumes, and its container has no port, probe, lifecycle hook or envFrom"
     },
     {
-      expression = "@TBX @S.containers.all(c, !has(c.env) || c.env.all(e, (!has(e.valueFrom) && has(e.value)) || (has(e.valueFrom) && (!has(e.value) || e.value == '') && has(e.valueFrom.secretKeyRef) && !has(e.valueFrom.configMapKeyRef) && !has(e.valueFrom.fieldRef) && !has(e.valueFrom.resourceFieldRef) && e.valueFrom.secretKeyRef.name == '${local.cloud_toolbox.secret_prefix}' + variables.service)))"
-      message    = "in a Cloud namespace, a toolbox's env is plain values and keys of Secret ${local.cloud_toolbox.secret_prefix}<its Service> only"
+      expression = "@TBX @S.containers.all(c, !has(c.env) || c.env.all(e, (!has(e.valueFrom) && has(e.value)) || (has(e.valueFrom) && (!has(e.value) || e.value == '') && has(e.valueFrom.secretKeyRef) && !has(e.valueFrom.configMapKeyRef) && !has(e.valueFrom.fieldRef) && !has(e.valueFrom.resourceFieldRef) && variables.podLabels[?'${local.cloud_toolbox.target_label}'].orValue('') in ${jsonencode(keys(local.cloud_toolbox.secret_prefixes))} && e.valueFrom.secretKeyRef.name == ${jsonencode(local.cloud_toolbox.secret_prefixes)}[variables.podLabels['${local.cloud_toolbox.target_label}']] + variables.service)))"
+      message    = "in a Cloud namespace, a toolbox's env is plain values and keys of the Secret of its target only (${join(" or ", [for t, p in local.cloud_toolbox.secret_prefixes : "${p}<its Service> for ${t}"])})"
     },
     {
       expression = "@TBX @S.containers.all(c, has(c.securityContext) && has(c.securityContext.readOnlyRootFilesystem) && c.securityContext.readOnlyRootFilesystem && has(c.securityContext.allowPrivilegeEscalation) && !c.securityContext.allowPrivilegeEscalation && has(c.securityContext.runAsNonRoot) && c.securityContext.runAsNonRoot && has(c.securityContext.capabilities) && has(c.securityContext.capabilities.drop) && 'ALL' in c.securityContext.capabilities.drop && (!has(c.securityContext.capabilities.add) || size(c.securityContext.capabilities.add) == 0))"
@@ -2033,8 +2060,8 @@ locals {
             reason     = "Forbidden"
           },
           {
-            expression = "request.subResource != 'exec' || (has(object.container) && has(object.command) && ((object.container == 'app' && object.command == ['sh']) || (object.container == '${local.cloud_toolbox.container}' && size(object.command) > 0 && object.command[0] == 'psql')))"
-            message    = "the Cloud console may exec only sh in container app or psql in container ${local.cloud_toolbox.container}"
+            expression = "request.subResource != 'exec' || (has(object.container) && has(object.command) && ((object.container == 'app' && object.command == ['sh']) || (object.container == '${local.cloud_toolbox.container}' && size(object.command) > 0 && object.command[0] in ['psql', 'redis-cli'])))"
+            message    = "the Cloud console may exec only sh in container app or psql or redis-cli in container ${local.cloud_toolbox.container}"
             reason     = "Forbidden"
           },
         ]

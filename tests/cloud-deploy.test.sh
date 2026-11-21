@@ -69,7 +69,7 @@ locals {
   cloud_taken_hosts = {}
 }
 EOF
-if ! (cd "$TMP/locals" && echo 'jsonencode({console_rules = local.cloud_console_cluster_rules, console_env = local.cloud_console_env, reconciler_env = local.cloud_reconciler_env, reconciler_files = local.cloud_reconciler_files, reconciler_reload = local.cloud_reconciler_reload, secretstore_vault = local.cloud_secretstore_vault_server, console_secret_env = local.cloud_console_secret_env, reconciler_system_template = local.cloud_reconciler_system_template, console_system_template = local.cloud_console_system_template, reconciler_system_keys = local.cloud_reconciler_system_keys, console_system_keys = local.cloud_console_system_keys, reconciler_system_secret = local.cloud_reconciler_system_secret, console_system_secret = local.cloud_console_system_secret, pins = {EDGE_IMAGE = local.cloud_edge.image, OAUTH2_PROXY_IMAGE = local.cloud_oauth2_proxy.image, TOOLBOX_POSTGRES_IMAGE = local.cloud_toolbox.images.postgres, PG_TASK_IMAGE = local.cloud_pg_task.image}})' \
+if ! (cd "$TMP/locals" && echo 'jsonencode({console_rules = local.cloud_console_cluster_rules, console_env = local.cloud_console_env, reconciler_env = local.cloud_reconciler_env, reconciler_files = local.cloud_reconciler_files, reconciler_reload = local.cloud_reconciler_reload, secretstore_vault = local.cloud_secretstore_vault_server, console_secret_env = local.cloud_console_secret_env, reconciler_system_template = local.cloud_reconciler_system_template, console_system_template = local.cloud_console_system_template, reconciler_system_keys = local.cloud_reconciler_system_keys, console_system_keys = local.cloud_console_system_keys, reconciler_system_secret = local.cloud_reconciler_system_secret, console_system_secret = local.cloud_console_system_secret, pins = {EDGE_IMAGE = local.cloud_edge.image, OAUTH2_PROXY_IMAGE = local.cloud_oauth2_proxy.image, TOOLBOX_POSTGRES_IMAGE = local.cloud_toolbox.images.postgres, TOOLBOX_KEYVALUE_IMAGE = local.cloud_toolbox.images.keyvalue, PG_TASK_IMAGE = local.cloud_pg_task.image}})' \
     | terraform console >"$TMP/locals.json" 2>"$TMP/locals.err"); then
   echo "FAIL: terraform console could not evaluate stacks/cloud/deploy_rules.tf (it must hold only locals)"
   cat "$TMP/locals.err"
@@ -128,8 +128,9 @@ read |= set(re.findall(r'runtimeEnv\.([A-Z0-9_]+)', src))
 # Read outside env.server.ts: @viktorbarzin/pg (pgSettingsFromEnv) reads the
 # database pair, and the OS reads HOME.
 read |= {"DATABASE_URL", "DATABASE_PASSWORD_FILE", "HOME"}
-# Names set ahead of the code; none now.
-pending = set()
+# Names set ahead of the code: B27's Key Value (cloud branch
+# wizard/b27-keyvalue) reads these. Drop each once Cloud's master reads it.
+pending = {"TOOLBOX_KEYVALUE_IMAGE", "TENANTS_PORT", "REDIS_TENANTS_TOKEN_FILE"}
 
 def names(env):
     return [e["name"] for e in env]
@@ -164,6 +165,10 @@ for n, f in files.items():
 # second pin in the cloud repo drifted twice (edge 2026-11-13, Postgres
 # tasks 2026-11-19) and Kubernetes refused every object that used it.
 for n, pin in sorted(loc["pins"].items()):
+    if n in pending and n not in read:
+        if renv.get(n) != pin:
+            bad.append(f"the reconciler's {n} is {renv.get(n)!r}, want the pin its admission policy holds ({pin!r})")
+        continue
     if renv.get(n) != pin:
         bad.append(f"the reconciler's {n} is {renv.get(n)!r}, want the pin its admission policy holds ({pin!r})")
     if not re.search(rf'pinnedImage\("{n}"', src):
