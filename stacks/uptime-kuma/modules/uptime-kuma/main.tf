@@ -931,7 +931,7 @@ resource "kubernetes_job" "pg_probe_role" {
         restart_policy = "Never"
         container {
           name  = "role"
-          image = "docker.io/library/postgres:18.7-alpine"
+          image = "docker.io/library/postgres:19.0-alpine"
           # psql interpolates the password as a quoted literal (%L); it never
           # appears in the Job spec.
           command = ["sh", "-c",
