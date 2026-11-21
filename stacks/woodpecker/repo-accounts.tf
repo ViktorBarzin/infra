@@ -61,6 +61,7 @@ locals {
     "511" = "reels"                    # ViktorBarzin/trip-reel
     "512" = "cloud"                    # ViktorBarzin/cloud
     "545" = "infra-map"                # ViktorBarzin/infra-map
+    "546" = "datenight"                # ViktorBarzin/datenight
     "7"   = "realestate-crawler"       # immovika/realestate-crawler
     "9"   = "ebook2audiobook"          # ViktorBarzin/audiblez-web
     "10"  = "tv"                       # ViktorBarzin/tv
