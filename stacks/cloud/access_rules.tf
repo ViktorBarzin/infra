@@ -473,9 +473,13 @@ locals {
   # cloud-bucket-task and cloud-pg-task (and of their Secret policies). A
   # name Cloud did not give, or none, falls to the Postgres rules, which
   # refuse it.
-  # The backup share as an inline nfs path or csi attribute, with any run of
-  # slashes and anything below it.
-  cloud_bucket_backup_share_re = "^/+srv/+nfs/+cloud-buckets(/|$)"
+  # The backup share as an inline nfs path or csi attribute: the share and
+  # anything below it, and every directory above it too (/, /srv,
+  # /srv/nfs), since a mount of a parent reaches the backups through a
+  # subPath or csi subDir. Runs of slashes and `.` segments count as
+  # nothing, and any `..` segment matches, since it can climb into the
+  # share. [.] stands for a dot so the CEL string needs no escape.
+  cloud_bucket_backup_share_re = "^/+([.]/+)*(srv(/+([.]/+)*)*(nfs(/+([.]/+)*)*(cloud-buckets(/.*)?)?)?)?$|(^|/)[.][.](/|$)"
   cloud_bucket_task_named      = "has(object.metadata.name) && object.metadata.name.startsWith('${local.cloud_bucket_task.prefix}')"
 
   # A psql toolbox (the cloud repo's B22, `cloud psql`): a Job the

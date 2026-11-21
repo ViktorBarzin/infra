@@ -281,6 +281,14 @@ case("inline-nfs-slashes", "ka", P_INLINE, "a pod in default with an inline nfs 
      variant(plain, lambda o: o["spec"]["volumes"][0]["nfs"].update({"path": "//srv/nfs//cloud-buckets/current"})))
 case("inline-csi", "ka", P_INLINE, "a pod in default with an inline csi volume on the backup share",
      variant(plain, lambda o: o["spec"].update({"volumes": [{"name": "nfs", "csi": {"driver": "nfs.csi.k8s.io", "volumeAttributes": {"server": "192.168.1.127", "share": "/srv/nfs/cloud-buckets"}}}]})))
+for label, path in (("parent", "/srv/nfs"), ("parent-slash", "/srv/nfs/"), ("srv", "/srv"), ("root", "/"),
+                    ("dot", "/srv/./nfs/cloud-buckets"), ("dotdot", "/srv/nfs/other/../cloud-buckets")):
+    case(f"inline-nfs-{label}", "ka", P_INLINE, f"a pod in default with an inline nfs volume on {path}",
+         variant(plain, lambda o, path=path: o["spec"]["volumes"][0]["nfs"].update({"path": path})))
+case("inline-csi-parent", "ka", P_INLINE, "a pod in default with an inline csi volume on /srv/nfs with subDir cloud-buckets",
+     variant(plain, lambda o: o["spec"].update({"volumes": [{"name": "nfs", "csi": {"driver": "nfs.csi.k8s.io", "volumeAttributes": {"server": "192.168.1.127", "share": "/srv/nfs", "subDir": "cloud-buckets"}}}]})))
+case("other-nfs-near", "ka", "ok", "a pod in default with an inline nfs volume on /srv/nfs/cloud-bucketsx (another share)",
+     variant(plain, lambda o: o["spec"]["volumes"][0]["nfs"].update({"path": "/srv/nfs/cloud-bucketsx"})))
 case("other-nfs", "ka", "ok", "a pod in default with an inline nfs volume on another share (the guard leaves it alone)",
      variant(plain, lambda o: o["spec"]["volumes"][0]["nfs"].update({"path": "/srv/nfs/other"})))
 case("claim-elsewhere", "ka", P_WHO, "a pod in default naming a claim cloud-bucket-backups",
