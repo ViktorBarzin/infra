@@ -789,6 +789,9 @@ after B40 R4 has locked Redis's `default` user. Apply in this order:
    `cloud.viktorbarzin.me/managed=true`. Until Cloud serves its route the
    sync logs "Cloud tenants route unreachable", keeps the tenants Redis
    holds (none) and `CloudKeyValueTenantsFetchFailing` fires after 15 min.
+   The same NetworkPolicy admits the reconciler's pods (`app=cloud-reconciler`
+   in namespace `cloud`), which check each new Key Value with its own
+   credentials before Apps get `REDIS_URL`.
 3. `stacks/cloud`: ExternalSecret `cloud-reconciler-redis-tenants`, the
    reconciler's `REDIS_TENANTS_TOKEN_FILE`, `TENANTS_PORT` and
    `TOOLBOX_KEYVALUE_IMAGE`, port `tenants` 9091 on Service

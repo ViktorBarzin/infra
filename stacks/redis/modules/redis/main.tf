@@ -675,6 +675,18 @@ resource "kubernetes_network_policy_v1" "redis_ingress" {
           match_labels = { "cloud.viktorbarzin.me/managed" = "true" }
         }
       }
+      # Cloud's reconciler (B27): before it gives Apps REDIS_URL it checks a
+      # new Key Value with that tenant's own credentials (AUTH and PING).
+      # Only its pods (stacks/cloud local.cloud_reconciler_labels), not the
+      # rest of namespace cloud.
+      from {
+        namespace_selector {
+          match_labels = { "kubernetes.io/metadata.name" = "cloud" }
+        }
+        pod_selector {
+          match_labels = { app = "cloud-reconciler" }
+        }
+      }
       ports {
         port     = "6379"
         protocol = "TCP"
