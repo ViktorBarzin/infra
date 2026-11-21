@@ -126,14 +126,24 @@ UI-managed, in `/config/automations.yaml`) does it.
 | Triggers | 12:30 every day; `zone.home` below 1 for 10 min |
 | Runs when | the 12:30 trigger on Monday to Friday, or nobody is home (any day) |
 | Skips when | outside 08:00-21:00, it already ran today (its own `last_triggered`), `vacuum.yiko` is not `docked`, battery under 50%, `sensor.yiko_error` is not 0, or `script.yiko_photo` is on |
-| Action | `clean_V2` `{"act":"start","content":{"type":"freeClean","value":"1,4,8"}}` |
+| Action | `clean_V2` freeClean `"1,4"` (kitchen); wait for `vacuum.yiko` `cleaning` (5 min), then `docked` with `sensor.yiko_station_state` `idle` or `drying_mop` held for 3 min (60 min); then freeClean `"1,8"` (living room) |
 | Work mode | whatever `select.yiko_work_mode` is set to (vacuum and mop on 2026-11-21) |
 
-`freeClean` takes `<passes>,<room id>,<room id>...` (deebot-client
-`CleanAreaV2`). Room 8 is the living room; it has no name on the map. To change
-the rooms, edit the `value` in the HA automation editor. The automation sends no
+The rooms run as two jobs because one job with both rooms cleaned only the
+first. On 2026-11-21 `"1,4,8"` was accepted, but Yiko cleaned 4 m2 of the
+kitchen and docked to dry its mop. deebot-client `CleanAreaV2` builds
+`freeClean` as `<passes>,<room id>,...`, and this firmware takes one room.
+During a job Yiko docks to wash its mop (`washing_mop`). Each time it docks,
+the station shows `idle` for a few seconds before `emptying_dustbin`, so the
+wait needs the 3 min hold: a first version without it started nothing for the
+second room. `drying_mop` (mop mode) or a lasting `idle` (vacuum mode) marks
+the end of the job.
+
+Room 8 is the living room; it has no name on the map. To change the rooms, edit
+the `value` of each start in the HA automation editor. The automation sends no
 notification. Its trace in the HA automation editor shows why a run was
-skipped. Bank holidays count as weekdays.
+skipped or where it stopped. Bank holidays count as weekdays. If HA restarts
+during a run, the run stops and the second room is skipped that day.
 
 ### Drive Yiko by hand
 
