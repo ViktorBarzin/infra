@@ -76,6 +76,19 @@ def test_button(name) -> str:
     return '<button type="button" class="test" data-alert="%s" title="Send yourself a test of this alert">Test</button>' % esc(name)
 
 
+CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+
+def readable(name) -> str:
+    """R730BackupUplinkDown -> R730 Backup Uplink Down."""
+    return CAMEL.sub(" ", name)
+
+
+def search_words(name) -> str:
+    """What the search matches an alert's name against: its words and the raw name."""
+    return "%s %s" % (readable(name).lower(), name.lower())
+
+
 def summary_text(alert) -> str:
     return TEMPLATE.sub("…", alert.get("summary") or "")
 
@@ -111,6 +124,13 @@ details{padding:0 0 8px}summary{cursor:pointer;color:var(--muted);font-size:13px
 .from{font-size:11px;color:var(--muted);margin-left:6px}
 .group{border-top:1px solid var(--line)}.group:first-of-type{border-top:none}
 #q{width:100%;margin:4px 0 8px}
+.filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 8px}
+.filter{font:inherit;font-size:13px;padding:3px 12px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--fg);cursor:pointer}
+.filter.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+#count{margin-left:6px}
+.list,.rows{display:flex;flex-direction:column}
+.raw{font-size:11px;color:var(--muted);margin-left:6px;font-family:ui-monospace,monospace}
+.badge{font-size:11px;background:var(--bad);color:var(--bg);border-radius:4px;padding:0 5px;margin-left:6px}
 .bar{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line);padding:10px 16px;text-align:center}
 button.save{font:inherit;background:var(--accent);color:var(--accent-fg);border:0;border-radius:8px;padding:8px 22px;cursor:pointer}
 button.save:disabled{opacity:.45;cursor:default}
@@ -181,19 +201,64 @@ document.addEventListener('click',function(e){
 });
 document.querySelectorAll('.chips').forEach(paint);
 updateSave();
-var q=document.getElementById('q');
-if(q){q.addEventListener('input',function(){
-  var t=q.value.trim().toLowerCase();
+// Search: every word must match the alert's name, summary or group. Names
+// are split into words (R730BackupUplinkDown -> r730 backup uplink down);
+// a word of four letters or more also matches with one typo. Best matches
+// come first, and so do the groups that hold them.
+var state={q:'',f:'all'}, timer=null;
+function lev(a,b){
+  if(Math.abs(a.length-b.length)>1) return 2;
+  var prev=[],cur,i,j; for(j=0;j<=b.length;j++) prev[j]=j;
+  for(i=1;i<=a.length;i++){cur=[i]; for(j=1;j<=b.length;j++){cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));} prev=cur;}
+  return prev[b.length];
+}
+function tokScore(tok,nameWords,name,all){
+  if(nameWords.indexOf(tok)>=0) return 6;
+  for(var i=0;i<nameWords.length;i++) if(nameWords[i].indexOf(tok)===0) return 4;
+  if(name.indexOf(tok)>=0) return 3;
+  if(all.indexOf(tok)>=0) return 1;
+  if(tok.length>=4){
+    var ws=all.split(/[^a-z0-9]+/);
+    for(var k=0;k<ws.length;k++){var w=ws[k]; if(w.length>=3&&(lev(tok,w)<=1||lev(tok,w.slice(0,tok.length))<=1)) return 0.5;}
+  }
+  return 0;
+}
+function score(row,toks){
+  if(!toks.length) return 1;
+  var n=row.dataset.n||'', g=row.closest('.group'), all=n+' '+(row.dataset.t||'')+' '+(g?g.dataset.name.toLowerCase():''), nw=n.split(' '), s=0;
+  for(var i=0;i<toks.length;i++){var t=tokScore(toks[i],nw,n,all); if(!t) return 0; s+=t;}
+  return s;
+}
+function passes(row){
+  var f=state.f;
+  if(f==='firing') return row.dataset.state==='firing';
+  if(f==='critical') return row.dataset.sev==='critical';
+  if(f==='mine'){var c=row.querySelector('.chips'); return !!c&&effective(c).length>0;}
+  return true;
+}
+function apply(){
+  var toks=state.q.trim().toLowerCase().split(/\s+/).filter(Boolean), active=toks.length>0||state.f!=='all', shown=0;
   document.querySelectorAll('.group').forEach(function(g){
-    var all=!t||g.dataset.name.toLowerCase().indexOf(t)>=0, any=all;
+    var best=0;
     g.querySelectorAll('.row').forEach(function(r){
-      var hit=all||r.textContent.toLowerCase().indexOf(t)>=0;
-      r.hidden=!hit; any=any||hit;
+      var s=passes(r)?score(r,toks):0;
+      r.hidden=active&&!s; r.style.order=active?String(Math.round(-s*100)):'';
+      if(s){best=Math.max(best,s); shown++;}
     });
-    g.hidden=!any;
-    var d=g.querySelector('details'); if(d){d.open=!!t&&any&&!all;}
+    g.hidden=active&&!best; g.style.order=active?String(Math.round(-best*100)):'';
+    var d=g.querySelector('details'); if(d) d.open=active&&best>0;
   });
-});}
+  var c=document.getElementById('count');
+  if(c) c.textContent=!active?'':shown?(shown+' matching alert'+(shown===1?'':'s')):'Nothing matches. Try fewer or shorter words.';
+}
+var q=document.getElementById('q');
+if(q){q.addEventListener('input',function(){state.q=q.value; clearTimeout(timer); timer=setTimeout(apply,120);});}
+document.querySelectorAll('.filter').forEach(function(b){
+  b.addEventListener('click',function(){
+    document.querySelectorAll('.filter').forEach(function(x){x.classList.toggle('on',x===b);});
+    state.f=b.dataset.filter; apply();
+  });
+});
 """
 
 NAV = '<a href="/">Settings</a> · <a href="/how">How it works</a>'
@@ -251,23 +316,33 @@ def full_page(user, notify, catalog, saved, is_admin=False) -> bytes:
         '<div class="muted">%d alerts in %d rule groups. Tap Phone, Email or Slack to choose; you can pick several. '
         "A group choice also covers alerts added to it later. A choice on one alert wins over its group; "
         "&#8634; makes it follow the group again.</div>" % (total, len(catalog)),
-        '<input type="text" id="q" placeholder="Search alerts or groups" autocomplete="off">',
-        '<div class="card">',
+        '<input type="text" id="q" placeholder="Search, e.g. internet, disk full, backup" autocomplete="off">',
+        '<div class="filters"><button type="button" class="filter on" data-filter="all">All</button>'
+        '<button type="button" class="filter" data-filter="mine">What I get</button>'
+        '<button type="button" class="filter" data-filter="firing">Firing now</button>'
+        '<button type="button" class="filter" data-filter="critical">Critical</button>'
+        '<span id="count" class="muted" aria-live="polite"></span></div>',
+        '<div class="card list">',
     ]
     listed = set()
     for g in catalog:
         rows = []
         for a in g["alerts"]:
             listed.add(a["name"])
+            firing = a.get("state") == "firing"
             rows.append(
-                '<div class="row"><div><span class="name">%s</span><span class="from" hidden>from group</span>'
+                '<div class="row" data-sev="%s" data-state="%s" data-n="%s" data-t="%s">'
+                '<div><span class="name">%s</span><span class="raw">%s</span>%s<span class="from" hidden>from group</span>'
                 '<div class="sum">%s</div><div class="tst" aria-live="polite"></div></div>'
                 '<span class="acts">%s%s</span></div>'
-                % (esc(a["name"]), esc(summary_text(a)), test_button(a["name"]), chips("a", "a:" + a["name"], alerts.get(a["name"])))
+                % (esc(a.get("severity") or ""), esc(a.get("state") or "inactive"), esc(search_words(a["name"])),
+                   esc(("%s %s" % (summary_text(a), g["name"])).lower()),
+                   esc(readable(a["name"])), esc(a["name"]), '<span class="badge">firing</span>' if firing else "",
+                   esc(summary_text(a)), test_button(a["name"]), chips("a", "a:" + a["name"], alerts.get(a["name"])))
             )
         out.append(
             '<section class="group" data-name="%s"><div class="ghead"><b>%s</b>%s</div>'
-            "<details><summary>%d alert%s</summary>%s</details></section>"
+            '<details><summary>%d alert%s</summary><div class="rows">%s</div></details></section>'
             % (esc(g["name"]), esc(g["name"]), chips("g", "g:" + g["name"], groups.get(g["name"])),
                len(g["alerts"]), "" if len(g["alerts"]) == 1 else "s", "".join(rows))
         )

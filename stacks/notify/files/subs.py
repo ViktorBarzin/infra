@@ -313,6 +313,7 @@ class Rules:
                         "name": r["name"],
                         "summary": (r.get("annotations") or {}).get("summary", ""),
                         "severity": (r.get("labels") or {}).get("severity", ""),
+                        "state": r.get("state") or "inactive",
                     })
                     if g["name"] not in index.setdefault(r["name"], []):
                         index[r["name"]].append(g["name"])

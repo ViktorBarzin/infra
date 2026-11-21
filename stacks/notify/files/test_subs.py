@@ -278,7 +278,7 @@ class RulesTest(unittest.TestCase):
     def test_catalog_is_sorted_and_deduplicated(self):
         cat = self.rules.catalog()
         self.assertEqual([g["name"] for g in cat], ["R730 Host", "Storage"])
-        self.assertEqual(cat[1]["alerts"], [{"name": "PVFillingUp", "summary": "PV {{ $labels.pvc }} is filling", "severity": "warning"}])
+        self.assertEqual(cat[1]["alerts"], [{"name": "PVFillingUp", "summary": "PV {{ $labels.pvc }} is filling", "severity": "warning", "state": "inactive"}])
 
     def test_groups_of(self):
         self.assertEqual(self.rules.groups_of("PVFillingUp"), ["Storage"])

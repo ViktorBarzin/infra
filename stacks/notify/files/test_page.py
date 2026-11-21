@@ -15,10 +15,10 @@ import subs
 URL = "https://notify.example"
 CATALOG = [
     {"name": "R730 Host", "alerts": [
-        {"name": "HighCPUTemperature", "summary": "CPU <hot>", "severity": "warning"},
-        {"name": "SSDHighWriteRate", "summary": "", "severity": ""},
+        {"name": "HighCPUTemperature", "summary": "CPU <hot>", "severity": "warning", "state": "firing"},
+        {"name": "SSDHighWriteRate", "summary": "", "severity": "", "state": "inactive"},
     ]},
-    {"name": "Storage", "alerts": [{"name": "PVFillingUp", "summary": "PV filling", "severity": "warning"}]},
+    {"name": "Storage", "alerts": [{"name": "PVFillingUp", "summary": "PV filling", "severity": "critical", "state": "inactive"}]},
 ]
 
 
@@ -213,6 +213,25 @@ class PageTest(unittest.TestCase):
         self.assertNotIn("#alerts", html)
         _, html, _ = self.request("/", groups="Home Users|Home Server Admins")
         self.assertIn("#alerts", html)
+
+    def test_readable_names(self):
+        self.assertEqual(page.readable("R730BackupUplinkDown"), "R730 Backup Uplink Down")
+        self.assertEqual(page.readable("HighCPUTemperature"), "High CPU Temperature")
+        self.assertEqual(page.readable("PVFillingUp"), "PV Filling Up")
+        self.assertEqual(page.readable("NFSServerUnresponsive"), "NFS Server Unresponsive")
+
+    def test_search_words(self):
+        self.assertEqual(page.search_words("R730BackupUplinkDown"), "r730 backup uplink down r730backupuplinkdown")
+
+    def test_rows_carry_what_search_and_filters_need(self):
+        _, html, _ = self.request("/")
+        self.assertIn('data-sev="warning" data-state="firing"', html)
+        self.assertIn('data-n="high cpu temperature highcputemperature"', html)
+        self.assertIn('data-t="cpu &lt;hot&gt; r730 host"', html)
+        self.assertIn('>High CPU Temperature</span>', html)
+        self.assertIn('class="badge">firing', html)
+        for f in ("all", "mine", "firing", "critical"):
+            self.assertIn('data-filter="%s"' % f, html)
 
     def test_hidden_attribute_beats_display_rules(self):
         _, html, _ = self.request("/")

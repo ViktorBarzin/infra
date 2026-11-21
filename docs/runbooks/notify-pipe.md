@@ -23,7 +23,8 @@ Authentik User model_updated --> Notification Rule --webhook--> apprise-api /add
 Each person's `attributes.notify` holds their Channels (`push_instance`, `push_service`, `email`, `slack_target`), and their choices as lists of Channels: `default` (sent to them by name), `groups` (rule group name -> list) and `alerts` (alertname -> list, `[]` for off). A choice on an alert wins over its groups. The inventory is every alerting rule in Prometheus's and Loki's rules APIs; groups with the same name merge.
 
 - `slack_target` is a Slack member ID (a DM from the bot "claude"), or, for a Home Server Admin, a channel such as `#alerts`. The bot lacks `users:read.email`, so people paste their member ID once.
-- The page sends only the rows that changed, with the value it showed. A save of a row someone changed meanwhile is refused (409) and asks for a reload.
+- Finding alerts: the search box matches every word against the alert's name (split into words, so "backup uplink" finds `R730BackupUplinkDown`), summary and group, forgives one typo in a word of four letters or more, and lists the best matches first. Filters: All, What I get, Firing now, Critical. Names show readably ("R730 Backup Uplink Down") with the raw alertname beside them.
+- The page sends only the rows that changed, with the value it showed. Save stays disabled until something differs from what was loaded. A save of a row someone changed meanwhile is refused (409) and asks for a reload.
 - Each save logs the person and the before and after values: `kubectl -n notify logs deploy/notify-adapter | grep "save by"`.
 
 ## Delivery and retries
