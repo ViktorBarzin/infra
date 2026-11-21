@@ -50,6 +50,10 @@ locals {
     # Vermont complex access-control events. The weekly CronJob creates its
     # table with CREATE TABLE IF NOT EXISTS.
     vermont_access = {}
+    # infra-map (TanStack Start, Forgejo viktor/infra-map, private): Infra,
+    # the 3D map of the homelab. Drizzle migrations run from the `migrate`
+    # init container.
+    infra_map = {}
   }
 }
 

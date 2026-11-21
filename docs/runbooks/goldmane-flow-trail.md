@@ -134,6 +134,11 @@ source workload, destination workload, destination service, port and action.
     median 33; the first digest after the deploy covered 113. A baseline verify
     of `homepage` run after the deploy landed on the existing `verify-homepage`
     rows (first seen 2026-10-10) and added none.
+  - Role `goldmane_edges_read` (Vault static role `pg-goldmane-edges-read`,
+    Tuesday 10:21, created in `stacks/dbaas` `pg_goldmane_edges_read`) has
+    SELECT on every table in schema `public`, including tables the owner
+    creates later (default privileges). Infra (`stacks/infra-map`) reads Flows
+    with it through the ExternalSecret `infra-map-goldmane-creds`.
   - Role `goldmane_edges` (Vault-rotated, 7-day) owns the DB. The `edge` table is
     created — and a pre-widening one upgraded in place — idempotently by the
     aggregator at startup (canonical DDL also in the repo at

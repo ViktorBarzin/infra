@@ -928,6 +928,78 @@
       when: pve_devvm_tf_acl_script.stat.exists
       tags: devvm-tf
 
+    # ---- Infra (stacks/infra-map) read-only token --------------------------
+    # Infra draws the Proxmox guests with their NICs and Bridges. Its token
+    # gets the built-in role PVEAuditor (audit privileges only, no change and
+    # no console) on /vms and /nodes/pve, for both the user and the
+    # privilege-separated token. The secret goes to Vault with `kv patch`,
+    # because secret/infra-map also holds the app's sign-in keys, which a
+    # `put` would wipe. Rotate: `pveum user token remove infra-map@pve read`,
+    # then rerun with --tags infra-map.
+    - name: Read the PVE users (Infra)
+      ansible.builtin.command: pvesh get /access/users --output-format json
+      register: pve_infra_map_users
+      changed_when: false
+      check_mode: false
+      tags: infra-map
+
+    - name: Create the infra-map user
+      ansible.builtin.command: pveum user add infra-map@pve --comment "Infra (stacks/infra-map), read only. PVEAuditor on /vms and /nodes/pve."
+      when: "'infra-map@pve' not in (pve_infra_map_users.stdout | from_json | map(attribute='userid'))"
+      tags: infra-map
+
+    - name: Read the infra-map tokens
+      ansible.builtin.command: pveum user token list infra-map@pve --output-format json
+      register: pve_infra_map_tokens
+      changed_when: false
+      check_mode: false
+      failed_when: false
+      tags: infra-map
+
+    # The secret is shown once, at creation, so it goes straight to Vault.
+    - name: Create the read token
+      ansible.builtin.shell: |
+        set -euo pipefail
+        secret=$(pveum user token add infra-map@pve read --privsep 1 \
+          --comment "stacks/infra-map" --output-format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')
+        printf '%s' "infra-map@pve!read=$secret"
+      args:
+        executable: /bin/bash
+      register: pve_infra_map_new_token
+      when: "'read' not in ((pve_infra_map_tokens.stdout | default('[]', true) | from_json) | map(attribute='tokenid'))"
+      no_log: true
+      tags: infra-map
+
+    - name: Write the read token to Vault secret/infra-map
+      ansible.builtin.shell: vault kv patch secret/infra-map pve_api_token=-
+      args:
+        stdin: "{{ pve_infra_map_new_token.stdout }}"
+        stdin_add_newline: false
+      delegate_to: localhost
+      become: false
+      when: pve_infra_map_new_token is changed
+      no_log: true
+      tags: infra-map
+
+    - name: Read the ACLs (Infra)
+      ansible.builtin.command: pvesh get /access/acl --output-format json
+      register: pve_infra_map_acl
+      changed_when: false
+      check_mode: false
+      tags: infra-map
+
+    - name: Grant PVEAuditor to Infra where it is missing
+      ansible.builtin.command: >-
+        pveum acl modify {{ item.0 }} --roles PVEAuditor
+        {{ '--tokens' if '!' in item.1 else '--users' }} '{{ item.1 }}' --propagate 1
+      loop: "{{ ['/vms', '/nodes/pve'] | product(['infra-map@pve', 'infra-map@pve!read']) | list }}"
+      when: >-
+        (pve_infra_map_acl.stdout | from_json
+         | selectattr('path', 'equalto', item.0)
+         | selectattr('ugid', 'equalto', item.1)
+         | selectattr('roleid', 'equalto', 'PVEAuditor') | list | length) == 0
+      tags: infra-map
+
     # ---- storage content types --------------------------------------------
     # `local` also holds `import` content (raw/qcow2 disk images) since
     # 2026-11-03, so stacks/opnsense can upload the OPNsense nano image over

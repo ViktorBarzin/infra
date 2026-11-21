@@ -2510,6 +2510,39 @@ resource "null_resource" "pg_verify_probe" {
   }
 }
 
+# goldmane_edges_read: a SELECT-only login on the goldmane_edges database,
+# which goldmane-edge-aggregator owns (ADR-0014). Infra (stacks/infra-map)
+# reads service Flows with it, so its pod never holds the owner's password.
+# USAGE on schema public and SELECT on its tables, plus default privileges so
+# tables the owner creates later are readable too. No superuser, no CREATEDB,
+# connection limit 3. The password is set by Vault (static role
+# `pg-goldmane-edges-read`, stacks/vault) and reaches the pod via ESO.
+resource "null_resource" "pg_goldmane_edges_read" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    username = "goldmane_edges_read"
+    grants   = "connect,usage,select,default-select:goldmane_edges;limit3"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          set -e
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'goldmane_edges_read'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE goldmane_edges_read WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"' CONNECTION LIMIT 3"
+          psql -U postgres -c "ALTER ROLE goldmane_edges_read NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION CONNECTION LIMIT 3"
+          psql -U postgres -c "GRANT CONNECT ON DATABASE goldmane_edges TO goldmane_edges_read"
+          psql -U postgres -d goldmane_edges -c "GRANT USAGE ON SCHEMA public TO goldmane_edges_read"
+          psql -U postgres -d goldmane_edges -c "GRANT SELECT ON ALL TABLES IN SCHEMA public TO goldmane_edges_read"
+          psql -U postgres -d goldmane_edges -c "ALTER DEFAULT PRIVILEGES FOR ROLE goldmane_edges IN SCHEMA public GRANT SELECT ON TABLES TO goldmane_edges_read"
+        '
+    EOT
+  }
+}
+
 # Old PostgreSQL deployment — kept commented for rollback reference
 # resource "kubernetes_deployment" "postgres" {
 #   metadata {

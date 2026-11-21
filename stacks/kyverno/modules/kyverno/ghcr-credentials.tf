@@ -113,6 +113,10 @@ locals {
     # web app + Python worker, Forgejo viktor/trip-reel, private GitHub
     # mirror). Both Deployments reference the cloned secret.
     "reels",
+    # infra-map: PRIVATE ghcr.io/viktorbarzin/infra-map (Infra, the 3D map of
+    # the homelab; Forgejo viktor/infra-map, private GitHub mirror). The
+    # Deployment references the cloned secret.
+    "infra-map",
   ]
 }
 

@@ -30,6 +30,7 @@ variable "pg_app_roles" {
     prowlarr        = { username = "prowlarr", rotation_schedule = "13 10 * * TUE", rotation_window = 3600 }
     reels           = { username = "reels", rotation_schedule = "15 10 * * TUE", rotation_window = 3600 }
     vermont-access  = { username = "vermont_access", rotation_schedule = "19 10 * * TUE", rotation_window = 3600 }
+    infra-map       = { username = "infra_map", rotation_schedule = "21 10 * * TUE", rotation_window = 3600 }
   }
 }
 

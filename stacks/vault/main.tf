@@ -1506,6 +1506,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-nextcloud-todos",
     "pg-technitium",
     "pg-goldmane-edges",
+    "pg-goldmane-edges-read",
     "pg-tasks",
     "pg-goodreads-sync",
     "pg-paperless-ngx",
@@ -1556,6 +1557,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
 #   10:17 Cloud: pg-cloud (app_db_roles.tf), pg-cloud-provisioner and
 #         pg-cloud-state (cloud.tf)
 #   10:18 mysql-wrongmove   10:19 pg-vermont-access (app_db_roles.tf)
+#   10:21 Infra: pg-infra-map (app_db_roles.tf) and pg-goldmane-edges-read
 #
 # rotation_window = 3600 lets Vault retry a failed slot for an hour, and means a
 # role switched to a schedule outside its window does not rotate at apply.
@@ -1843,6 +1845,18 @@ resource "vault_database_secret_backend_static_role" "pg_goldmane_edges" {
   name              = "pg-goldmane-edges"
   username          = "goldmane_edges"
   rotation_schedule = "2 10 * * TUE"
+  rotation_window   = 3600
+}
+
+# A SELECT-only login on goldmane_edges (stacks/dbaas, pg_goldmane_edges_read),
+# for Infra (stacks/infra-map), which reads service Flows and must not hold
+# the owner's password. Same slot as pg-infra-map, so Infra restarts once.
+resource "vault_database_secret_backend_static_role" "pg_goldmane_edges_read" {
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-goldmane-edges-read"
+  username          = "goldmane_edges_read"
+  rotation_schedule = "21 10 * * TUE"
   rotation_window   = 3600
 }
 

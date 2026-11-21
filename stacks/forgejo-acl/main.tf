@@ -59,3 +59,20 @@ resource "forgejo_branch_protection" "infra_master" {
   enable_merge_whitelist    = true
   merge_whitelist_usernames = ["renovate-bot", "viktor"]
 }
+
+# viktor/infra-map is private. Infra reads its sites/ directory at runtime
+# through the Forgejo API (stacks/infra-map, repo README "Site data") as
+# infra-map-reader: a restricted account, so this Read grant is the only repo
+# it can see. Its one read:repository token is Vault secret/infra-map
+# forgejo_read_token. The account was made with the in-pod CLI
+# (docs/runbooks/cloud.md, "Forgejo bot accounts", has the commands).
+data "forgejo_repository" "infra_map" {
+  owner = "viktor"
+  name  = "infra-map"
+}
+
+resource "forgejo_collaborator" "infra_map_reader" {
+  repository_id = data.forgejo_repository.infra_map.id
+  user          = "infra-map-reader"
+  permission    = "read"
+}
