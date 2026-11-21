@@ -139,16 +139,28 @@ TENANT_NAME_RE = re.compile(r"^p_[a-z0-9_]{1,120}$")
 TENANT_PART_RE = re.compile(r"^[a-z0-9-]{1,63}$")
 TENANT_PREFIX_RE = re.compile(r"^p:([a-z0-9-]{1,63}):([a-z0-9-]{1,63}):$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+# Refused on top of the design's template (review of B27, measured on
+# redis:8.10.3): MOVE and COPY ... DB n put keys in another db, where they
+# are never measured, purged or evicted; SCRIPT KILL stops another client's
+# script; DBSIZE and the PUBSUB introspection subcommands show other
+# tenants' keys and channels. SWAPDB, RESTORE, MIGRATE and SORT ... STORE
+# are already refused by -@dangerous; LMOVE, SUNIONSTORE and RENAME to
+# another prefix by the key pattern.
+TENANT_DENIED = (
+    "-move -copy -script|kill -dbsize -pubsub|channels -pubsub|shardchannels -pubsub|numsub "
+    "-pubsub|shardnumsub -pubsub|numpat"
+)
 TENANT_RULES = (
     "-@all +@read +@write +@keyspace +@hash +@list +@set +@sortedset +@stream +@string +@pubsub "
-    "+@transaction +@scripting +@connection -@dangerous -select -scan -randomkey -function -script|flush"
+    "+@transaction +@scripting +@connection -@dangerous -select -scan -randomkey -function -script|flush "
+    + TENANT_DENIED
 )
 # Over its Size: read and delete only. No scripts and no PUBLISH, which
 # would write or cost memory; MULTI/EXEC/WATCH stay so a client's
 # transaction of reads and deletes still runs.
 TENANT_FULL_RULES = (
     "-@all +@read +@connection +del +unlink +multi +exec +discard +watch +unwatch "
-    "-@dangerous -select -scan -randomkey"
+    "-@dangerous -select -scan -randomkey " + TENANT_DENIED
 )
 TENANT_LINE_RE = re.compile(
     r"^user (p_[a-z0-9_]+) on sanitize-payload #([0-9a-f]{64}) "
@@ -165,6 +177,10 @@ ANSWER_MAX_BYTES = 8 * 1024 * 1024
 # MEMORY_SAMPLE_PER_TENANT keys of each tenant, pipelined PIPELINE_BATCH at
 # a time, and an extrapolation for a bigger tenant (SCAN's order follows the
 # hash table, so the first keys are a fair sample). The key count is exact.
+# MEMORY USAGE ... SAMPLES 0 reads every element of a list, set, hash or
+# sorted set, so a few small elements cannot hide a big key. At most
+# MEMORY_USAGE_PER_RUN calls a run across all tenants; a tenant left with no
+# sample after that has no byte count this run and keeps its mode.
 # Cost at 10,000 tenant keys: SCAN of db 0 at about 16,000 keys is 16 calls,
 # plus 10 pipelined batches of 1,000 MEMORY USAGE, about 10 ms of Redis CPU
 # for small strings and well under a second of wall time.
@@ -172,6 +188,7 @@ MEASURE_EVERY_SECONDS = 300
 SCAN_COUNT = 1000
 PIPELINE_BATCH = 1000
 MEMORY_SAMPLE_PER_TENANT = 10000
+MEMORY_USAGE_PER_RUN = 100000
 
 
 @dataclass(frozen=True)
@@ -567,6 +584,7 @@ def measure(admin: Redis, prefixes: set[str], purge: set[str]) -> Usage:
     sampled = {p: 0 for p in prefixes}
     sample_bytes = {p: 0 for p in prefixes}
     usage = Usage(keys=keys, bytes={})
+    calls_left = MEMORY_USAGE_PER_RUN
     cursor = "0"
     while True:
         reply = admin.call("SCAN", cursor, "MATCH", "p:*", "COUNT", str(SCAN_COUNT))
@@ -579,14 +597,15 @@ def measure(admin: Redis, prefixes: set[str], purge: set[str]) -> Usage:
             prefix = key_prefix(str(key))
             if prefix in keys:
                 keys[prefix] += 1
-                if sampled[prefix] < MEMORY_SAMPLE_PER_TENANT:
+                if sampled[prefix] < MEMORY_SAMPLE_PER_TENANT and calls_left > 0:
                     sampled[prefix] += 1
+                    calls_left -= 1
                     to_size.append((prefix, str(key)))
             elif prefix in purge:
                 to_unlink.append(str(key))
         for i in range(0, len(to_size), PIPELINE_BATCH):
             batch = to_size[i : i + PIPELINE_BATCH]
-            replies = admin.pipeline([["MEMORY", "USAGE", k] for _, k in batch])
+            replies = admin.pipeline([["MEMORY", "USAGE", k, "SAMPLES", "0"] for _, k in batch])
             usage.memory_usage_calls += len(batch)
             for (prefix, _), size in zip(batch, replies):
                 if isinstance(size, RedisError):
@@ -598,7 +617,8 @@ def measure(admin: Redis, prefixes: set[str], purge: set[str]) -> Usage:
             usage.purged += removed if isinstance(removed, int) else 0
         if cursor == "0":
             break
-    usage.bytes = {p: (sample_bytes[p] * keys[p] / sampled[p]) if sampled[p] else 0.0 for p in prefixes}
+    # A prefix with keys but no sample (the run's cap) gets no byte count.
+    usage.bytes = {p: (sample_bytes[p] * keys[p] / sampled[p]) if sampled[p] else 0.0 for p in prefixes if sampled[p] or not keys[p]}
     return usage
 
 
@@ -728,20 +748,18 @@ class Result:
     memory_usage_calls: int = 0
 
 
-def sync_tenants(
+def plan_tenants(
     result: "Result",
-    admin: Redis,
     current: dict[str, str],
     users_rules: dict[str, str],
     fetch_tenants: Callable[[], object] | None,
-    measure_now: bool,
-) -> list[User]:
-    """The tenant users this run wants, and the Key Value numbers on result.
+) -> tuple[list[Tenant], set[str], TenantAnswer | None]:
+    """The tenants this run wants, which of them are full, and the answer.
 
     The route's answer when it is good; otherwise the tenants Redis already
     holds, unchanged, so a Cloud outage drops nobody. Full or normal comes
-    from the measurement on a measuring run, else from ACL LIST: the ACL is
-    the only state kept between runs."""
+    from ACL LIST: the ACL is the only state kept between runs, and only a
+    measurement (measure_tenants, after the ACL is applied) changes it."""
     answer: TenantAnswer | None = None
     if fetch_tenants is not None:
         try:
@@ -754,36 +772,56 @@ def sync_tenants(
     tenants = answer.tenants if answer is not None else tenants_from_acl(current)
     names = {t.name for t in tenants}
     result.foreign_users = foreign_users(current, set(users_rules) if isinstance(users_rules, dict) else set(), names)
-    full = full_users(current) & names
+    return tenants, full_users(current) & names, answer
 
-    if measure_now:
-        # Purge only on a fresh answer, never a live tenant's prefix, and
-        # only once no tenant user in Redis holds that prefix (the user goes
-        # first, in an earlier run).
-        held = {m.group(1) for line in current.values() for m in [TENANT_KEYS_RE.search(line)] if m}
-        live = {t.prefix for t in tenants}
-        purge = {p for p in (answer.purge if answer is not None else []) if p not in live and p not in held}
-        try:
-            usage = measure(admin, live, purge)
-        except (SyncError, RedisError) as exc:
-            result.measure_error = f"{type(exc).__name__}: {exc}"
-        else:
-            result.measured = True
-            result.purged = usage.purged
-            result.memory_usage_calls = usage.memory_usage_calls
-            for t in tenants:
-                key = (t.project, t.service)
-                result.kv_bytes[key] = float(usage.bytes.get(t.prefix, 0.0))
-                result.kv_keys[key] = float(usage.keys.get(t.prefix, 0))
-                if t.max_bytes is not None:
-                    if result.kv_bytes[key] > t.max_bytes:
-                        full.add(t.name)
-                    else:
-                        full.discard(t.name)
-    for t in tenants:
-        result.kv_full[(t.project, t.service)] = 1.0 if t.name in full else 0.0
-        result.kv_connections[(t.project, t.service)] = float(result.counts.get(t.name, 0))
-    return [tenant_user(t, t.name in full) for t in tenants]
+
+def measure_tenants(
+    result: "Result",
+    admin: Redis,
+    before: dict[str, str],
+    tenants: list[Tenant],
+    full: set[str],
+    answer: TenantAnswer | None,
+) -> set[str]:
+    """Measure, purge, and switch tenants between normal and full. Runs after
+    the infra users are applied and checked; any fault here is recorded in
+    result.measure_error and leaves the run ok, with the modes as they were.
+    Returns the full set in force afterwards."""
+    # Purge only on a fresh answer, never a live tenant's prefix, and only
+    # once no tenant user held that prefix at the start of this run (the
+    # user goes first, in an earlier run).
+    held = {m.group(1) for line in before.values() for m in [TENANT_KEYS_RE.search(line)] if m}
+    live = {t.prefix for t in tenants}
+    purge = {p for p in (answer.purge if answer is not None else []) if p not in live and p not in held}
+    try:
+        usage = measure(admin, live, purge)
+        result.measured = True
+        result.purged = usage.purged
+        result.memory_usage_calls = usage.memory_usage_calls
+        wanted = set(full)
+        for t in tenants:
+            key = (t.project, t.service)
+            result.kv_keys[key] = float(usage.keys.get(t.prefix, 0))
+            if t.prefix not in usage.bytes:
+                continue
+            result.kv_bytes[key] = float(usage.bytes[t.prefix])
+            if t.max_bytes is not None:
+                if result.kv_bytes[key] > t.max_bytes:
+                    wanted.add(t.name)
+                else:
+                    wanted.discard(t.name)
+        changed = [t for t in tenants if (t.name in wanted) != (t.name in full)]
+        if changed:
+            users = [tenant_user(t, t.name in wanted) for t in changed]
+            replies = admin.transaction([["ACL", "SETUSER", u.name, *u.setuser_args] for u in users])
+            admin.call("ACL", "SAVE")
+            refused = [str(r) for r in replies if isinstance(r, RedisError)]
+            if refused:
+                raise SyncError(f"Redis refused a Key Value mode change: {refused[0]}")
+        return wanted
+    except (SyncError, RedisError, OSError, ConnectionError) as exc:
+        result.measure_error = f"{type(exc).__name__}: {exc}"
+        return full
 
 
 def run(
@@ -832,7 +870,8 @@ def run(
 
         acl_list = admin.call("ACL", "LIST")
         current = parse_acl_list(acl_list if isinstance(acl_list, list) else [])
-        tenant_users = sync_tenants(result, admin, current, users_rules, fetch_tenants, measure)
+        tenants, full, answer = plan_tenants(result, current, users_rules, fetch_tenants)
+        tenant_users = [tenant_user(t, t.name in full) for t in tenants]
 
         desired = render(users_rules, passwords, tenant_users)
         commands = plan(current, desired)
@@ -859,10 +898,12 @@ def run(
         strays = sorted(n for n in after if n not in desired)
         if drift or strays:
             raise SyncError(f"ACL LIST differs from the render after sync: drift={drift} strays={strays}")
-        tenant_lines = {u.name: u.line for u in tenant_users}
-        for found in (parse_tenant_line(line) for line in tenant_lines.values()):
-            if found is not None:
-                result.kv_ready[(found[0].project, found[0].service)] = 1.0 if after.get(found[0].name) == tenant_lines[found[0].name] else 0.0
+        for t in tenants:
+            # Ready: the user is in Redis with this password and prefix,
+            # normal or full (a mode change below keeps it ready).
+            found = parse_tenant_line(after.get(t.name, ""))
+            ok = found is not None and found[0].password_sha256 == t.password_sha256 and found[0].prefix == t.prefix
+            result.kv_ready[(t.project, t.service)] = 1.0 if ok else 0.0
 
         for name, user in desired.items():
             if user.password is not None:
@@ -870,6 +911,13 @@ def run(
         failed = sorted(n for n, v in result.auth.items() if v != 1.0)
         if failed:
             raise SyncError(f"AUTH and PING failed for: {', '.join(failed)}")
+        # The infra users are applied and checked; the measurement comes
+        # last, so its faults never skip or fail them.
+        if measure:
+            full = measure_tenants(result, admin, current, tenants, full, answer)
+        for t in tenants:
+            result.kv_full[(t.project, t.service)] = 1.0 if t.name in full else 0.0
+            result.kv_connections[(t.project, t.service)] = float(result.counts.get(t.name, 0))
         result.ok = True
         return result
     except (SyncError, RedisError, OSError, ConnectionError) as exc:

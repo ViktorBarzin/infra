@@ -5184,6 +5184,18 @@ serverFiles:
             annotations:
               summary: "redis-acl-sync found and removed {{ $value }} ACL user(s) it did not make"
               description: "The CronJob log names each one (foreign ACL user ...). Treat it as a credential leak until shown otherwise. Runbook: docs/runbooks/redis-acl.md, Foreign users."
+          - alert: RedisScriptCacheHigh
+            # Cloud Key Value tenants (B27) may SCRIPT LOAD, which ioredis
+            # needs, and Redis never evicts a loaded script (only EVAL's own
+            # cache is capped). 166 KiB on 2026-11-21; 16 MiB means some
+            # client loads new scripts without end.
+            expr: redis_memory_used_scripts_bytes{namespace="redis"} > 16 * 1024 * 1024
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Redis pod {{ $labels.pod }} holds {{ $value | humanize1024 }}B of Lua scripts"
+              description: "redis_number_of_cached_scripts shows how many. A Key Value tenant cannot run SCRIPT FLUSH. Once the client is found, run SCRIPT FLUSH ASYNC as the verify user; clients load their scripts again on NOSCRIPT. Runbook: docs/runbooks/redis-acl.md, Cloud Key Value tenants."
           - alert: CloudKeyValueTenantsFetchFailing
             # The sync keeps the tenants Redis already holds while Cloud's
             # route fails, so no Key Value breaks; new, resized or deleted

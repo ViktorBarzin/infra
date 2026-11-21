@@ -8,7 +8,7 @@
 #      and PING, the restricted users get only their commands, a client on
 #      `default` stays connected, a broken input changes nothing.
 #   2. The RedisAclSync* alerts, and B27's RedisMemoryHigh,
-#      CloudKeyValueTotalHigh, RedisForeignUser and
+#      CloudKeyValueTotalHigh, RedisForeignUser, RedisScriptCacheHigh and
 #      CloudKeyValueTenantsFetchFailing, pass `promtool check rules` and the
 #      unit tests in tests/redis-acl/alerts.test.yml.
 #
@@ -33,10 +33,10 @@ mkdir -p "$TMP/t"
 python3 - "$TPL" "$TMP/redis-acl.rules.yml" "$TMP/t/redis-acl.rules.yml" <<'PY' || { echo "FAIL: cannot cut the RedisAclSync rules out"; exit 1; }
 import re, sys, yaml
 text = open(sys.argv[1]).read()
-NAMES = "RedisAclSync\\w+|RedisMemoryHigh|CloudKeyValueTotalHigh|RedisForeignUser|CloudKeyValueTenantsFetchFailing"
+NAMES = "RedisAclSync\\w+|RedisMemoryHigh|CloudKeyValueTotalHigh|RedisForeignUser|RedisScriptCacheHigh|CloudKeyValueTenantsFetchFailing"
 blocks = re.findall(r"^( {10}- alert: (?:" + NAMES + r")\n(?: {12}.*\n|\s*\n)+)", text, re.M)
-if len(blocks) != 6:
-    sys.exit(f"expected 6 redis-acl rules (2 RedisAclSync, B27's 4), found {len(blocks)}")
+if len(blocks) != 7:
+    sys.exit(f"expected 7 redis-acl rules (2 RedisAclSync, B27's 5), found {len(blocks)}")
 rules = [yaml.safe_load(re.sub(r"^ {10}", "", b, flags=re.M))[0] for b in blocks]
 yaml.safe_dump({"groups": [{"name": "redis-acl", "rules": rules}]}, open(sys.argv[2], "w"), sort_keys=False)
 # The unit tests compare labels; `check rules` parses the annotations, so

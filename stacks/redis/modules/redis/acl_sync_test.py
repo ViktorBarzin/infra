@@ -675,7 +675,9 @@ def test_tenant_lines_follow_the_template_and_redis_normal_form():
     assert normal.line == (
         f"user {tenant.name} on sanitize-payload #{digest} ~p:shop:cache:* resetchannels &p:shop:cache:* "
         "-@all +@read +@write +@keyspace +@hash +@list +@set +@sortedset +@stream +@string +@pubsub "
-        "+@transaction +@scripting +@connection -@dangerous -select -scan -randomkey -function -script|flush"
+        "+@transaction +@scripting +@connection -@dangerous -select -scan -randomkey -function -script|flush "
+        "-move -copy -script|kill -dbsize -pubsub|channels -pubsub|shardchannels -pubsub|numsub "
+        "-pubsub|shardnumsub -pubsub|numpat"
     )
     assert normal.setuser_args[:7] == ["reset", "on", f"#{digest}", "resetkeys", "~p:shop:cache:*", "resetchannels", "&p:shop:cache:*"]
     full = acl_sync.tenant_user(tenant, full=True)
@@ -825,8 +827,21 @@ def test_tenant_rules_confine_a_tenant_to_its_prefix(tenant_box):
         assert "NOPERM" in refused(c, "SET", "immich-key", "x")
         for command in (["KEYS", "*"], ["SELECT", "1"], ["FLUSHALL"], ["FLUSHDB"], ["SCAN", "0"], ["RANDOMKEY"],
                         ["CONFIG", "GET", "maxmemory"], ["SCRIPT", "FLUSH"], ["FUNCTION", "FLUSH"], ["ACL", "LIST"],
-                        ["MONITOR"], ["CLIENT", "KILL", "ID", "1"], ["INFO"]):
+                        ["MONITOR"], ["CLIENT", "KILL", "ID", "1"], ["INFO"],
+                        # Out of db 0 or the prefix: never measured, purged or evicted.
+                        ["MOVE", "p:shop:cache:k", "1"], ["COPY", "p:shop:cache:k", "p:shop:cache:k2", "DB", "1"],
+                        ["COPY", "p:shop:cache:k", "p:shop:cache:k3"], ["SWAPDB", "0", "1"],
+                        ["RESTORE", "p:shop:cache:r", "0", "x"], ["MIGRATE", "127.0.0.1", "6380", "p:shop:cache:k", "0", "100"],
+                        ["SORT", "p:shop:cache:k", "STORE", "p:other:cache:s"],
+                        # Other tenants' traffic and the size of db 0.
+                        ["SCRIPT", "KILL"], ["DBSIZE"], ["PUBSUB", "CHANNELS"], ["PUBSUB", "SHARDCHANNELS"],
+                        ["PUBSUB", "NUMSUB", "p:other:cache:chan"], ["PUBSUB", "SHARDNUMSUB", "x"], ["PUBSUB", "NUMPAT"]):
             assert "NOPERM" in refused(c, *command), command
+        for command in (["LMOVE", "p:shop:cache:k", "p:other:cache:l", "LEFT", "LEFT"],
+                        ["SUNIONSTORE", "p:other:cache:s", "p:shop:cache:k"],
+                        ["RENAME", "p:shop:cache:k", "p:other:cache:k"]):
+            assert "NOPERM" in refused(c, *command), command
+        assert c.call("EXISTS", "p:shop:cache:k") == 1
         # BullMQ's way: SCRIPT LOAD, then EVALSHA on declared keys.
         sha = c.call("SCRIPT", "LOAD", "return redis.call('INCR', KEYS[1])")
         assert c.call("EVALSHA", str(sha), "1", "p:shop:cache:bull:n") == 1
@@ -872,6 +887,9 @@ def test_full_tenant_reads_and_deletes_but_cannot_write_until_under_again(tenant
         assert c.call("EXISTS", "p:shop:cache:fill1") == 1
         assert "NOPERM" in refused(c, "SET", "p:shop:cache:new", "1")
         assert "NOPERM" in refused(c, "EVAL", "return 1", "0")
+        for command in (["MOVE", "p:shop:cache:fill0", "1"], ["COPY", "p:shop:cache:fill0", "p:shop:cache:c", "DB", "1"],
+                        ["SCRIPT", "KILL"], ["DBSIZE"], ["PUBSUB", "NUMPAT"], ["SCRIPT", "LOAD", "return 1"]):
+            assert "NOPERM" in refused(c, *command), command
         # A run between measurements keeps the full rule set.
         between = tenant_sync(box, pw, lambda: answer(a))
         assert between.ok and between.kv_full == {("shop", "cache"): 1.0}
@@ -974,3 +992,54 @@ def test_measurement_cost_stays_bounded_per_tenant(tenant_box, monkeypatch):
     assert result.memory_usage_calls == 50
     # Extrapolated from 50 equal keys: within 10% of 8 x the sample.
     assert 300 * 100 < result.kv_bytes[("shop", "cache")] < 400 * 400
+
+
+@needs_docker
+def test_a_list_cannot_hide_its_size_from_the_measurement(tenant_box):
+    # MEMORY USAGE samples 5 elements of a list by default; SAMPLES 0 reads
+    # them all, so small first elements hide nothing.
+    box, pw = tenant_box
+    a = tenant_entry(max_bytes=256 * 1024)
+    assert tenant_sync(box, pw, lambda: answer(a)).ok
+    c = tenant_conn(box, a)
+    c.call("RPUSH", "p:shop:cache:l", *["a"] * 10)
+    for _ in range(4):
+        c.call("RPUSH", "p:shop:cache:l", *["x" * 4096] * 25)
+    c.close()
+    measured = tenant_sync(box, pw, lambda: answer(a), measure=True)
+    assert measured.ok, measured.error
+    assert measured.kv_bytes[("shop", "cache")] > 400 * 1024
+    assert measured.kv_full == {("shop", "cache"): 1.0}
+
+
+@needs_docker
+def test_measurement_runs_after_the_acl_and_its_fault_fails_nothing(tenant_box, monkeypatch):
+    box, pw = tenant_box
+    a = tenant_entry()
+
+    def broken(*args: object) -> acl_sync.Usage:
+        raise OSError("connection reset during SCAN")
+
+    monkeypatch.setattr(acl_sync, "measure", broken)
+    result = tenant_sync(box, pw, lambda: answer(a), measure=True)
+    assert result.ok, result.error
+    assert "connection reset" in result.measure_error
+    assert result.auth == {u: 1.0 for u in USERS}
+    assert result.kv_ready == {("shop", "cache"): 1.0}
+    assert not result.measured
+
+
+@needs_docker
+def test_memory_usage_calls_are_capped_per_run(tenant_box, monkeypatch):
+    box, pw = tenant_box
+    monkeypatch.setattr(acl_sync, "MEMORY_USAGE_PER_RUN", 30)
+    a, b = tenant_entry("shop", "cache"), tenant_entry("b", "kv")
+    assert tenant_sync(box, pw, lambda: answer(a, b)).ok
+    for entry, prefix in ((a, "p:shop:cache:"), (b, "p:b:kv:")):
+        c = tenant_conn(box, entry)
+        c.call("MSET", *[x for j in range(40) for x in (f"{prefix}{j}", "v")])
+        c.close()
+    result = tenant_sync(box, pw, lambda: answer(a, b), measure=True)
+    assert result.ok, result.error
+    assert result.memory_usage_calls == 30
+    assert result.kv_keys == {("shop", "cache"): 40.0, ("b", "kv"): 40.0}
