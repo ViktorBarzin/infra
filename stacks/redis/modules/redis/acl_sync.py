@@ -7,7 +7,9 @@ Runs every minute as the CronJob redis-acl-sync in namespace redis
      (the B40 R3 counter, redis_clients_by_user{user}), and counts the
      default clients whose address is not a pod of DEFAULT_USER_NAMESPACES
      (redis_default_clients_unexpected, the R3 gate; rybbit stays on
-     default because it can send only a password);
+     default because it can send only a password), and prints one stderr
+     line for each such client: its CLIENT LIST addr, name, age, idle,
+     cmd and library;
   2. reads the users' passwords from Vault secret/redis/users, and the fixed
      rule of each user from users.json (written by Terraform from
      acl_users.json); renders the desired users with #<sha256> password
@@ -192,20 +194,57 @@ def plan(current: dict[str, str], desired: dict[str, User]) -> list[list[str]]:
 
 ADDR_RE = re.compile(r" addr=(\S+):\d+(?: |$)")
 
+# The CLIENT LIST fields printed for an unexpected default client. None of
+# them holds a secret: cmd is the command name only, never its arguments.
+UNEXPECTED_FIELDS = ("addr", "name", "age", "idle", "cmd", "lib-name", "lib-ver")
+FIELD_MAX = 64
 
-def count_default_outside(client_list: str, allowed_ips: set[str]) -> int:
+
+@dataclass
+class UnexpectedClient:
+    """A default client outside the allowed namespaces, as one log line."""
+
+    ip: str
+    fields: dict[str, str]
+
+
+def client_fields(line: str) -> dict[str, str]:
+    """CLIENT LIST's key=value pairs. Split on spaces; Redis escapes none."""
+    out: dict[str, str] = {}
+    for pair in line.split(" "):
+        key, sep, value = pair.partition("=")
+        if sep and key not in out:
+            out[key] = value
+    return out
+
+
+def default_outside(client_list: str, allowed_ips: set[str]) -> list[UnexpectedClient]:
     """Clients on default whose address is not a pod of an allowed namespace.
 
     Matches " addr=" with the space: laddr= is Redis's own address.
     """
-    n = 0
+    found: list[UnexpectedClient] = []
     for line in client_list.splitlines():
         if not re.search(r"(?:^| )user=default(?: |$)", line):
             continue
         match = ADDR_RE.search(line)
-        if match is None or match.group(1).strip("[]") not in allowed_ips:
-            n += 1
-    return n
+        ip = match.group(1).strip("[]") if match else ""
+        if ip and ip in allowed_ips:
+            continue
+        pairs = client_fields(line)
+        found.append(UnexpectedClient(ip=ip, fields={k: pairs.get(k, "")[:FIELD_MAX] for k in UNEXPECTED_FIELDS}))
+    return found
+
+
+def count_default_outside(client_list: str, allowed_ips: set[str]) -> int:
+    return len(default_outside(client_list, allowed_ips))
+
+
+def describe_unexpected(client: UnexpectedClient) -> str:
+    """One stderr line per unexpected default client, for the R3 gate. The
+    pod behind the address is found in the Kubernetes audit log."""
+    fields = " ".join(f"{k}={v}" for k, v in client.fields.items())
+    return f"unexpected default client: {fields}"
 
 
 def pod_ips_from_list(doc: object) -> set[str]:
@@ -390,6 +429,7 @@ class Result:
     counts: dict[str, int] = field(default_factory=dict)
     # Default clients outside the namespaces allowed on default (R3 gate).
     default_unexpected: int | None = None
+    default_unexpected_clients: list[UnexpectedClient] = field(default_factory=list)
     default_lookup_error: str = ""
     auth: dict[str, float] = field(default_factory=dict)
     error: str = ""
@@ -429,7 +469,8 @@ def run(
         except SyncError as exc:
             allowed = set()
             result.default_lookup_error = str(exc)
-        result.default_unexpected = count_default_outside(clients, allowed)
+        result.default_unexpected_clients = default_outside(clients, allowed)
+        result.default_unexpected = len(result.default_unexpected_clients)
         # Every known user gets a series, 0 when idle, so the R3 gate can
         # tell "no clients" from "no data".
         known = ["default", *(users_rules if isinstance(users_rules, dict) else {})]
@@ -486,6 +527,7 @@ def main() -> int:
         users_rules = json.load(fh)
     host = env.get("REDIS_HOST", "redis-master.redis.svc.cluster.local")
     port = int(env.get("REDIS_PORT", "6379"))
+    kube_api = f"https://{env.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc')}:{env.get('KUBERNETES_SERVICE_PORT', '443')}"
     result = run(
         users_rules,
         fetch_passwords=lambda: vault_passwords(
@@ -497,7 +539,7 @@ def main() -> int:
         connect=lambda: Redis(host, port),
         default_ips=lambda: namespace_pod_ips(
             [n for n in env.get("DEFAULT_USER_NAMESPACES", "").split(",") if n],
-            f"https://{env.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc')}:{env.get('KUBERNETES_SERVICE_PORT', '443')}",
+            kube_api,
             env.get("SA_TOKEN_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/token"),
             env.get("SA_CA_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"),
         ),
@@ -516,6 +558,8 @@ def main() -> int:
         gauges["redis_default_clients_unexpected"] = float(result.default_unexpected)
     if result.default_lookup_error:
         print(f"warning: counting every default client as unexpected: {result.default_lookup_error}", file=sys.stderr)
+    for client in result.default_unexpected_clients:
+        print(describe_unexpected(client), file=sys.stderr)
     if result.ok:
         gauges["redis_acl_sync_last_success_timestamp_seconds"] = now
         gauges["redis_acl_sync_changes"] = float(result.changes)
