@@ -397,8 +397,8 @@ resource "kubernetes_service" "reconciler" {
   }
 }
 
-# Prometheus reads /metrics; the redis-acl-sync CronJob's pods (label
-# app=redis-acl-sync in namespace redis, stacks/redis acl.tf) read the tenant
+# Prometheus reads /metrics; the cloud-redis-acl-sync CronJob's pods (label
+# app=cloud-redis-acl-sync in namespace cloud-redis, stacks/cloud-redis) read the tenant
 # route (B27). Nothing else calls the reconciler.
 resource "kubernetes_network_policy_v1" "reconciler" {
   metadata {
@@ -427,12 +427,12 @@ resource "kubernetes_network_policy_v1" "reconciler" {
       from {
         namespace_selector {
           match_labels = {
-            "kubernetes.io/metadata.name" = "redis"
+            "kubernetes.io/metadata.name" = "cloud-redis"
           }
         }
         pod_selector {
           match_labels = {
-            app = "redis-acl-sync"
+            app = "cloud-redis-acl-sync"
           }
         }
       }
@@ -444,9 +444,9 @@ resource "kubernetes_network_policy_v1" "reconciler" {
   }
 }
 
-# B27: Cloud's copy of the tenant route's token (stacks/redis acl.tf writes
+# B27: Cloud's copy of the tenant route's token (stacks/cloud-redis writes
 # secret/cloud/redis-tenants). Its own ExternalSecret and path, never
-# secret/cloud/system. Until stacks/redis has written the path, ESO cannot
+# secret/cloud/system. Until stacks/cloud-redis has written the path, ESO cannot
 # sync it and the reconciler runs without a tenant route.
 resource "kubernetes_manifest" "reconciler_redis_tenants" {
   field_manager {

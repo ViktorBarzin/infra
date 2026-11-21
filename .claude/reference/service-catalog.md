@@ -22,6 +22,7 @@
 |---------|-------------|-------|
 | vaultwarden | Bitwarden-compatible password manager | platform |
 | redis | Shared Redis 8.x at `redis-master.redis.svc.cluster.local`: one standalone pod `redis-v2-0` (redis + exporter), no Sentinel or HAProxy since 2026-05-30. Named ACL users per consumer, passwords in Vault `secret/redis/users`, kept by CronJob `redis-acl-sync`; `default` stays open until B40 R4 (`docs/runbooks/redis-acl.md`). | redis |
+| cloud-redis | The Redis of Cloud's Key Values (cloud B27 option b) at `cloud-redis.cloud-redis.svc.cluster.local:6379`: one standalone pod `cloud-redis-0` (redis + exporter), `default` off, `maxmemory 512mb` in a 1Gi pod, AOF everysec, client limits that nest. Users in Vault `secret/cloud-redis/users`; Key Value tenants `p_*` written from Cloud's tenant route by CronJob `cloud-redis-acl-sync`; weekly backup `cloud-redis-backup` to NFS `/srv/nfs/cloud-redis-backup` (`docs/runbooks/cloud-redis.md`). | cloud-redis |
 | immich | Photo management (GPU) | immich |
 | nvidia | GPU device plugin | nvidia |
 | metrics-server | K8s metrics | metrics-server |

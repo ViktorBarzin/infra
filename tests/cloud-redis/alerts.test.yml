@@ -1,0 +1,220 @@
+# promtool unit tests for cloud-redis's alerts (stacks/monitoring
+# prometheus_chart_values.tpl: CloudRedis*, and the Key Value rules
+# CloudKeyValueTotalHigh, CloudKeyValueTenantsFetchFailing, RedisForeignUser
+# and RedisScriptCacheHigh). tests/cloud-redis.test.sh cuts those rules out
+# into cloud-redis.rules.yml. Pushgateway series keep their job label
+# (honor_labels: true).
+rule_files:
+  - cloud-redis.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # A healthy cloud-redis: nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'kube_statefulset_status_replicas_ready{namespace="cloud-redis", statefulset="cloud-redis"}'
+        values: '1x30'
+      - series: 'redis_up{namespace="cloud-redis", pod="cloud-redis-0"}'
+        values: '1x30'
+      - series: 'kube_pod_container_status_restarts_total{namespace="cloud-redis", pod="cloud-redis-0", container="redis"}'
+        values: '3x30'
+      - series: 'redis_acl_sync_last_success_timestamp_seconds{job="cloud-redis-acl-sync"}'
+        values: '0+60x30'
+      - series: 'kube_cronjob_status_last_successful_time{namespace="cloud-redis", cronjob="cloud-redis-backup"}'
+        values: '1x30'
+      - series: 'redis_memory_used_bytes{namespace="cloud-redis", pod="cloud-redis-0"}'
+        values: '100x30'
+      - series: 'redis_memory_max_bytes{namespace="cloud-redis", pod="cloud-redis-0"}'
+        values: '1000x30'
+      - series: 'redis_evicted_keys_total{namespace="cloud-redis", pod="cloud-redis-0"}'
+        values: '5x30'
+    alert_rule_test:
+      - {eval_time: 25m, alertname: CloudRedisDown, exp_alerts: []}
+      - {eval_time: 25m, alertname: CloudRedisBusy, exp_alerts: []}
+      - {eval_time: 25m, alertname: CloudRedisAclSyncStale, exp_alerts: []}
+      - {eval_time: 25m, alertname: CloudRedisAclSyncNeverSucceeded, exp_alerts: []}
+      - {eval_time: 25m, alertname: CloudRedisMemoryPressure, exp_alerts: []}
+      - {eval_time: 25m, alertname: CloudRedisEvictions, exp_alerts: []}
+      - {eval_time: 25m, alertname: CloudRedisBackupNeverSucceeded, exp_alerts: []}
+
+  # No ready pod from minute 5: down after 5 minutes. With no series at all
+  # it fires too.
+  - interval: 1m
+    input_series:
+      - series: 'kube_statefulset_status_replicas_ready{namespace="cloud-redis", statefulset="cloud-redis"}'
+        values: '1x5 0x20'
+    alert_rule_test:
+      - {eval_time: 8m, alertname: CloudRedisDown, exp_alerts: []}
+      - eval_time: 12m
+        alertname: CloudRedisDown
+        exp_alerts:
+          - exp_labels: {severity: critical, namespace: cloud-redis, statefulset: cloud-redis}
+  - interval: 1m
+    input_series:
+      - series: 'up{job="other"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CloudRedisDown
+        exp_alerts:
+          - exp_labels: {severity: critical}
+
+  # A busy script: the exporter's PING fails for one minute.
+  - interval: 1m
+    input_series:
+      - series: 'redis_up{namespace="cloud-redis", pod="cloud-redis-0"}'
+        values: '1x5 0 1x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: CloudRedisBusy
+        exp_alerts:
+          - exp_labels: {severity: warning, namespace: cloud-redis, pod: cloud-redis-0}
+      - {eval_time: 8m, alertname: CloudRedisBusy, exp_alerts: []}
+
+  # A restart (Lua OOM, liveness): warns for the next 10 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'kube_pod_container_status_restarts_total{namespace="cloud-redis", pod="cloud-redis-0", container="redis"}'
+        values: '0x5 1x20'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: CloudRedisBusy
+        exp_alerts:
+          - exp_labels: {severity: warning, namespace: cloud-redis, pod: cloud-redis-0, container: redis}
+      - {eval_time: 20m, alertname: CloudRedisBusy, exp_alerts: []}
+
+  # 85% of maxmemory and evictions for 10 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'redis_memory_used_bytes{namespace="cloud-redis", pod="cloud-redis-0"}'
+        values: '850x20'
+      - series: 'redis_memory_max_bytes{namespace="cloud-redis", pod="cloud-redis-0"}'
+        values: '1000x20'
+      - series: 'redis_evicted_keys_total{namespace="cloud-redis", pod="cloud-redis-0"}'
+        values: '0+60x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: CloudRedisMemoryPressure
+        exp_alerts:
+          - exp_labels: {severity: warning, namespace: cloud-redis, pod: cloud-redis-0}
+      - eval_time: 12m
+        alertname: CloudRedisEvictions
+        exp_alerts:
+          - exp_labels: {severity: warning, namespace: cloud-redis, pod: cloud-redis-0}
+
+  # Backups: a success 9 days ago is stale; zero means never.
+  - interval: 1m
+    input_series:
+      - series: 'kube_cronjob_status_last_successful_time{namespace="cloud-redis", cronjob="cloud-redis-backup"}'
+        values: '-777600x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: CloudRedisBackupStale
+        exp_alerts:
+          - exp_labels: {severity: critical, namespace: cloud-redis, cronjob: cloud-redis-backup}
+  - interval: 1m
+    input_series:
+      - series: 'kube_cronjob_status_last_successful_time{namespace="cloud-redis", cronjob="cloud-redis-backup"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: CloudRedisBackupNeverSucceeded
+        exp_alerts:
+          - exp_labels: {severity: critical, namespace: cloud-redis, cronjob: cloud-redis-backup}
+
+  # The sync: last success at minute 5 goes stale; never pushed fires at 15.
+  - interval: 1m
+    input_series:
+      - series: 'redis_acl_sync_last_success_timestamp_seconds{job="cloud-redis-acl-sync"}'
+        values: '0+60x5 300x40'
+    alert_rule_test:
+      - {eval_time: 15m, alertname: CloudRedisAclSyncStale, exp_alerts: []}
+      - eval_time: 18m
+        alertname: CloudRedisAclSyncStale
+        exp_alerts:
+          - exp_labels: {severity: warning, job: cloud-redis-acl-sync}
+  - interval: 1m
+    input_series:
+      - series: 'up{job="other"}'
+        values: '1x30'
+    alert_rule_test:
+      - {eval_time: 10m, alertname: CloudRedisAclSyncNeverSucceeded, exp_alerts: []}
+      - eval_time: 20m
+        alertname: CloudRedisAclSyncNeverSucceeded
+        exp_alerts:
+          - exp_labels: {severity: warning, job: cloud-redis-acl-sync}
+
+  # Two Key Values, 100 MiB and 40 MiB: over 128 MiB together.
+  - interval: 1m
+    input_series:
+      - series: 'cloud_kv_bytes{job="cloud-redis-acl-sync-kv-usage", project="shop", service="cache"}'
+        values: '104857600x30'
+      - series: 'cloud_kv_bytes{job="cloud-redis-acl-sync-kv-usage", project="blog", service="kv"}'
+        values: '41943040x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CloudKeyValueTotalHigh
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: CloudKeyValueTotalHigh
+        exp_alerts:
+          - exp_labels: {severity: warning}
+
+  # 100 MiB alone: quiet.
+  - interval: 1m
+    input_series:
+      - series: 'cloud_kv_bytes{job="cloud-redis-acl-sync-kv-usage", project="shop", service="cache"}'
+        values: '104857600x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: CloudKeyValueTotalHigh
+        exp_alerts: []
+
+  # One foreign user seen for one minute (the run deletes it): the alert
+  # holds for 15 minutes after, then clears.
+  - interval: 1m
+    input_series:
+      - series: 'redis_acl_foreign_users{job="cloud-redis-acl-sync"}'
+        values: '0x5 1 0x30'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: RedisForeignUser
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: RedisForeignUser
+        exp_alerts:
+          - exp_labels: {severity: critical, job: cloud-redis-acl-sync}
+      - eval_time: 30m
+        alertname: RedisForeignUser
+        exp_alerts: []
+
+  # The tenant route fails from minute 5: fires after 15 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'cloud_kv_tenants_fetch_ok{job="cloud-redis-acl-sync"}'
+        values: '1x5 0x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: CloudKeyValueTenantsFetchFailing
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: CloudKeyValueTenantsFetchFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, job: cloud-redis-acl-sync}
+
+  # Lua scripts at 20 MiB for 20 minutes: fires after 15; 1 MiB stays quiet.
+  - interval: 1m
+    input_series:
+      - series: 'redis_memory_used_scripts_bytes{namespace="cloud-redis", pod="cloud-redis-0"}'
+        values: '20971520x30'
+      - series: 'redis_memory_used_scripts_bytes{namespace="cloud-redis", pod="cloud-redis-1"}'
+        values: '1048576x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: RedisScriptCacheHigh
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: RedisScriptCacheHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, namespace: cloud-redis, pod: cloud-redis-0}

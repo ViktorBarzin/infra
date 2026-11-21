@@ -80,6 +80,8 @@ To bring the rollback copy back, set `replicas = 1` on `kubernetes_stateful_set_
 
 ## Redis Service Naming (read before wiring a new consumer)
 
+Cloud Key Values are not on this Redis: they live on cloud-redis (`stacks/cloud-redis`, `cloud-redis.cloud-redis.svc.cluster.local:6379`, `docs/runbooks/cloud-redis.md`), which serves only Cloud tenants. Wire no homelab consumer to it.
+
 The Redis stack (`stacks/redis/`) exposes three distinct entry points. Pick the one that matches the client's connection pattern — the wrong one causes READONLY errors or silent connection drops.
 
 | Endpoint | Port(s) | Use for | Backed by |

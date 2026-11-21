@@ -73,10 +73,9 @@ resource "kubernetes_config_map" "redis_v2_conf" {
       # silently evicted queue jobs.
       maxmemory-policy volatile-lru
 
-      # The largest value one command may write (default 512mb). Cloud Key
-      # Value (B27) is measured every few minutes, so a single SET, APPEND or
-      # SETRANGE of up to this size can land before a tenant is turned
-      # read-and-delete. 128mb is the largest Key Value Size. The biggest
+      # The largest value one command may write (default 512mb). Set for
+      # Cloud Key Value (B27) while it was planned on this Redis; kept, as a
+      # bound on any one write here. The biggest
       # string on this Redis was 4,529,656 bytes (db 0) and the next
       # 523,888 (db 11), read with --bigkeys on 2026-11-21. A change here
       # restarts Redis (checksum/conf): plan it (docs/runbooks/redis-acl.md).
@@ -687,27 +686,6 @@ resource "kubernetes_network_policy_v1" "redis_ingress" {
           namespace_selector {
             match_labels = { "kubernetes.io/metadata.name" = from.value }
           }
-        }
-      }
-      # Cloud Key Value (B27): pods of every Cloud Project namespace. Each
-      # logs in as its own ACL user, confined to its key prefix
-      # (acl_sync.py, tenant section). Cloud's Project policy lets only a
-      # Project with a Key Value send here; infra's egress floor passes it.
-      from {
-        namespace_selector {
-          match_labels = { "cloud.viktorbarzin.me/managed" = "true" }
-        }
-      }
-      # Cloud's reconciler (B27): before it gives Apps REDIS_URL it checks a
-      # new Key Value with that tenant's own credentials (AUTH and PING).
-      # Only its pods (stacks/cloud local.cloud_reconciler_labels), not the
-      # rest of namespace cloud.
-      from {
-        namespace_selector {
-          match_labels = { "kubernetes.io/metadata.name" = "cloud" }
-        }
-        pod_selector {
-          match_labels = { app = "cloud-reconciler" }
         }
       }
       ports {

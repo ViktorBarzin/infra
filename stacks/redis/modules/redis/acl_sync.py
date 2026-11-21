@@ -1,7 +1,9 @@
-"""redis-acl-sync: keep the shared Redis's ACL users equal to the desired set.
+"""redis-acl-sync: keep a Redis's ACL users equal to the desired set.
 
 Runs every minute as the CronJob redis-acl-sync in namespace redis
-(stacks/redis/modules/redis/acl.tf). One run:
+(stacks/redis/modules/redis/acl.tf), and as cloud-redis-acl-sync in
+namespace cloud-redis (stacks/cloud-redis) with DEFAULT_USER=off and the
+Cloud Key Value tenant section on (CLOUD_TENANTS_URL set). One run:
 
   1. connects to Redis as acl-admin and counts CLIENT LIST by user=
      (the B40 R3 counter, redis_clients_by_user{user}), and counts the
@@ -99,7 +101,15 @@ def infra_user(name: str, rules: str, password: str) -> User:
     )
 
 
-def default_user() -> User:
+# cloud-redis (B27 option b) turns default off from its first file: no client
+# may log in without a user and password.
+DEFAULT_OFF_ARGS = ["reset", "off"]
+DEFAULT_OFF_LINE = "user default off sanitize-payload resetchannels -@all"
+
+
+def default_user(off: bool = False) -> User:
+    if off:
+        return User(name="default", setuser_args=list(DEFAULT_OFF_ARGS), line=DEFAULT_OFF_LINE)
     return User(name="default", setuser_args=list(DEFAULT_USER_ARGS), line=DEFAULT_USER_LINE)
 
 
@@ -447,37 +457,45 @@ def dump_state(st: MeasureState) -> str:
     return json.dumps({"v": 1, "cursor": st.cursor, "partial": st.partial, "largest": st.largest}, sort_keys=True)
 
 
-def render(users_rules: dict[str, str], passwords: dict[str, str], tenants: list[User] | None = None) -> dict[str, User]:
+def render(
+    users_rules: dict[str, str],
+    passwords: dict[str, str],
+    tenants: list[User] | None = None,
+    default_off: bool = False,
+) -> dict[str, User]:
     """The desired users by name. Raises SyncError on any broken input."""
     validate_rules(users_rules)
     if not isinstance(passwords, dict):
         raise SyncError("Vault secret/redis/users is not an object")
-    # The Vault document also holds default's password (DEFAULT_PASSWORD_KEY),
-    # which users.json does not name.
-    missing = sorted({*users_rules, DEFAULT_PASSWORD_KEY} - set(passwords))
+    # The shared Redis's Vault document also holds default's password
+    # (DEFAULT_PASSWORD_KEY), which users.json does not name; with default
+    # off (cloud-redis) there is none.
+    carried = set() if default_off else {DEFAULT_PASSWORD_KEY}
+    missing = sorted({*users_rules, *carried} - set(passwords))
     if missing:
         raise SyncError(f"Vault secret/redis/users has no key for: {', '.join(missing)}")
-    extra = sorted(set(passwords) - set(users_rules) - {DEFAULT_PASSWORD_KEY})
+    extra = sorted(set(passwords) - set(users_rules) - carried)
     if extra:
         raise SyncError(f"Vault secret/redis/users has keys users.json does not name: {', '.join(extra)}")
     for name, password in passwords.items():
         if not isinstance(password, str) or not PASSWORD_RE.match(password):
             raise SyncError(f"Vault password for {name} is empty or malformed")
 
-    desired: dict[str, User] = {"default": default_user()}
+    desired: dict[str, User] = {"default": default_user(default_off)}
     for name in sorted(users_rules):
         desired[name] = infra_user(name, users_rules[name], passwords[name])
     for tenant in tenants or []:
         if tenant.name in desired:
             raise SyncError(f"tenant user {tenant.name} collides with an infra user")
         desired[tenant.name] = tenant
-    check_complete(desired, users_rules)
+    check_complete(desired, users_rules, default_off)
     return desired
 
 
-def check_complete(desired: dict[str, User], users_rules: dict[str, str]) -> None:
+def check_complete(desired: dict[str, User], users_rules: dict[str, str], default_off: bool = False) -> None:
     """The render must hold the default line and every infra user."""
-    if desired.get("default") is None or desired["default"].line != DEFAULT_USER_LINE:
+    want = DEFAULT_OFF_LINE if default_off else DEFAULT_USER_LINE
+    if desired.get("default") is None or desired["default"].line != want:
         raise SyncError("render lacks the default user line")
     lacking = sorted(n for n in users_rules if n not in desired)
     if lacking:
@@ -885,11 +903,19 @@ def plan_tenants(
 ) -> tuple[list[Tenant], set[str], TenantAnswer | None]:
     """The tenants this run wants, which of them are full, and the answer.
 
+    No route (fetch_tenants None): the tenant section is off, as on the
+    shared Redis since Key Value moved to cloud-redis (B27 option b). No
+    tenant is wanted, and a tenant-shaped user counts as foreign.
+
     The route's answer when it is good; otherwise the tenants Redis already
     holds, unchanged, so a Cloud outage drops nobody. Full or normal comes
     from ACL LIST: the ACL is the only state kept between runs, and only a
     measurement (measure_tenants, after the ACL is applied) changes it."""
     answer: TenantAnswer | None = None
+    infra = set(users_rules) if isinstance(users_rules, dict) else set()
+    if fetch_tenants is None:
+        result.foreign_users = sorted(n for n in current if n not in {"default", ADMIN_USER, *infra})
+        return [], set(), None
     if fetch_tenants is not None:
         try:
             answer = parse_tenant_answer(fetch_tenants())
@@ -900,7 +926,7 @@ def plan_tenants(
             result.tenants_error = str(exc)
     tenants = answer.tenants if answer is not None else tenants_from_acl(current)
     names = {t.name for t in tenants}
-    result.foreign_users = foreign_users(current, set(users_rules) if isinstance(users_rules, dict) else set(), names)
+    result.foreign_users = foreign_users(current, infra, names)
     return tenants, full_users(current) & names, answer
 
 
@@ -966,6 +992,7 @@ def run(
     default_ips: Callable[[], set[str]] = set,
     fetch_tenants: Callable[[], object] | None = None,
     measure: bool = False,
+    default_off: bool = False,
 ) -> Result:
     result = Result(ok=False)
     try:
@@ -1014,7 +1041,7 @@ def run(
         tenants, full, answer = plan_tenants(result, current, users_rules, fetch_tenants)
         tenant_users = [tenant_user(t, t.name in full, extra) for t in tenants]
 
-        desired = render(users_rules, passwords, tenant_users)
+        desired = render(users_rules, passwords, tenant_users, default_off)
         commands = plan(current, desired)
         errors: list[str] = []
         if commands:
@@ -1054,7 +1081,7 @@ def run(
             raise SyncError(f"AUTH and PING failed for: {', '.join(failed)}")
         # The infra users are applied and checked; the measurement comes
         # last, so its faults never skip or fail them.
-        if measure:
+        if measure and fetch_tenants is not None:
             full = measure_tenants(result, admin, current, tenants, full, answer, extra)
         for t in tenants:
             result.kv_full[(t.project, t.service)] = 1.0 if t.name in full else 0.0
@@ -1089,12 +1116,13 @@ def main() -> int:
         data = vault_read(vault_addr, vault_token(), env.get("VAULT_SECRET_PATH", "secret/data/redis/users"))
         return {k: v if isinstance(v, str) else "" for k, v in data.items()}
 
+    # The tenant section runs only where CLOUD_TENANTS_URL is set: on
+    # cloud-redis (B27 option b), not on the shared Redis.
+    tenants_url = env.get("CLOUD_TENANTS_URL", "")
+
     def fetch_tenants() -> object:
-        token = vault_read(vault_addr, vault_token(), env.get("CLOUD_TENANTS_TOKEN_PATH", "secret/data/redis/cloud-tenants")).get("token")
-        return fetch_tenant_answer(
-            env.get("CLOUD_TENANTS_URL", "http://cloud-reconciler.cloud.svc.cluster.local:9091/internal/redis-tenants"),
-            token if isinstance(token, str) else "",
-        )
+        token = vault_read(vault_addr, vault_token(), env.get("CLOUD_TENANTS_TOKEN_PATH", "secret/data/cloud-redis/cloud-tenants")).get("token")
+        return fetch_tenant_answer(tenants_url, token if isinstance(token, str) else "")
 
     started = time.time()
     result = run(
@@ -1107,8 +1135,10 @@ def main() -> int:
             env.get("SA_TOKEN_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/token"),
             env.get("SA_CA_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"),
         ),
-        fetch_tenants=fetch_tenants,
+        fetch_tenants=fetch_tenants if tenants_url else None,
         measure=measure_due(started, int(env.get("KV_MEASURE_EVERY_SECONDS", str(MEASURE_EVERY_SECONDS)))),
+        # "off" on cloud-redis: default is off from the first file.
+        default_off=env.get("DEFAULT_USER", "open") == "off",
     )
     now = time.time()
     gauges: dict[str, float] = {
@@ -1152,12 +1182,12 @@ def main() -> int:
     # tenant that went away loses its series. State after every good run;
     # usage after every good measurement, so between measurements the last
     # numbers stay.
-    if result.ok:
+    if result.ok and tenants_url:
         state = kv_metrics_text(
             {"cloud_kv_tenants": float(len(result.kv_full))},
             {"cloud_kv_ready": result.kv_ready, "cloud_kv_full": result.kv_full, "cloud_kv_connections": result.kv_connections},
         )
-        pushes.append((env.get("PUSHGATEWAY_KV_URL", "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/redis-acl-sync-kv"), state, "PUT"))
+        pushes.append((env.get("PUSHGATEWAY_KV_URL", "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/cloud-redis-acl-sync-kv"), state, "PUT"))
     if result.ok and result.measured:
         usage = kv_metrics_text(
             {
@@ -1167,7 +1197,7 @@ def main() -> int:
             },
             {"cloud_kv_bytes": result.kv_bytes, "cloud_kv_keys": result.kv_keys},
         )
-        pushes.append((env.get("PUSHGATEWAY_KV_USAGE_URL", "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/redis-acl-sync-kv-usage"), usage, "PUT"))
+        pushes.append((env.get("PUSHGATEWAY_KV_USAGE_URL", "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/cloud-redis-acl-sync-kv-usage"), usage, "PUT"))
     for url, body, method in pushes:
         try:
             push_metrics(url, body, method=method)

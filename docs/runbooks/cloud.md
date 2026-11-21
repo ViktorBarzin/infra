@@ -798,48 +798,50 @@ If Cloud's `APP_PORT` changes, change `cloud_app_port` in the same release.
 
 ## Apply B27 (Key Value)
 
-Cloud's Key Value kind (cloud backlog B27) puts each Project's data on the
-shared Redis under its own ACL user, `p_<project>_<service>_<hash>`,
-confined to keys and channels `p:<project>:<service>:*`. Land it only
-after B40 R4 has locked Redis's `default` user. Apply in this order:
+Cloud's Key Value kind (cloud backlog B27) puts each Project's data on
+cloud-redis, a Redis of its own (`stacks/cloud-redis`,
+[cloud-redis.md](cloud-redis.md)), under its own ACL user
+`p_<project>_<service>_<hash>`, confined to keys and channels
+`p:<project>:<service>:*`. It does not wait for the shared Redis's B40 lock.
+Apply in this order:
 
-1. `stacks/vault`: policy `ci` may write `secret/redis/cloud-tenants` and
-   `secret/cloud/redis-tenants`; policy `redis-acl-sync` may read the first.
-2. `stacks/redis`, in a nightly window after `presence claim redis:redis-v2`:
-   this apply restarts Redis once (seconds), because `redis.conf` gains
-   `proto-max-bulk-len 128mb` and the `acl-seed` init step changes
-   ([redis-acl.md](redis-acl.md), "Restarts and modules"). It writes the token in both Vault paths, `acl-admin`'s new rule
-   (`~p:* +scan +memory|usage +unlink`), the sync's tenant section, the
-   Redis NetworkPolicy's namespaceSelector
-   `cloud.viktorbarzin.me/managed=true`. Until Cloud serves its route the
-   sync logs "Cloud tenants route unreachable", keeps the tenants Redis
-   holds (none) and `CloudKeyValueTenantsFetchFailing` fires after 15 min.
-   The same NetworkPolicy admits the reconciler's pods (`app=cloud-reconciler`
-   in namespace `cloud`), which check each new Key Value with its own
-   credentials before Apps get `REDIS_URL`.
-3. `stacks/cloud`: ExternalSecret `cloud-reconciler-redis-tenants`, the
+1. `stacks/vault`, by an admin by hand (CI does not apply vault): policy
+   `ci` may write `secret/cloud-redis/*` and `secret/cloud/redis-tenants`;
+   policy and role `cloud-redis-acl-sync`.
+2. The NFS directory `/srv/nfs/cloud-redis-backup`
+   ([cloud-redis.md](cloud-redis.md), "First apply").
+3. `stacks/cloud-redis`: the Redis, its users and passwords (written to
+   Vault by the apply), the tenant route token in both Vault paths, the sync
+   and backup CronJobs, the NetworkPolicies. Until Cloud serves its route
+   the sync logs "Cloud tenants route unreachable" and
+   `CloudKeyValueTenantsFetchFailing` fires after 15 min.
+4. `stacks/cloud`: ExternalSecret `cloud-reconciler-redis-tenants`, the
    reconciler's `REDIS_TENANTS_TOKEN_FILE`, `TENANTS_PORT` and
    `TOOLBOX_KEYVALUE_IMAGE`, port `tenants` 9091 on Service
    `cloud-reconciler` and the NetworkPolicy rule that admits only
-   `app=redis-acl-sync` pods from namespace `redis`, the egress floor's
-   Pass to the Redis pods on 6379 (before the toolbox Deny), the toolbox
-   rules for target `keyvalue` (Secret `kv-<name>`, the redis image) and
-   `redis-cli` in `cloud-console-exec`. The token volume is optional, so
-   the reconciler starts before ESO has synced it.
-4. The Cloud release with B27.
+   `app=cloud-redis-acl-sync` pods from namespace `cloud-redis`, the egress
+   floor's Pass to the cloud-redis pods on 6379 (before the toolbox Deny),
+   the toolbox rules for target `keyvalue` (Secret `kv-<name>`, the redis
+   image) and `redis-cli` in `cloud-console-exec`. The token volume is
+   optional, so the reconciler starts before ESO has synced it.
+5. The Cloud release with B27, whose defaults name
+   `cloud-redis.cloud-redis.svc.cluster.local`.
 
-Check it: `kubectl -n redis logs job/<latest redis-acl-sync job>` ends `ok`
-with no tenants warning; a fixture App with `cache: {kind: keyvalue, size:
-nano}` and `connects: [cache]` answers `/kv-selftest` with `ok` within 2
-minutes of its apply (the sync runs every minute);
-`cloud_kv_ready{project="<p>",service="cache"}` is 1; `cloud kv-cli <p>
-cache` answers `PING` with `PONG` and `KEYS *` with `NOPERM`.
+`stacks/redis` drops its tenant half in the same branch; its apply restarts
+the shared Redis once (`proto-max-bulk-len 128mb` and the init step), so
+land it in a planned window after `presence claim redis:redis-v2`
+([redis-acl.md](redis-acl.md)).
+
+Check it: the newest `cloud-redis-acl-sync` Job's log ends `ok` with no
+tenants warning; a fixture App with `cache: {kind: keyvalue, size: nano}`
+and `connects: [cache]` answers `/kv-selftest` with `ok` within 2 minutes of
+its apply; `cloud_kv_ready{project="<p>",service="cache"}` is 1; `cloud
+kv-cli <p> cache` answers `PING` with `PONG` and `KEYS *` with `NOPERM`.
 
 Rollback: remove the Key Value kind (a Cloud release); the route stops
 listing tenants and the sync deletes their users on its next run, keeping
-their keys ([redis-acl.md](redis-acl.md), "Purge"). Revert the infra
-commit and apply the same stacks in reverse order to remove the route's
-token, port and rules.
+their keys ([cloud-redis.md](cloud-redis.md), "Purge"). Revert the infra
+commit and apply the same stacks in reverse order.
 
 ## CrowdSec and the home address
 
@@ -1525,7 +1527,7 @@ namespace, made by Cloud's `modules/project`. Admission policy
 or `redis-cli` in container `toolbox`, in managed `p-*` namespaces. The
 toolbox holds its Service's own credentials (Secret `pg-<postgres>` or
 `kv-<keyvalue>`), no Kubernetes token, and the egress floor lets it reach
-DNS, the CNPG primary and the shared Redis only (Redis where the Project
+DNS, the CNPG primary and cloud-redis only (cloud-redis where the Project
 policy allows it, that is with a Key Value). A session
 lasts at most 1 h and ends after 15 min with no bytes either way; a
 Project runs one psql session at a time.
@@ -1584,8 +1586,7 @@ within 15 s, at its next beat.
 | `CloudBuildsFailingForCloud` | no | "Builds fail for Cloud's reason", below |
 | `CloudReconcilerLoopStalled` | no | "A reconciler loop stalled", below |
 | `CloudProvisionerForeignRole`, `CloudProjectRoleUnlimited`, `CloudProjectConnectionsOverCeiling` | yes | their summaries hold the query; [docs/agents/databases.md](../agents/databases.md), "Cloud" |
-| `CloudKeyValueTotalHigh`, `CloudKeyValueTenantsFetchFailing`, `RedisMemoryHigh` | no | [redis-acl.md](redis-acl.md), "Cloud Key Value tenants" |
-| `RedisForeignUser` | yes | [redis-acl.md](redis-acl.md), "Foreign users" |
+| `CloudKeyValueTotalHigh`, `CloudKeyValueTenantsFetchFailing`, `CloudRedis*`, `RedisForeignUser`, `RedisScriptCacheHigh` | see [cloud-redis.md](cloud-redis.md), "Alerts" | [cloud-redis.md](cloud-redis.md) |
 
 ### Postgres tasks fail
 

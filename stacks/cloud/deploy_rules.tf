@@ -229,7 +229,7 @@ locals {
   #                    reads the digest a build pushed with it
   #   REDIS_TENANTS_TOKEN  B27: the bearer token redis-acl-sync sends to the
   #                    tenant route, Cloud's copy at secret/cloud/redis-tenants
-  #                    (stacks/redis acl.tf writes both copies). Optional: the
+  #                    (stacks/cloud-redis writes both copies). Optional: the
   #                    volume mounts empty until that path exists, and with no
   #                    file the reconciler serves no tenant route.
   #   GITHUB_DISPATCH_TOKEN, GITHUB_OWNER_READ_TOKEN, FORGEJO_READ_TOKEN,
@@ -265,7 +265,7 @@ locals {
 
   cloud_reconciler_reload = sort(distinct([for f in local.cloud_reconciler_files : f.secret if f.reload]))
 
-  # B27: the read-only tenant route redis-acl-sync asks every minute (GET
+  # B27: the read-only tenant route cloud-redis-acl-sync asks every minute (GET
   # /internal/redis-tenants, bearer REDIS_TENANTS_TOKEN), the image's
   # TENANTS_PORT. Not on any Ingress; the reconciler's NetworkPolicy
   # (reconciler.tf) admits only the sync job's pods.
@@ -302,7 +302,7 @@ locals {
       { name = "TOOLBOX_POSTGRES_IMAGE", value = local.cloud_toolbox.images.postgres },
       # B27: the kv-cli toolbox image, pinned the same way.
       { name = "TOOLBOX_KEYVALUE_IMAGE", value = local.cloud_toolbox.images.keyvalue },
-      # B27: the tenant route redis-acl-sync reads (reconciler.tf).
+      # B27: the tenant route cloud-redis-acl-sync reads (reconciler.tf).
       { name = "TENANTS_PORT", value = tostring(local.cloud_reconciler_tenants_port) },
       # B27: the Key Value storage_high and keyvalue_full notifications read
       # cloud_kv_* from Prometheus every 5 min. Egress from namespace cloud

@@ -5150,63 +5150,127 @@ serverFiles:
             annotations:
               summary: "redis-acl-sync has never pushed a success to the pushgateway; check the CronJob in namespace redis (docs/runbooks/redis-acl.md)"
           - alert: RedisMemoryHigh
-            # An earlier warning than RedisMemoryPressure (80%): Cloud Key
-            # Value (B27) put Project data on this Redis with no cap on the
-            # sum of their Sizes (Viktor's decision R1), so leave time to
-            # raise maxmemory before volatile-lru starts evicting.
+            # An earlier warning than RedisMemoryPressure (80%), so there is
+            # time to raise maxmemory before volatile-lru starts evicting.
             expr: redis_memory_used_bytes{namespace="redis"} / redis_memory_max_bytes{namespace="redis"} > 0.70
             for: 15m
             labels:
               severity: warning
             annotations:
               summary: "Redis pod {{ $labels.pod }} has used {{ $value | humanizePercentage }} of maxmemory for 15 min"
-              description: "Find the biggest users: sum(cloud_kv_bytes) for Cloud Key Values, and the infra consumers by database (redis_db_keys). Raise maxmemory in stacks/redis before 80%. Runbook: docs/runbooks/redis-acl.md, Cloud Key Value tenants."
-          - alert: CloudKeyValueTotalHigh
-            # The sum of what Cloud Key Values hold, measured by
-            # redis-acl-sync every 5 min. 128 MiB is the figure the B27
-            # backlog's R1 table used; there is no cap, only this alert.
-            expr: sum(cloud_kv_bytes{job="redis-acl-sync-kv-usage"}) > 128 * 1024 * 1024
+              description: "Find the biggest consumers by database (redis_db_keys). Raise maxmemory in stacks/redis before 80%."
+          # cloud-redis, the Redis of Cloud's Key Values (cloud B27 option b,
+          # stacks/cloud-redis; runbook docs/runbooks/cloud-redis.md). The
+          # copies of the shared Redis's alerts first, then the tenant ones.
+          - alert: CloudRedisDown
+            expr: (kube_statefulset_status_replicas_ready{namespace="cloud-redis", statefulset="cloud-redis"} or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "cloud-redis is down: statefulset cloud-redis has no ready pod, so Cloud Key Values do not answer"
+              description: "kubectl -n cloud-redis describe pod cloud-redis-0; the redis container's log names the reason (an aclfile it refuses, the AOF). Runbook: docs/runbooks/cloud-redis.md."
+          - alert: CloudRedisMemoryPressure
+            expr: redis_memory_used_bytes{namespace="cloud-redis"} / redis_memory_max_bytes{namespace="cloud-redis"} > 0.80
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "cloud-redis pod {{ $labels.pod }} uses {{ $value | humanizePercentage }} of maxmemory; Key Value keys with a TTL are being evicted"
+              description: "topk(5, cloud_kv_bytes) names the biggest Key Values. Raise maxmemory and the pod limit together in stacks/cloud-redis. Runbook: docs/runbooks/cloud-redis.md."
+          - alert: CloudRedisEvictions
+            expr: rate(redis_evicted_keys_total{namespace="cloud-redis"}[5m]) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "cloud-redis pod {{ $labels.pod }} evicts keys ({{ $value }} keys/s): it is at maxmemory"
+          - alert: CloudRedisBackupStale
+            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="cloud-redis-backup", namespace="cloud-redis"}) > 691200
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "cloud-redis backup is {{ $value | humanizeDuration }} old (threshold: 8d)"
+          - alert: CloudRedisBackupNeverSucceeded
+            expr: kube_cronjob_status_last_successful_time{cronjob="cloud-redis-backup", namespace="cloud-redis"} == 0
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "cloud-redis backup CronJob has never completed successfully"
+          - alert: CloudRedisAclSyncStale
+            expr: time() - redis_acl_sync_last_success_timestamp_seconds{job="cloud-redis-acl-sync"} > 600
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: "cloud-redis-acl-sync has not succeeded for {{ $value | humanizeDuration }}; Key Value users are not kept in step"
+          - alert: CloudRedisAclSyncNeverSucceeded
+            expr: absent(redis_acl_sync_last_success_timestamp_seconds{job="cloud-redis-acl-sync"})
             for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "Cloud Key Values hold {{ $value | humanize1024 }}B on the shared Redis, over 128 MiB"
-              description: "topk(5, cloud_kv_bytes) names the biggest Key Values. No cap applies (decision R1); check Redis headroom against maxmemory. Runbook: docs/runbooks/redis-acl.md, Cloud Key Value tenants."
+              summary: "cloud-redis-acl-sync has never pushed a success to the pushgateway; check the CronJob in namespace cloud-redis (docs/runbooks/cloud-redis.md)"
+          - alert: CloudRedisBusy
+            # A tenant's script past busy-reply-threshold (5 s) blocks
+            # everyone (the exporter's PING fails, redis_up 0), and a Lua OOM
+            # or a liveness failure restarts the pod. Only Key Values are
+            # affected, so it warns and does not page.
+            expr: redis_up{namespace="cloud-redis"} == 0 or increase(kube_pod_container_status_restarts_total{namespace="cloud-redis", container="redis"}[10m]) > 0
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "cloud-redis was busy or restarted in the last 10 min"
+              description: "SLOWLOG GET and the redis container's last log (kubectl -n cloud-redis logs cloud-redis-0 -c redis --previous) name the script or the OOM; the client is a tenant p_<project>_<service>_<hash>. Runbook: docs/runbooks/cloud-redis.md."
+          - alert: CloudKeyValueTotalHigh
+            # The sum of what Cloud Key Values hold, measured by
+            # cloud-redis-acl-sync. 128 MiB is the figure the B27 backlog's
+            # R1 table used; there is no cap, only this alert.
+            expr: sum(cloud_kv_bytes{job="cloud-redis-acl-sync-kv-usage"}) > 128 * 1024 * 1024
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Cloud Key Values hold {{ $value | humanize1024 }}B on cloud-redis, over 128 MiB"
+              description: "topk(5, cloud_kv_bytes) names the biggest Key Values. No cap applies (decision R1); check cloud-redis's headroom against maxmemory 512mb. Runbook: docs/runbooks/cloud-redis.md."
           - alert: RedisForeignUser
-            # redis-acl-sync counts ACL users that are neither infra users,
-            # nor Cloud tenants from the route, nor shaped like the tenant
+            # cloud-redis-acl-sync counts users on cloud-redis that are
+            # neither its infra users (acl-admin, exporter, backup, probe)
+            # nor tenants from Cloud's route nor shaped like the tenant
             # template, then deletes them in the same run. Any such user was
-            # made outside the sync: someone holds acl-admin or a +@all user.
-            expr: max_over_time(redis_acl_foreign_users{job="redis-acl-sync"}[15m]) > 0
+            # made outside the sync: someone holds acl-admin's password.
+            expr: max_over_time(redis_acl_foreign_users{job="cloud-redis-acl-sync"}[15m]) > 0
             for: 0m
             labels:
               severity: critical
             annotations:
-              summary: "redis-acl-sync found and removed {{ $value }} ACL user(s) it did not make"
-              description: "The CronJob log names each one (foreign ACL user ...). Treat it as a credential leak until shown otherwise. Runbook: docs/runbooks/redis-acl.md, Foreign users."
+              summary: "cloud-redis-acl-sync found and removed {{ $value }} ACL user(s) it did not make"
+              description: "The CronJob log names each one (foreign ACL user ...). Treat it as a credential leak until shown otherwise. Runbook: docs/runbooks/cloud-redis.md, Foreign users."
           - alert: RedisScriptCacheHigh
-            # Cloud Key Value tenants (B27) may SCRIPT LOAD, which ioredis
-            # needs, and Redis never evicts a loaded script (only EVAL's own
-            # cache is capped). 166 KiB on 2026-11-21; 16 MiB means some
-            # client loads new scripts without end.
-            expr: redis_memory_used_scripts_bytes{namespace="redis"} > 16 * 1024 * 1024
+            # Key Value tenants may SCRIPT LOAD, which ioredis needs, and
+            # Redis never evicts a loaded script. 16 MiB means some client
+            # loads new scripts without end.
+            expr: redis_memory_used_scripts_bytes{namespace="cloud-redis"} > 16 * 1024 * 1024
             for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "Redis pod {{ $labels.pod }} holds {{ $value | humanize1024 }}B of Lua scripts"
-              description: "redis_number_of_cached_scripts shows how many. A Key Value tenant cannot run SCRIPT FLUSH. Once the client is found, run SCRIPT FLUSH ASYNC as the verify user; clients load their scripts again on NOSCRIPT. Runbook: docs/runbooks/redis-acl.md, Cloud Key Value tenants."
+              summary: "cloud-redis pod {{ $labels.pod }} holds {{ $value | humanize1024 }}B of Lua scripts"
+              description: "redis_number_of_cached_scripts shows how many. A tenant cannot run SCRIPT FLUSH; once the client is found, flush as in docs/runbooks/cloud-redis.md, Break glass. Clients load their scripts again on NOSCRIPT."
           - alert: CloudKeyValueTenantsFetchFailing
             # The sync keeps the tenants Redis already holds while Cloud's
             # route fails, so no Key Value breaks; new, resized or deleted
             # ones wait until the route answers again.
-            expr: cloud_kv_tenants_fetch_ok{job="redis-acl-sync"} == 0
+            expr: cloud_kv_tenants_fetch_ok{job="cloud-redis-acl-sync"} == 0
             for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "redis-acl-sync cannot read Cloud's Key Value tenant route; Key Value changes are not reaching Redis"
-              description: "The CronJob log says why (unreachable, 401, bad answer). Check the cloud-reconciler pod and its tenants port 9091. Runbook: docs/runbooks/redis-acl.md, Cloud Key Value tenants."
+              summary: "cloud-redis-acl-sync cannot read Cloud's Key Value tenant route; Key Value changes are not reaching cloud-redis"
+              description: "The CronJob log says why (unreachable, 401, bad answer). Check the cloud-reconciler pod and its tenants port 9091. Runbook: docs/runbooks/cloud-redis.md."
           - alert: HeadscaleReplicasMismatch
             expr: (kube_deployment_status_replicas_available{namespace="headscale"} or on() vector(0)) < 1
             for: 5m

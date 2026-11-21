@@ -1,6 +1,5 @@
 # promtool unit tests for the Redis ACL alerts (stacks/monitoring
-# prometheus_chart_values.tpl, rules RedisAclSync* and B27's Key Value
-# rules). tests/redis-acl.test.sh
+# prometheus_chart_values.tpl, rules RedisAclSync* and RedisMemoryHigh). tests/redis-acl.test.sh
 # cuts those rules out into redis-acl.rules.yml. The pushgateway series keep
 # their job label (honor_labels: true).
 rule_files:
@@ -51,7 +50,7 @@ tests:
         exp_alerts:
           - exp_labels: {severity: warning, job: redis-acl-sync}
 
-  # B27. Redis at 75% of maxmemory for 20 minutes: the 70% warning fires
+  # Redis at 75% of maxmemory for 20 minutes: the 70% warning fires
   # after its 15-minute hold, not before.
   - interval: 1m
     input_series:
@@ -79,77 +78,3 @@ tests:
       - eval_time: 25m
         alertname: RedisMemoryHigh
         exp_alerts: []
-
-  # Two Key Values, 100 MiB and 40 MiB: over 128 MiB together.
-  - interval: 1m
-    input_series:
-      - series: 'cloud_kv_bytes{job="redis-acl-sync-kv-usage", project="shop", service="cache"}'
-        values: '104857600x30'
-      - series: 'cloud_kv_bytes{job="redis-acl-sync-kv-usage", project="blog", service="kv"}'
-        values: '41943040x30'
-    alert_rule_test:
-      - eval_time: 10m
-        alertname: CloudKeyValueTotalHigh
-        exp_alerts: []
-      - eval_time: 20m
-        alertname: CloudKeyValueTotalHigh
-        exp_alerts:
-          - exp_labels: {severity: warning}
-
-  # 100 MiB alone: quiet.
-  - interval: 1m
-    input_series:
-      - series: 'cloud_kv_bytes{job="redis-acl-sync-kv-usage", project="shop", service="cache"}'
-        values: '104857600x30'
-    alert_rule_test:
-      - eval_time: 20m
-        alertname: CloudKeyValueTotalHigh
-        exp_alerts: []
-
-  # One foreign user seen for one minute (the run deletes it): the alert
-  # holds for 15 minutes after, then clears.
-  - interval: 1m
-    input_series:
-      - series: 'redis_acl_foreign_users{job="redis-acl-sync"}'
-        values: '0x5 1 0x30'
-    alert_rule_test:
-      - eval_time: 4m
-        alertname: RedisForeignUser
-        exp_alerts: []
-      - eval_time: 10m
-        alertname: RedisForeignUser
-        exp_alerts:
-          - exp_labels: {severity: critical, job: redis-acl-sync}
-      - eval_time: 30m
-        alertname: RedisForeignUser
-        exp_alerts: []
-
-  # The tenant route fails from minute 5: fires after 15 minutes.
-  - interval: 1m
-    input_series:
-      - series: 'cloud_kv_tenants_fetch_ok{job="redis-acl-sync"}'
-        values: '1x5 0x30'
-    alert_rule_test:
-      - eval_time: 15m
-        alertname: CloudKeyValueTenantsFetchFailing
-        exp_alerts: []
-      - eval_time: 25m
-        alertname: CloudKeyValueTenantsFetchFailing
-        exp_alerts:
-          - exp_labels: {severity: warning, job: redis-acl-sync}
-
-  # Lua scripts at 20 MiB for 20 minutes: fires after 15; 1 MiB stays quiet.
-  - interval: 1m
-    input_series:
-      - series: 'redis_memory_used_scripts_bytes{namespace="redis", pod="redis-v2-0"}'
-        values: '20971520x30'
-      - series: 'redis_memory_used_scripts_bytes{namespace="redis", pod="redis-v2-1"}'
-        values: '1048576x30'
-    alert_rule_test:
-      - eval_time: 10m
-        alertname: RedisScriptCacheHigh
-        exp_alerts: []
-      - eval_time: 20m
-        alertname: RedisScriptCacheHigh
-        exp_alerts:
-          - exp_labels: {severity: warning, namespace: redis, pod: redis-v2-0}

@@ -510,7 +510,7 @@ locals {
     }
     images = {
       postgres = "docker.io/library/postgres:18-alpine@sha256:b6972e1115a4ff8eba5d7f7d19184926d1e16d7d1136ae1e1a7ebf286da0f015"
-      # The shared Redis's own version (stacks/redis), so redis-cli speaks
+      # cloud-redis's own version (stacks/cloud-redis), so redis-cli speaks
       # every command the server knows.
       keyvalue = "docker.io/library/redis:8.10.3-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3"
     }
@@ -1040,8 +1040,8 @@ locals {
         # Project policy can undo it. Rollback: revert the commit that added
         # it and apply stacks/cloud.
         { action = "Deny", protocol = "TCP", destination = { ports = local.cloud_egress_denied_tcp_ports } },
-        # The shared Redis, for Key Value (B27): each Project logs in as its
-        # own ACL user, confined to its key prefix (stacks/redis acl_sync.py).
+        # cloud-redis, the Redis of Key Values (B27 option b, stacks/cloud-redis):
+        # each Project logs in as its own ACL user, confined to its key prefix.
         # Passed, not allowed: Cloud's Project policy allows it only for a
         # Project with a Key Value. Before the toolbox Deny, so a kv-cli
         # toolbox reaches Redis; a psql toolbox gets no Redis credential.
@@ -1049,12 +1049,12 @@ locals {
           action   = "Pass"
           protocol = "TCP"
           destination = {
-            namespaceSelector = "projectcalico.org/name == 'redis'"
-            selector          = "app == 'redis-v2'"
+            namespaceSelector = "projectcalico.org/name == 'cloud-redis'"
+            selector          = "app == 'cloud-redis'"
             ports             = [6379]
           }
         },
-        # A toolbox (B22) reaches DNS and the CNPG primary above, and Redis
+        # A toolbox (B22) reaches DNS and the CNPG primary above, and cloud-redis
         # where the Project policy allows it, and nothing else: no internet,
         # no other pod, even its own namespace's.
         { action = "Deny", source = { selector = "${local.cloud_component_label} == '${local.cloud_toolbox.component}'" } },

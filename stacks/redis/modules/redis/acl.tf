@@ -36,13 +36,10 @@
 # user's clients; ACL DELUSER does, and only users nobody wants are deleted.
 #
 # Users:
-#   acl-admin  ACL management, CLIENT LIST for the R3 counter, MULTI/EXEC,
-#              and for Cloud Key Value tenants (B27) SCAN, MEMORY USAGE and
-#              UNLINK on keys p:* (measuring each tenant's prefix, deleting
-#              a purged one), and GET and SET on redis-acl-sync:* (the
-#              measurement's cursor and running totals). It can create any
-#              user, so it is admin in effect; only the sync job holds its
-#              password.
+#   acl-admin  ACL management, CLIENT LIST for the R3 counter, MULTI/EXEC.
+#              It can create any user, so it is admin in effect; only the
+#              sync job holds its password. Cloud Key Value tenants live on
+#              cloud-redis (B27 option b, stacks/cloud-redis), not here.
 #   exporter   what redis_exporter v1.97.0 runs with our flags (measured
 #              with INFO commandstats on 8.10.3): INFO, CONFIG GET, SLOWLOG
 #              GET/LEN, LATENCY LATEST/HISTOGRAM, COMMAND INFO, CLIENT
@@ -52,27 +49,8 @@
 #   probe      PING only, for the liveness and readiness probes (probe.sh).
 #   the rest   the same rights as `default` today.
 
-# The tenant part of redis-acl-sync (B27), configurable so a second Redis
-# for Cloud tenants can reuse this code with its own values. The defaults
-# are this Redis's.
-variable "cloud_tenants_url" {
-  description = "Cloud's read-only Key Value tenant route, asked every minute."
-  type        = string
-  default     = "http://cloud-reconciler.cloud.svc.cluster.local:9091/internal/redis-tenants"
-}
-
-variable "cloud_tenants_vault_path" {
-  description = "Vault KV v2 path (under secret/) of the route's bearer token that the sync reads."
-  type        = string
-  default     = "redis/cloud-tenants"
-}
-
-variable "cloud_tenants_cloud_vault_path" {
-  description = "Vault KV v2 path (under secret/) of Cloud's own copy of that token."
-  type        = string
-  default     = "cloud/redis-tenants"
-}
-
+# Configurable, as the B27 review asked, so another Redis could reuse this
+# file; the defaults are this Redis's.
 variable "acl_users_vault_path" {
   description = "Vault KV v2 path (under secret/) of the ACL users' passwords, acl-admin's among them."
   type        = string
@@ -80,15 +58,9 @@ variable "acl_users_vault_path" {
 }
 
 variable "acl_sync_pushgateway" {
-  description = "Pushgateway base URL and the job names the sync pushes to: <job>, <job>-kv and <job>-kv-usage."
+  description = "Pushgateway base URL and the job name the sync pushes to."
   type        = object({ url = string, job = string })
   default     = { url = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job", job = "redis-acl-sync" }
-}
-
-variable "kv_measure_every_seconds" {
-  description = "How often the sync measures Key Value sizes, in whole minutes as seconds (the CronJob runs every minute)."
-  type        = number
-  default     = 300
 }
 
 variable "acl_sync_suspended" {
@@ -131,34 +103,6 @@ resource "vault_kv_secret_v2" "redis_users" {
     { for name, _ in local.redis_acl_users : name => random_password.redis_acl[name].result },
     { default = random_password.redis_default.result },
   ))
-}
-
-# Cloud Key Value tenants (B27): the bearer token redis-acl-sync sends to
-# Cloud's read-only tenant route (the cloud repo's reconciler, GET
-# /internal/redis-tenants on port 9091). One value in two Vault paths:
-# secret/redis/cloud-tenants for the sync job (its Vault role reads that and
-# secret/redis/users only) and secret/cloud/redis-tenants, Cloud's own copy,
-# which stacks/cloud hands to the reconciler through an ExternalSecret. Not
-# secret/cloud/system: an authentik apply rewrites it. CI writes both paths
-# through the ci policy (stacks/vault/main.tf). A -replace of this password
-# rotates both copies in one apply; until ESO refreshes the reconciler's copy
-# (refresh 2m, and Reloader restarts the reconciler) the route answers 401
-# and the sync keeps the tenants Redis holds.
-resource "random_password" "cloud_tenants_token" {
-  length  = 40
-  special = false
-}
-
-resource "vault_kv_secret_v2" "cloud_tenants" {
-  mount     = "secret"
-  name      = var.cloud_tenants_vault_path
-  data_json = jsonencode({ token = random_password.cloud_tenants_token.result })
-}
-
-resource "vault_kv_secret_v2" "cloud_tenants_cloud_copy" {
-  mount     = "secret"
-  name      = var.cloud_tenants_cloud_vault_path
-  data_json = jsonencode({ token = random_password.cloud_tenants_token.result })
 }
 
 resource "kubernetes_secret" "redis_acl_seed" {
@@ -264,9 +208,6 @@ resource "kubernetes_cron_job_v1" "redis_acl_sync" {
         ttl_seconds_after_finished = 600
         template {
           metadata {
-            # stacks/cloud admits pods with this label, from this namespace,
-            # to the reconciler's tenant route on 9091.
-            labels = { app = "redis-acl-sync" }
             annotations = {
               "checksum/script" = sha256(kubernetes_config_map.redis_acl_sync.data["acl_sync.py"])
             }
@@ -291,33 +232,12 @@ resource "kubernetes_cron_job_v1" "redis_acl_sync" {
                 value = "secret/data/${vault_kv_secret_v2.redis_users.name}"
               }
               env {
-                name  = "CLOUD_TENANTS_TOKEN_PATH"
-                value = "secret/data/${vault_kv_secret_v2.cloud_tenants.name}"
-              }
-              env {
-                name  = "CLOUD_TENANTS_URL"
-                value = var.cloud_tenants_url
-              }
-              env {
                 name  = "DEFAULT_USER_NAMESPACES"
                 value = join(",", local.redis_default_user_namespaces)
               }
               env {
                 name  = "PUSHGATEWAY_URL"
                 value = "${var.acl_sync_pushgateway.url}/${var.acl_sync_pushgateway.job}"
-              }
-              # Key Value series (B27), each group replaced whole on push.
-              env {
-                name  = "PUSHGATEWAY_KV_URL"
-                value = "${var.acl_sync_pushgateway.url}/${var.acl_sync_pushgateway.job}-kv"
-              }
-              env {
-                name  = "PUSHGATEWAY_KV_USAGE_URL"
-                value = "${var.acl_sync_pushgateway.url}/${var.acl_sync_pushgateway.job}-kv-usage"
-              }
-              env {
-                name  = "KV_MEASURE_EVERY_SECONDS"
-                value = tostring(var.kv_measure_every_seconds)
               }
               volume_mount {
                 name       = "config"

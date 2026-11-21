@@ -840,12 +840,13 @@ resource "vault_policy" "ci" {
     path "secret/metadata/cloud/garage" {
       capabilities = ["create", "read", "update", "delete", "list"]
     }
-    # stacks/redis writes the token of Cloud's tenant route (B27,
-    # modules/redis/acl.tf) here, and Cloud's own copy of it.
-    path "secret/data/redis/cloud-tenants" {
+    # stacks/cloud-redis (B27 option b) writes its ACL users' passwords and
+    # the token of Cloud's tenant route here, and Cloud's own copy of the
+    # token at secret/cloud/redis-tenants.
+    path "secret/data/cloud-redis/*" {
       capabilities = ["create", "read", "update", "delete"]
     }
-    path "secret/metadata/redis/cloud-tenants" {
+    path "secret/metadata/cloud-redis/*" {
       capabilities = ["create", "read", "update", "delete", "list"]
     }
     path "secret/data/cloud/redis-tenants" {
@@ -1219,17 +1220,12 @@ resource "vault_kubernetes_auth_backend_role" "eso" {
 # --- Redis ACL sync Policy & Role (B40, stacks/redis/modules/redis/acl.tf) ---
 #
 # The redis-acl-sync CronJob reads the users' passwords, hashes them and
-# keeps the shared Redis's ACL users in step, and reads the token it sends to
-# Cloud's tenant route (B27). Read on those two secrets only.
+# keeps the shared Redis's ACL users in step. Read on that one secret only.
 
 resource "vault_policy" "redis_acl_sync" {
   name   = "redis-acl-sync"
   policy = <<-EOT
     path "secret/data/redis/users" {
-      capabilities = ["read"]
-    }
-    # B27: the bearer token for Cloud's tenant route.
-    path "secret/data/redis/cloud-tenants" {
       capabilities = ["read"]
     }
   EOT
@@ -1241,6 +1237,34 @@ resource "vault_kubernetes_auth_backend_role" "redis_acl_sync" {
   bound_service_account_names      = ["redis-acl-sync"]
   bound_service_account_namespaces = ["redis"]
   token_policies                   = [vault_policy.redis_acl_sync.name]
+  # One run lasts under a minute and logs in again on the next.
+  token_ttl     = 300
+  token_max_ttl = 300
+}
+
+# --- cloud-redis ACL sync Policy & Role (B27 option b, stacks/cloud-redis) ---
+#
+# The cloud-redis-acl-sync CronJob reads cloud-redis's infra users'
+# passwords and the bearer token it sends to Cloud's tenant route.
+
+resource "vault_policy" "cloud_redis_acl_sync" {
+  name   = "cloud-redis-acl-sync"
+  policy = <<-EOT
+    path "secret/data/cloud-redis/users" {
+      capabilities = ["read"]
+    }
+    path "secret/data/cloud-redis/cloud-tenants" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
+resource "vault_kubernetes_auth_backend_role" "cloud_redis_acl_sync" {
+  backend                          = vault_auth_backend.kubernetes.path
+  role_name                        = "cloud-redis-acl-sync"
+  bound_service_account_names      = ["cloud-redis-acl-sync"]
+  bound_service_account_namespaces = ["cloud-redis"]
+  token_policies                   = [vault_policy.cloud_redis_acl_sync.name]
   # One run lasts under a minute and logs in again on the next.
   token_ttl     = 300
   token_max_ttl = 300

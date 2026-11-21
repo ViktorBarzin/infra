@@ -438,13 +438,13 @@ for i, r in enumerate(egress[:smtp[0] if smtp else 0]):
     ports = r.get("destination", {}).get("ports")
     if not ports or set(ports) & set(k["denied_ports"]):
         problems.append(f"floor rule {i} comes before the mail-port Deny and lets a mail port through: {r}")
-# A toolbox (B22) gets DNS and the CNPG primary, and the Pass to the shared
-# Redis on 6379 (B27, Key Value; the Project policy decides it), then a Deny
+# A toolbox (B22) gets DNS and the CNPG primary, and the Pass to cloud-redis
+# on 6379 (B27, Key Value; the Project policy decides it), then a Deny
 # before any other Pass: no internet, no other pod.
-redis_pass = {"action": "Pass", "protocol": "TCP", "destination": {"namespaceSelector": "projectcalico.org/name == 'redis'", "selector": "app == 'redis-v2'", "ports": [6379]}}
+redis_pass = {"action": "Pass", "protocol": "TCP", "destination": {"namespaceSelector": "projectcalico.org/name == 'cloud-redis'", "selector": "app == 'cloud-redis'", "ports": [6379]}}
 redis_at = [i for i, r in enumerate(egress) if r == redis_pass]
 if len(redis_at) != 1:
-    problems.append(f"floor: want exactly one Pass to the shared Redis pods on 6379 (B27), found {redis_at}")
+    problems.append(f"floor: want exactly one Pass to the cloud-redis pods on 6379 (B27), found {redis_at}")
 other_pass = min([i for i, r in enumerate(egress) if r.get("action") == "Pass" and r != redis_pass], default=len(egress))
 tb_deny = [i for i, r in enumerate(egress) if r == {"action": "Deny", "source": {"selector": "cloud.viktorbarzin.me/component == 'toolbox'"}}]
 if len(tb_deny) != 1 or tb_deny[0] > other_pass or (redis_at and redis_at[0] > tb_deny[0]):

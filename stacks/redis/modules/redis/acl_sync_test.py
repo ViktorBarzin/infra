@@ -26,6 +26,26 @@ from acl_sync import ADMIN_USER, DEFAULT_USER_LINE, Redis, SyncError
 
 HERE = Path(__file__).parent
 USERS = json.loads((HERE / "acl_users.json").read_text())
+# cloud-redis (B27 option b): its users, and its redis.conf from its stack, so
+# the tenant tests run against the configuration that will hold tenants.
+CLOUD_STACK = HERE.parent.parent.parent / "cloud-redis"
+CLOUD_USERS = json.loads((CLOUD_STACK / "acl_users.json").read_text())
+# A +@all user for the tests' own checks; production cloud-redis has none.
+CLOUD_TEST_USERS = {**CLOUD_USERS, "verify": "~* &* +@all"}
+
+
+def cloud_redis_conf() -> str:
+    text = (CLOUD_STACK / "main.tf").read_text()
+    body = text.split('"redis.conf" = <<-EOT', 1)[1].split("EOT", 1)[0]
+    return "\n".join(line.strip() for line in body.splitlines() if line.strip()) + "\n"
+
+
+def conf_bytes(value: str) -> int:
+    units = {"kb": 1000, "k": 1000, "mb": 1024**2, "gb": 1024**3}
+    for unit, factor in units.items():
+        if value.lower().endswith(unit):
+            return int(value[: -len(unit)]) * factor
+    return int(value)
 IMAGE = "docker.io/library/redis:8.10.3-alpine"
 MODULES = ("redisbloom", "redisearch", "redistimeseries", "rejson")
 # The production redis.conf's value (main.tf), so the box runs with it.
@@ -34,10 +54,16 @@ PROTO_MAX_BULK_LEN = next(
 )
 
 
-def fake_passwords(users: dict[str, str] = USERS, salt: str = "a") -> dict[str, str]:
-    # Vault also holds default's password (for R4, and for rybbit, which can
-    # send only a password), which is not a users.json user.
-    return {u: hashlib.sha256(f"{salt}:{u}".encode()).hexdigest()[:40] for u in [*users, "default"]}
+def fake_passwords(users: dict[str, str] = USERS, salt: str = "a", default: bool = True) -> dict[str, str]:
+    # The shared Redis's Vault also holds default's password (for R4, and for
+    # rybbit, which can send only a password), which is not a users.json
+    # user. cloud-redis has default off and no such key.
+    names = [*users, "default"] if default else list(users)
+    return {u: hashlib.sha256(f"{salt}:{u}".encode()).hexdigest()[:40] for u in names}
+
+
+def cloud_passwords() -> dict[str, str]:
+    return fake_passwords(CLOUD_TEST_USERS, default=False)
 
 
 # --- unit ----------------------------------------------------------------------
@@ -180,7 +206,7 @@ def test_render_fails_closed_on_broken_input(mutate, message):
 
 
 def test_render_refuses_a_render_without_the_default_line(monkeypatch):
-    monkeypatch.setattr(acl_sync, "default_user", lambda: acl_sync.User("default", ["reset", "off"], "user default off"))
+    monkeypatch.setattr(acl_sync, "default_user", lambda off=False: acl_sync.User("default", ["reset", "off"], "user default off"))
     with pytest.raises(SyncError, match="lacks the default user line"):
         acl_sync.render(USERS, fake_passwords())
 
@@ -255,9 +281,11 @@ def docker_ok() -> bool:
 needs_docker = pytest.mark.skipif(not docker_ok(), reason=f"docker or {IMAGE} not available")
 
 
-def seed_text(admin_password: str) -> str:
-    """What acl.tf writes into the redis-acl-seed Secret."""
+def seed_text(admin_password: str, cloud: bool = False) -> str:
+    """What acl.tf (or stacks/cloud-redis) writes into the seed Secret."""
     digest = hashlib.sha256(admin_password.encode()).hexdigest()
+    if cloud:
+        return f"user default off\nuser {ADMIN_USER} on #{digest} {CLOUD_USERS[ADMIN_USER]}\n"
     return f"user default on nopass ~* &* +@all\nuser {ADMIN_USER} on #{digest} {USERS[ADMIN_USER]}\n"
 
 
@@ -265,16 +293,22 @@ class RedisBox:
     """One Redis container shaped like redis-v2: aclfile on the data volume,
     the init script run before each start, root-less for a clean tmp_path."""
 
-    def __init__(self, tmp: Path, modules: bool = False) -> None:
+    def __init__(self, tmp: Path, modules: bool = False, cloud: bool = False) -> None:
         self.tmp = tmp
-        # redis-v2 runs redis-server directly, so no module is loaded; the
-        # image's entrypoint would load these four.
+        # redis-v2 and cloud-redis run redis-server directly, so no module is
+        # loaded; the image's entrypoint would load these four.
         self.modules = modules
+        # cloud: cloud-redis's own redis.conf and seed (default off).
+        self.cloud = cloud
+        # (user, password) for the box's own ACL LIST when default is off.
+        self.auth: tuple[str, str] | None = None
         self.data = tmp / "data"
         self.data.mkdir()
         (tmp / "seed").mkdir()
         (tmp / "redis.conf").write_text(
-            "port 6379\ndir /data\naclfile /data/acl/users.acl\nappendonly no\nsave \"\"\n" + PROTO_MAX_BULK_LEN + "\n"
+            cloud_redis_conf()
+            if cloud
+            else "port 6379\ndir /data\naclfile /data/acl/users.acl\nappendonly no\nsave \"\"\n" + PROTO_MAX_BULK_LEN + "\n"
         )
         self.name = f"b40-acl-test-{uuid.uuid4().hex[:8]}"
         self.port = 0
@@ -292,7 +326,7 @@ class RedisBox:
         return ["redis-server", "/etc/redis/redis.conf", *mods]
 
     def init(self, admin_password: str) -> str:
-        (self.tmp / "seed" / "users.acl").write_text(seed_text(admin_password))
+        (self.tmp / "seed" / "users.acl").write_text(seed_text(admin_password, self.cloud))
         out = self.docker(
             "run", "--rm", "--user", self.user(), "--entrypoint", "sh",
             "-e", "REDIS_ARGS=" + " ".join(self.server_args()),
@@ -313,7 +347,12 @@ class RedisBox:
         for _ in range(50):
             try:
                 c = self.connect()
-                c.call("PING")
+                try:
+                    c.call("PING")
+                except acl_sync.RedisError as exc:
+                    # default off (cloud-redis): NOAUTH means it is up.
+                    if not str(exc).startswith("NOAUTH"):
+                        raise
                 c.close()
                 return
             except (OSError, ConnectionError, acl_sync.RedisError):
@@ -329,6 +368,8 @@ class RedisBox:
     def acl_list(self) -> list[str]:
         c = self.connect()
         try:
+            if self.auth is not None:  # default off: log in first
+                c.call("AUTH", *self.auth)
             reply = c.call("ACL", "LIST")
             assert isinstance(reply, list)
             return [str(x) for x in reply]
@@ -805,7 +846,8 @@ def test_kv_metrics_text_labels_project_and_service():
 
 
 def tenant_sync(box: RedisBox, pw: dict[str, str], fetch, measure: bool = False) -> acl_sync.Result:
-    return acl_sync.run(USERS, lambda: dict(pw), box.connect, set, fetch_tenants=fetch, measure=measure)
+    """One run as on cloud-redis: its users, default off, tenants on."""
+    return acl_sync.run(CLOUD_TEST_USERS, lambda: dict(pw), box.connect, set, fetch_tenants=fetch, measure=measure, default_off=True)
 
 
 def tenant_conn(box: RedisBox, entry: dict[str, object], password: str = "t" * 32) -> Redis:
@@ -820,30 +862,32 @@ def refused(conn: Redis, *command: str) -> str:
     return str(info.value)
 
 
+def cloud_box(tmp_path: Path, modules: bool = False):
+    b = RedisBox(tmp_path, modules=modules, cloud=True)
+    pw = cloud_passwords()
+    b.auth = (ADMIN_USER, pw[ADMIN_USER])
+    b.init(pw[ADMIN_USER])
+    b.start()
+    return b, pw
+
+
 @pytest.fixture
-def tenant_box(box):
-    pw = fake_passwords()
-    box.init(pw[ADMIN_USER])
-    box.start()
-    return box, pw
+def tenant_box(tmp_path):
+    b, pw = cloud_box(tmp_path)
+    yield b, pw
+    b.stop()
 
 
 @pytest.fixture(params=[False, True], ids=["as-deployed", "with-modules"])
 def any_tenant_box(request, tmp_path):
-    b = RedisBox(tmp_path, modules=request.param)
-    pw = fake_passwords()
-    b.init(pw[ADMIN_USER])
-    b.start()
+    b, pw = cloud_box(tmp_path, modules=request.param)
     yield b, pw
     b.stop()
 
 
 @pytest.fixture
 def modules_box(tmp_path):
-    b = RedisBox(tmp_path, modules=True)
-    pw = fake_passwords()
-    b.init(pw[ADMIN_USER])
-    b.start()
+    b, pw = cloud_box(tmp_path, modules=True)
     yield b, pw
     b.stop()
 
@@ -1133,7 +1177,7 @@ def test_measurement_runs_after_the_acl_and_its_fault_fails_nothing(tenant_box, 
     result = tenant_sync(box, pw, lambda: answer(a), measure=True)
     assert result.ok, result.error
     assert "connection reset" in result.measure_error
-    assert result.auth == {u: 1.0 for u in USERS}
+    assert result.auth == {u: 1.0 for u in CLOUD_TEST_USERS}
     assert result.kv_ready == {("shop", "cache"): 1.0}
     assert not result.measured
 
@@ -1342,7 +1386,7 @@ def test_a_restart_without_modules_drops_the_module_rules_and_starts(modules_box
     finally:
         c.close()
     # Infra users are untouched, and the next sync has nothing to change.
-    assert box.as_user("tv", pw["tv"], "PING") == "PONG"
+    assert box.as_user("verify", pw["verify"], "PING") == "PONG"
     assert tenant_sync(box, pw, lambda: answer(a)).changes == 0
 
 
@@ -1407,3 +1451,100 @@ def test_one_write_is_bounded_by_proto_max_bulk_len(tenant_box):
         assert c.call("SETRANGE", "p:shop:cache:ok", "10", "x") == 11
     finally:
         c.close()
+
+
+# --- cloud-redis's own configuration (B27 option b) ------------------------------
+
+
+def cloud_conf_value(name: str) -> list[str]:
+    for line in cloud_redis_conf().splitlines():
+        parts = line.split()
+        if parts and parts[0] == name:
+            return parts[1:]
+    raise AssertionError(f"cloud-redis redis.conf has no {name}")
+
+
+def test_cloud_redis_client_limits_nest():
+    # Redis does not check these against each other: one value must fit a
+    # client's query buffer, which must fit what all clients may hold, or a
+    # client sending a legal value is cut off or evicted.
+    bulk = conf_bytes(cloud_conf_value("proto-max-bulk-len")[0])
+    query = conf_bytes(cloud_conf_value("client-query-buffer-limit")[0])
+    clients = conf_bytes(cloud_conf_value("maxmemory-clients")[0])
+    maxmemory = conf_bytes(cloud_conf_value("maxmemory")[0])
+    assert bulk < query < clients < maxmemory
+    assert (bulk, query, clients, maxmemory) == (32 * 1024**2, 64 * 1024**2, 128 * 1024**2, 512 * 1024**2)
+    # One reply of the largest value fits the output hard limit, normal and
+    # pubsub, and the hard limit fits what all clients may hold.
+    limits = [line.split()[1:] for line in cloud_redis_conf().splitlines() if line.startswith("client-output-buffer-limit ")]
+    assert {cls for cls, *_ in limits} == {"normal", "pubsub"}
+    for _, hard, soft, seconds in limits:
+        assert bulk < conf_bytes(hard) <= clients and conf_bytes(soft) < conf_bytes(hard) and int(seconds) > 0
+    assert cloud_conf_value("busy-reply-threshold") == ["5000"]
+    assert cloud_conf_value("appendfsync") == ["everysec"]
+    assert cloud_conf_value("maxmemory-policy") == ["volatile-lru"]
+
+
+@needs_docker
+def test_cloud_redis_runs_its_config_with_default_off(tenant_box):
+    box, pw = tenant_box
+    c = box.connect()
+    try:
+        assert "NOAUTH" in refused(c, "PING")
+        assert refused(c, "AUTH", "default", "anything").startswith("WRONGPASS")
+    finally:
+        c.close()
+    assert tenant_sync(box, pw, lambda: answer()).ok
+    assert acl_sync.DEFAULT_OFF_LINE in box.acl_list()
+    live = box.connect()
+    try:
+        live.call("AUTH", "verify", pw["verify"])
+        for name in ("proto-max-bulk-len", "client-query-buffer-limit", "maxmemory-clients", "busy-reply-threshold"):
+            got = cast(list, live.call("CONFIG", "GET", name))
+            assert got[1] == str(conf_bytes(cloud_conf_value(name)[0])), name
+    finally:
+        live.close()
+
+
+@needs_docker
+def test_a_legal_32_mib_value_is_neither_cut_off_nor_evicted(tenant_box):
+    box, pw = tenant_box
+    a = tenant_entry(max_bytes=128 * 1024 * 1024)
+    assert tenant_sync(box, pw, lambda: answer(a)).ok
+    value = "v" * (32 * 1024 * 1024)
+    c = tenant_conn(box, a)
+    try:
+        assert c.call("SET", "p:shop:cache:big", value) == "OK"
+        assert c.call("STRLEN", "p:shop:cache:big") == len(value)
+        got = c.call("GET", "p:shop:cache:big")
+        assert isinstance(got, str) and len(got) == len(value)
+        assert c.call("PING") == "PONG"  # the same connection still works
+        assert "maximum allowed size" in refused(c, "APPEND", "p:shop:cache:big", "x")
+    finally:
+        c.close()
+
+
+@needs_docker
+def test_unread_pipelined_replies_are_cut_off_at_the_output_limit(tenant_box):
+    box, pw = tenant_box
+    a = tenant_entry(max_bytes=128 * 1024 * 1024)
+    assert tenant_sync(box, pw, lambda: answer(a)).ok
+    c = tenant_conn(box, a)
+    c.call("SET", "p:shop:cache:mb", "x" * (1024 * 1024))
+    # 128 replies of 1 MiB, never read: past the 64mb hard limit Redis closes
+    # the connection instead of holding the replies.
+    for _ in range(128):
+        c.send("GET", "p:shop:cache:mb")
+    time.sleep(1)
+    closed = False
+    try:
+        for _ in range(128):
+            if c.read() is None:
+                pass
+    except (ConnectionError, OSError):
+        closed = True
+    finally:
+        c.close()
+    stats = cast(str, box.as_user("verify", pw["verify"], "INFO", "stats"))
+    disconnects = int(next(line.split(":")[1] for line in stats.splitlines() if line.startswith("client_output_buffer_limit_disconnections:")))
+    assert closed and disconnects >= 1
