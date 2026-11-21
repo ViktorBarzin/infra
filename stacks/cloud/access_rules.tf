@@ -391,9 +391,11 @@ locals {
   # here alone and fed to the reconciler as PG_TASK_IMAGE (deploy_rules.tf),
   # so a Renovate bump moves the Jobs and the policy together;
   # tests/cloud-access.test.sh sends the Jobs Cloud's own code builds.
+  # Its major stays the shared pg-cluster-v18's (18): pg_restore 19 writes
+  # into an 18 server badly, so renovate.json5 holds majors in stacks/cloud.
   cloud_pg_task = {
     container = "pg"
-    image     = "docker.io/library/postgres:19.0-trixie@sha256:bb6e70add742cd868fb62cb3b2f67d1dd2bdd2b65a521e778420748753687c60"
+    image     = "docker.io/library/postgres:18.7-trixie@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a"
     # The image's postgres user, who owns the manual dump directory
     # (stacks/dbaas postgresql-backup makes it).
     uid = 999
@@ -423,6 +425,7 @@ locals {
   # The image is the one Cloud runs (the cloud repo's TOOLBOX_IMAGES), fed
   # to the reconciler as TOOLBOX_POSTGRES_IMAGE from here (deploy_rules.tf),
   # so a Renovate bump moves both. Key Value (Batch 4) adds an image.
+  # The postgres image's major stays pg-cluster-v18's (renovate.json5).
   cloud_toolbox = {
     component = "toolbox"
     container = "toolbox"

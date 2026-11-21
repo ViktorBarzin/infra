@@ -374,9 +374,9 @@
       enabled: false,
     },
     {
-      description: "HELD: Postgres majors of the backup clients whose dumps must restore into their server: stacks/dbaas (pg_dump for pg-cluster-v18, on 18.6) and stacks/immich (pg_dump for immich's own Postgres 15). A newer pg_dump writes statements an older server rejects on restore. Scoped to these stacks since 2026-11-10: psql-only clients elsewhere (db-init, role and monitoring jobs) follow the server's major on their own and are not held.",
+      description: "HELD: Postgres majors of the backup clients whose dumps must restore into their server: stacks/dbaas (pg_dump for pg-cluster-v18, on 18.6), stacks/immich (pg_dump for immich's own Postgres 15) and stacks/cloud (Cloud's pg task Jobs run pg_dump, pg_restore and psql against pg-cluster-v18, and its psql toolbox). A newer pg_dump writes statements an older server rejects on restore. Scoped to these stacks since 2026-11-10: psql-only clients elsewhere (db-init, role and monitoring jobs) follow the server's major on their own and are not held. stacks/cloud added 2026-11-21, after 4858194f0 moved its task image to 19.0 against the 18 server. Move these pins with the server's major.",
       matchDatasources: ["docker"],
-      matchFileNames: ["stacks/dbaas/**", "stacks/immich/**"],
+      matchFileNames: ["stacks/dbaas/**", "stacks/immich/**", "stacks/cloud/**"],
       matchPackageNames: ["postgres", "library/postgres", "docker.io/library/postgres"],
       matchUpdateTypes: ["major"],
       enabled: false,
