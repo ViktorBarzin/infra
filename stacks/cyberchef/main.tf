@@ -60,7 +60,7 @@ resource "kubernetes_deployment" "cyberchef" {
       }
       spec {
         container {
-          image = "mpepping/cyberchef:v11.5.0"
+          image = "mpepping/cyberchef:v11.6.0"
           name  = "cyberchef"
 
           port {
