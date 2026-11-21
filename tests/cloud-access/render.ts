@@ -24,6 +24,9 @@
  *   pg-tasks.json          the Postgres task Jobs and their Secrets, by kind
  *                          (src/reconciler/pg-task-jobs.ts, B28b and B28c),
  *                          and the image they pin
+ *   bucket-tasks.json      a Bucket restore Job and its key Secret
+ *                          (src/reconciler/bucket-task-jobs.ts, B26c), and
+ *                          the image it pins
  *   fixtures/<n>/          the same two files for each of Cloud's snapshot
  *                          fixtures (render.fixtures.ts FIXTURES), and
  *   fixtures.json          [{dir, name, namespace}] listing them in order
@@ -93,9 +96,24 @@ async function writeRoot(dir: string, projectFile: unknown, images = {}) {
 	delete main.terraform.backend;
 	await mkdir(dir, { recursive: true });
 	await writeFile(join(dir, "main.tf.json"), JSON.stringify(main, null, 2));
+	// Each Bucket's Garage key, which the reconciler's worker passes as
+	// TF_VAR_bucket_keys (B26) and never writes to a file; a stand-in here.
+	const buckets = (r.tfvarsJson as { buckets?: Record<string, unknown> }).buckets;
+	const tfvars =
+		main.variable?.bucket_keys && buckets && Object.keys(buckets).length > 0
+			? {
+					...r.tfvarsJson,
+					bucket_keys: Object.fromEntries(
+						Object.keys(buckets).map((b) => [
+							b,
+							{ access_key_id: `GK${b}-test`, secret_access_key: "not-a-real-secret" },
+						]),
+					),
+				}
+			: r.tfvarsJson;
 	await writeFile(
 		join(dir, "terraform.tfvars.json"),
-		JSON.stringify(r.tfvarsJson, null, 2),
+		JSON.stringify(tfvars, null, 2),
 	);
 	return r;
 }
@@ -220,6 +238,39 @@ if (await Bun.file(pgTaskFile).exists()) {
 		found[kind] = { job, secret };
 	}
 	await writeFile(join(out, "pg-tasks.json"), JSON.stringify(found, null, 2));
+}
+
+// A Bucket restore (B26c) and its key Secret, built by Cloud's own code in
+// namespace cloud. A cloud checkout from before B26 writes none.
+const bucketTaskFile = join(repo, "src/reconciler/bucket-task-jobs.ts");
+if (await Bun.file(bucketTaskFile).exists()) {
+	const tasks = await import(bucketTaskFile);
+	const taskId = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+	const job = tasks.bucketTaskJob({
+		namespace: "cloud",
+		taskId,
+		project: rendered.tfvarsJson.project,
+		bucket: `p-${rendered.tfvarsJson.project}-files-0123456789`,
+		key: "photos/2026/cat.jpg",
+		from: "2026-11-18",
+		// The reconciler runs the image infra gives it as BUCKET_TASK_IMAGE
+		// (deploy_rules.tf); bucket_tasks.py checks Cloud's default equals
+		// infra's pin, and cloud-deploy.test.sh that the env carries it.
+		image: tasks.BUCKET_TASK_IMAGE,
+		s3Endpoint: "http://garage.garage.svc.cluster.local:3900",
+		region: "garage",
+	});
+	const secret = tasks.bucketTaskSecret({
+		namespace: "cloud",
+		taskId,
+		job: { name: job.metadata.name, uid: "00000000-0000-4000-8000-000000000026" },
+		accessKeyId: "GK0123456789abcdef01234567",
+		secretAccessKey: "not-a-real-secret",
+	});
+	await writeFile(
+		join(out, "bucket-tasks.json"),
+		JSON.stringify({ image: tasks.BUCKET_TASK_IMAGE, job, secret }, null, 2),
+	);
 }
 
 const list: { dir: string; name: string; namespace: string }[] = [];

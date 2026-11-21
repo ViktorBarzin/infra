@@ -140,8 +140,9 @@
 #     namespace default; the reconciler may create and patch Jobs and create
 #     Secrets in cloud, delete task Jobs there but no other Job, but not read, change or delete a Secret there, and
 #     creates no pod or Deployment there;
-#   - Bucket restore Jobs (the cloud repo's B26c), built to the B26 shape:
-#     the Job and its key Secret are admitted as the reconciler in cloud
+#   - Bucket restore Jobs (the cloud repo's B26c), as Cloud's own code
+#     builds them (bucket-task-jobs.ts; to the B26 shape before it exists),
+#     with Cloud's image equal to infra's pin: the Job and its key Secret are admitted as the reconciler in cloud
 #     (and a key with dots in a name, a 4096-character script, a
 #     1024-character key); each variant cloud-bucket-task forbids is refused
 #     (name, labels, owner, retries, deadline, TTL, token, service links,
@@ -1075,11 +1076,19 @@ if [ -f "$CLOUD_REPO/src/reconciler/pg-task-jobs.ts" ]; then
 fi
 
 # --- Bucket restore Jobs in namespace cloud (the cloud repo's B26c) -------------
-# bucket_tasks.py builds the restore Job, its key Secret and the pod the Job
-# controller makes, to the B26 shape, and the refused variants: the Job and
-# Secret as the reconciler, the pods (cloud-bucket-backups-mount) as the
-# cluster admin, since the Job controller, not the reconciler, makes them.
-if python3 "$HERE/tests/cloud-access/bucket_tasks.py" "$TMP/bucket_task.json" "$TMP/bucket-cases" >"$TMP/bucket-tasks.log" 2>&1; then
+# render.ts built the restore Job and its key Secret with Cloud's own code
+# (bucket-task-jobs.ts); a cloud checkout from before B26 has none, and
+# bucket_tasks.py then builds them to the B26 shape. It checks Cloud's image
+# against infra's pin and writes the admitted shapes, the pod the Job
+# controller makes, and the refused variants: the Job and Secret as the
+# reconciler, the pods (cloud-bucket-backups-mount) as the cluster admin,
+# since the Job controller, not the reconciler, makes them.
+bucket_from=()
+if [ -f "$CLOUD_REPO/src/reconciler/bucket-task-jobs.ts" ]; then
+  [ -s "$TMP/tofu/bucket-tasks.json" ] && ok "Cloud's own code built a Bucket restore Job to check" || bad "Cloud has bucket-task-jobs.ts but render.ts wrote no Bucket restore Job"
+  bucket_from=("$TMP/tofu/bucket-tasks.json")
+fi
+if python3 "$HERE/tests/cloud-access/bucket_tasks.py" "$TMP/bucket_task.json" "$TMP/bucket-cases" "${bucket_from[@]}" >"$TMP/bucket-tasks.log" 2>&1; then
   run_cases "$TMP/bucket-cases"
   [ "$CASES_RUN" -gt 80 ] && ok "$CASES_RUN Bucket restore cases" || bad "only $CASES_RUN Bucket restore cases"
   # Same Role as the Postgres tasks: create, patch and delete its Jobs,

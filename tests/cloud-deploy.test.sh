@@ -18,9 +18,9 @@
 #      copy secret/cloud/system render a key Vault does not hold yet as an
 #      empty value instead of failing the sync. B26: every image an
 #      admission policy pins (BUCKET_TASK_IMAGE too) reaches the reconciler
-#      from that same local; the reconciler and the console get Garage's
-#      addresses, the restore uid and, for the console, its Vault role, and
-#      only the reconciler gets the admin token, as an optional file.
+#      from that same local; the reconciler gets Garage's addresses and the
+#      restore uid, the console its Vault role, and only the reconciler gets
+#      the admin token, as an optional file.
 #   3. The Cloud alert group in stacks/monitoring (prometheus_chart_values.tpl)
 #      passes `promtool check rules` and the unit tests in
 #      tests/cloud-deploy/alerts.test.yml: what fires, after how long, and
@@ -174,13 +174,14 @@ for n, pin in sorted(loc["pins"].items()):
     if n not in pending and not re.search(rf'pinnedImage\("{n}"', src):
         bad.append(f"the cloud code does not read {n} through pinnedImage()")
 # B26: the restore Jobs run as the uid cloud-bucket-task pins, and both
-# processes reach Garage at the addresses the floor and stacks/garage use.
-# The console reads Bucket keys from Vault with its own role, never the
-# admin token, which only the reconciler gets, as an optional file.
+# reconciler reaches Garage at the addresses the floor and stacks/garage
+# use. The console reads Bucket keys (and the S3 address in them) from
+# Vault with its own role, never the admin token, which only the
+# reconciler gets, as an optional file.
 cenv_all = {e["name"]: e["value"] for e in loc["console_env"]}
 if renv.get("BUCKET_TASK_UID") != str(loc["bucket_uid"]):
     bad.append(f"the reconciler's BUCKET_TASK_UID is {renv.get('BUCKET_TASK_UID')!r}, want {loc['bucket_uid']} (cloud-bucket-task's uid)")
-for who, env, names_ in (("reconciler", renv, ("GARAGE_S3_URL", "GARAGE_ADMIN_URL")), ("console", cenv_all, ("GARAGE_S3_URL",))):
+for who, env, names_ in (("reconciler", renv, ("GARAGE_S3_URL", "GARAGE_ADMIN_URL")),):
     for n in names_:
         want_url = loc["garage"]["s3_url" if n == "GARAGE_S3_URL" else "admin_url"]
         if env.get(n) != want_url:

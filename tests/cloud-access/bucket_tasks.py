@@ -1,13 +1,16 @@
 """Cases for Cloud's Bucket restore Jobs (the cloud repo's B26c).
 
-Usage: python3 bucket_tasks.py <bucket_task.json> <out dir>
+Usage: python3 bucket_tasks.py <bucket_task.json> <out dir> [bucket-tasks.json]
 
 bucket_task.json is local.cloud_bucket_task from stacks/cloud/access_rules.tf.
-The Job, its Secret and the pod the Job controller makes from it are built
-here to the shape Cloud and infra agreed for B26 (docs/architecture/cloud.md,
-"Buckets"); Cloud's own builder had not landed when these cases were
-written. Writes one JSON file per case and cases.tsv (file, who, expected,
-what) for cloud-access.test.sh's run_cases.
+bucket-tasks.json is what render.ts wrote from Cloud's own code
+(src/reconciler/bucket-task-jobs.ts): the image, a restore Job and its key
+Secret. Without it (a cloud checkout from before B26) the Job and Secret are
+built here to the shape Cloud and infra agreed for B26
+(docs/architecture/cloud.md, "Buckets"). The pod the Job controller makes is
+derived from the Job either way. Writes one JSON file per case and
+cases.tsv (file, who, expected, what) for cloud-access.test.sh's run_cases,
+and exits 1 when Cloud and infra disagree on the image.
 """
 import copy
 import json
@@ -35,6 +38,11 @@ done
 [ -f "$src" ] || { echo "no_backup: $key"; exit 3; }
 rclone copyto --s3-no-check-bucket "$src" ":s3:$bucket/$key"
 """
+
+cloud = json.loads(pathlib.Path(sys.argv[3]).read_text()) if len(sys.argv) > 3 else None
+if cloud is not None and cloud["image"] != infra["image"]:
+    print(f"Bucket restore image: Cloud runs {cloud['image']}, infra admits {infra['image']}")
+    sys.exit(1)
 
 job = {
     "apiVersion": "batch/v1", "kind": "Job",
@@ -83,6 +91,9 @@ secret = {
                                       "uid": "00000000-0000-4000-8000-000000000026", "controller": True}]},
     "data": {k: "eA==" for k in infra["secret_keys"]},
 }
+
+if cloud is not None:
+    job, secret = cloud["job"], cloud["secret"]
 
 name = job["metadata"]["name"]
 # The pod the Job controller makes from it.

@@ -124,9 +124,9 @@ locals {
     # never the admin token. It reads that key from Vault
     # (secret/cloud/<namespace>/_cloud/bucket-<service>) as Kubernetes auth
     # role cloud-console-buckets (stacks/vault cloud.tf), logging in with its
-    # service account token. Namespace cloud has no egress policy, and
-    # Garage's NetworkPolicy (stacks/garage) admits namespace cloud on 3900.
-    { name = "GARAGE_S3_URL", value = local.cloud_garage.s3_url },
+    # service account token, and takes the S3 address from that entry.
+    # Namespace cloud has no egress policy, and Garage's NetworkPolicy
+    # (stacks/garage) admits namespace cloud on 3900.
     { name = "VAULT_ADDR", value = local.cloud_secretstore_vault_server },
     { name = "VAULT_KUBERNETES_MOUNT", value = local.cloud_secretstore_project_mount },
     { name = "VAULT_CONSOLE_ROLE", value = local.cloud_console_vault_role },

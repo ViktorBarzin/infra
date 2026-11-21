@@ -584,7 +584,7 @@ flowchart LR
 | Piece | What it is |
 |---|---|
 | Names | bucket alias `p-<project>-<service>-<10 hex>`, key `cloud:<project>/<service>` with read and write on that bucket only, quota `maxSize` from the Size's Bucket storage |
-| Settings | reconciler: `GARAGE_ADMIN_URL`, `GARAGE_S3_URL`, `GARAGE_ADMIN_TOKEN_FILE`, `BUCKET_TASK_IMAGE`, `BUCKET_TASK_UID` (10001); console: `GARAGE_S3_URL`, `VAULT_ADDR`, `VAULT_KUBERNETES_MOUNT`, `VAULT_CONSOLE_ROLE` (`deploy_rules.tf`) |
+| Settings | reconciler: `GARAGE_ADMIN_URL`, `GARAGE_S3_URL`, `GARAGE_ADMIN_TOKEN_FILE`, `BUCKET_TASK_IMAGE`, `BUCKET_TASK_UID` (10001); console: `VAULT_ADDR`, `VAULT_KUBERNETES_MOUNT`, `VAULT_CONSOLE_ROLE` (`deploy_rules.tf`) |
 | Network | the egress floor Passes managed namespaces to Garage's pods (`app == 'garage'`) on TCP 3900 only, after the mail-port and toolbox Denies; Cloud's Project policy then allows it only for a Project with a Bucket. Namespace `cloud` has no egress policy (see "Builds and network"), so the console and reconciler need no rule; Garage's own NetworkPolicy admits 3900 from managed namespaces and namespace `cloud`, and 3903 from the console and reconciler pods |
 | Restore Job | `bucket-restore-<9 hex>` in `cloud`, labelled with the component `bucket-restore`, the Project and the task id; the pinned rclone image as uid and gid 10001, `/bin/sh -c <script> bucket-restore <bucket> <key> <date>`, no token, read-only root, every capability dropped, 30 min deadline, gone an hour after it ends; its key in Secret `bucket-restore-<9 hex>`, owned by the Job |
 | Backup volume | PersistentVolume `cloud-bucket-backups` on `/srv/nfs/cloud-buckets`, `ReadOnlyMany`, mount option `ro` and CSI `read_only`, bound by its claimRef to claim `cloud/cloud-bucket-backups` only |
