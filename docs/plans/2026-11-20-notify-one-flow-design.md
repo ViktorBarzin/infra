@@ -111,7 +111,7 @@ left_out:
 - **Delivery.** The adapter sends Slack first. A failed or rate-limited Slack post answers 503, so Alertmanager retries. A retry skips Channels that already got that notification.
 - **Snapshot.** Each read of everyone's choices is saved on a small local volume. When Authentik does not answer, the adapter routes from it.
 - **Safe edits.** Each changed row carries its old value; the save refuses a row someone else changed meanwhile.
-- **Test** never posts to a channel, only to Phone, Email or a DM.
+- **Test** sends to exactly the Channels selected on the row, a Slack channel target included (changed on 2026-11-21: refusing channels made a #alerts row silently test the phone).
 - **Guard.** A CI check rejects `notify: page` in rule files.
 
 ## Order of work

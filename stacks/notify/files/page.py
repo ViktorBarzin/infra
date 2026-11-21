@@ -10,7 +10,8 @@ Authentik then pushes their Phone and Email to apprise-api by itself
   GET  /a/<alert>   one alert: the link in Slack posts and in emails
   GET  /how         how the pipe works, with its diagram
   POST /save        the rows that changed; the rest stay as they were
-  POST /test        send the signed-in person a test of one alert (preview.py)
+  POST /test        send the signed-in person a test of one alert, on the
+                    Channels its row has selected (preview.py)
 
 Who is asking comes from X-authentik-username (and X-authentik-groups), set
 by Traefik's forward auth. The listener is reachable inside the cluster too,
@@ -346,7 +347,7 @@ def how_page(user) -> bytes:
 <p><b>Dashed: side paths.</b> The Router asks Prometheus which rule group an alert belongs to. Six alerts about the pipe's own foundations (NotifyPipeDown, NotifyDeliveryFailing, NodeDown, NFSServerUnresponsive, AuthentikDown, PowerOutage) also post straight to #alerts, so they arrive even when the Router cannot.</p>
 <p><b>When something is down.</b> If Authentik does not answer, the Router uses the last copy of everyone's choices it saved. If Slack or Apprise does not answer, Alertmanager sends the alert again later; a Channel that already got it is skipped.</p>
 <p><b>Nobody chose it.</b> When a critical or security alert fires and reaches no one, #alerts gets one line saying so, with a link to turn it on.</p>
-<p><b>Test</b> sends you an alert as it would really look: from when it last fired, or with realistic made-up values.</p>
+<p><b>Test</b> sends an alert as it would really look, to the Channels selected on its row: from when it last fired, or with realistic made-up values.</p>
 </div>"""
     return layout("How it works", body)
 
@@ -493,13 +494,23 @@ class Handler(BaseHTTPRequestHandler):
             notify = (user.get("attributes") or {}).get("notify") or {}
             have = subs.available(notify, user.get("email") or "")
             target = subs.slack_target(notify)
-            if target and not subs.SLACK_MEMBER.fullmatch(target):
-                have.discard("slack")  # a test never posts into a channel
-            wanted = [c for c in form.get("channels", "").split(",") if c in have]
-            if not wanted:
+            # Test exactly the Channels the row has selected, Slack target
+            # included: a channel such as #alerts is only possible for an
+            # admin, who chose it. Only a row that is off falls back.
+            selected = [c for c in subs.CHANNELS if c in form.get("channels", "").split(",")]
+            wanted = [c for c in selected if c in have]
+            not_set_up = [c for c in selected if c not in have]
+            note = ""
+            if not selected:
                 wanted = [c for c in ("push", "email", "slack") if c in have][:1]
+                if wanted:
+                    note = " This alert is off for you, so the test went to %s." % self.where(wanted[0], target)
             if not wanted:
-                return self.answer(400, False, "Set up a phone, an email address or a Slack member ID first.")
+                if not_set_up:
+                    return self.answer(400, False, "Set up %s first, on the full page." % " and ".join(CHANNEL_WORDS[c] for c in not_set_up))
+                return self.answer(400, False, "Set up a phone, an email address or Slack first.")
+            if not_set_up:
+                note += " Not set up yet: %s." % " and ".join(CHANNEL_WORDS[c] for c in not_set_up)
             if not srv.allow_test(user["username"]):
                 return self.answer(429, False, "That is %d tests this minute; wait a little." % TESTS_PER_MINUTE)
 
@@ -520,15 +531,21 @@ class Handler(BaseHTTPRequestHandler):
             log.error("test: %s", e)
             return self.answer(503, False, "Apprise, Slack or Authentik did not answer. Try again in a minute.")
         log.info("test %s for %s: %s (%s)", name, user["username"], results, sample["source"])
-        ok = [CHANNEL_WORDS[c] for c, r in results.items() if r == "sent"]
-        bad = [CHANNEL_WORDS[c] for c, r in results.items() if r != "sent"]
+        ok = [self.where(c, target) for c, r in results.items() if r == "sent"]
+        bad = [self.where(c, target) for c, r in results.items() if r != "sent"]
         if not bad:
-            return self.answer(200, True, "Sent to %s (%s): %s" % (" and ".join(ok), sample["source"], n["title"]),
+            return self.answer(200, True, "Sent to %s (%s): %s%s" % (" and ".join(ok), sample["source"], n["title"], note),
                                source=sample["source"], title=n["title"])
         message = "Could not send to %s. Save your settings once, then try again." % " and ".join(bad)
         if ok:
             message = "Sent to %s, but not to %s." % (" and ".join(ok), " and ".join(bad))
-        return self.answer(502, False, message)
+        return self.answer(502, False, message + note)
+
+    @staticmethod
+    def where(channel, target) -> str:
+        if channel == "slack" and target and target.startswith("#"):
+            return target
+        return CHANNEL_WORDS[channel]
 
 
 def diff(old: dict, new: dict) -> dict:

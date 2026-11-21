@@ -98,7 +98,7 @@ def unrouted_message(name: str, severity: str, page_url: str) -> dict:
 
 
 def test_message(notification: dict) -> dict:
-    """The Test button's Slack DM: the Phone/Email text in an attachment."""
+    """The Test button's Slack post: the Phone/Email text in an attachment."""
     color = {"failure": "danger", "warning": "warning", "success": "good"}.get(notification.get("type"), "#439FE0")
     return {"text": "", "attachments": [{"title": notification["title"], "text": notification["body"],
                                           "fallback": notification["title"], "color": color}]}

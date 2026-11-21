@@ -294,15 +294,28 @@ class PageTest(unittest.TestCase):
         self.assertEqual(tags, ["u-me-example-com-email"])
         self.assertEqual(n["body"], "Grow it.\n\nChange what you get: https://notify.example/a/PVFillingUp")
 
-    def test_test_never_posts_into_a_channel(self):
+    def test_test_goes_only_to_the_selected_channels_even_a_slack_channel(self):
         self.directory.users["me@example.com"]["attributes"]["notify"]["slack_target"] = "#alerts"
-        self.request("/test", {"alert": "PVFillingUp", "channels": "slack"})
-        self.assertEqual(self.slack.sent, [])
-        self.assertEqual(self.apprise.sent[0][1], ["u-me-example-com-push"])
+        status, body, _ = self.request("/test", {"alert": "PVFillingUp", "channels": "slack"})
+        self.assertEqual(status, 200)
+        self.assertEqual([t for t, _ in self.slack.sent], ["#alerts"])
+        self.assertEqual(self.apprise.sent, [])
+        self.assertTrue(json.loads(body)["message"].startswith("Sent to #alerts"))
 
-    def test_test_without_channels_uses_the_phone_first(self):
-        self.request("/test", {"alert": "PVFillingUp", "channels": ""})
+    def test_test_of_an_off_row_uses_the_phone_and_says_so(self):
+        status, body, _ = self.request("/test", {"alert": "PVFillingUp", "channels": ""})
         self.assertEqual(self.apprise.sent[0][1], ["u-me-example-com-push"])
+        self.assertIn("This alert is off for you, so the test went to your phone.", json.loads(body)["message"])
+
+    def test_test_of_a_channel_not_set_up_says_so_instead_of_substituting(self):
+        self.directory.users["me@example.com"]["attributes"]["notify"]["slack_target"] = ""
+        status, body, _ = self.request("/test", {"alert": "PVFillingUp", "channels": "slack"})
+        self.assertEqual(status, 400)
+        self.assertIn("Set up your Slack DMs first", json.loads(body)["message"])
+        self.assertEqual((self.apprise.sent, self.slack.sent), ([], []))
+        status, body, _ = self.request("/test", {"alert": "PVFillingUp", "channels": "push,slack"})
+        self.assertEqual(status, 200)
+        self.assertIn("Not set up yet: your Slack DMs.", json.loads(body)["message"])
 
     def test_test_without_any_channel_is_refused(self):
         notify = self.directory.users["me@example.com"]["attributes"]["notify"]
