@@ -16,7 +16,7 @@ import (
 // (infra ADR-0025).
 //
 // The streaming half of that ADR sends events to Loki (30 days) and metrics to
-// Prometheus (26 weeks). This is the other half, and it exists because those
+// Prometheus (5 years since 2026-11-09). This is the other half, and it exists because those
 // windows are not the same question: the transcripts on disk are the WHOLE
 // history — 1359 files and ~1.2 GB at the time of writing — and Loki refuses
 // anything older than a week, so the past can never be backfilled into it.

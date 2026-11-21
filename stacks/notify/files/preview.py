@@ -7,7 +7,7 @@ alert that looks as real as we can make it, best source first:
   1. firing now      Prometheus's own alert: its labels, value and the
                      annotations Prometheus rendered.
   2. last fired      the rule's expression evaluated at the last time ALERTS
-                     shows it firing, within Prometheus's 26 weeks.
+                     shows it firing, within the last 26 weeks.
   3. made-up value   for a rule `A > N` that never fired: A's current series
      on real labels  for the labels, and a value just past N.
   4. made-up values  label values that exist on the rule's metrics, else

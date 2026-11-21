@@ -52,7 +52,7 @@ Prometheus scrapes every ha-sofia entity every 30 s (job `haos`) as `haos_*` met
 
 ## Test an alert
 
-Each row's **Test** button sends the signed-in person one Notification built like a real one, with "Test: " in front of the title, on exactly the Channels selected on the row: a Slack channel target such as #alerts gets the test too. Only a row that is off falls back to the first Channel set up, and the answer says so; a selected Channel that is not set up is reported, not replaced. The values come from the best source available (`files/preview.py`): the alert firing now; the rule evaluated at the last time `ALERTS` shows it firing, within 26 weeks; for a plain `A > N` rule, A's current series and a value past N; else label values from the rule's metrics. Six tests a minute per person.
+Each row's **Test** button sends the signed-in person one Notification built like a real one, with "Test: " in front of the title, on exactly the Channels selected on the row: a Slack channel target such as #alerts gets the test too. Only a row that is off falls back to the first Channel set up, and the answer says so; a selected Channel that is not set up is reported, not replaced. The values come from the best source available (`files/preview.py`): the alert firing now; the rule evaluated at the last time `ALERTS` shows it firing, within the last 26 weeks; for a plain `A > N` rule, A's current series and a value past N; else label values from the rule's metrics. Six tests a minute per person.
 
 ## Check it
 

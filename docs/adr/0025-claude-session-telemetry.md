@@ -63,7 +63,7 @@ flowchart TD
     MS["/etc/claude-code/managed-settings.json<br/>env: CLAUDE_CODE_ENABLE_TELEMETRY=1<br/>source: infra/scripts/workstation/"]
 
     LK["Loki<br/>/otlp/v1/logs · 30 days"]
-    PR["Prometheus<br/>/api/v1/otlp/v1/metrics · 26 weeks"]
+    PR["Prometheus<br/>/api/v1/otlp/v1/metrics · 5 years<br/>(26 weeks until 2026-11-09)"]
     G["Grafana"]
 
     TR["~/.claude/projects/*.jsonl<br/>full history on disk"]
