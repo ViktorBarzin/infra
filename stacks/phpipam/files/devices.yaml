@@ -121,7 +121,7 @@
   vendor: Raspberry Pi
   os: Home Assistant OS
   description: Home Assistant London
-  macs: [c4:e9:84:10:52:c8, b8:27:eb:e9:18:92]
+  macs: [b8:27:eb:de:b2:36, c4:e9:84:10:52:c8]
 
 # --- Valchedrym -----------------------------------------------------------------
 - name: openwrt-valchedrym
