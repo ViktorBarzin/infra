@@ -384,6 +384,7 @@ graph LR
 | T3 snapshots | Nightly chain step 7, keep 3 per user | PVE host: `t3-state-pull` | devvm `/var/backups/t3-state/<user>/` daily snapshots → `/mnt/backup/t3-state/<user>/`, gzipped; restored by `t3-restore-state` on the devvm |
 | PostgreSQL Backup (full) | Nightly chain dumps, 14d retention | CronJob in `dbaas` namespace | pg_dumpall for all databases |
 | PostgreSQL Backup (per-db) | Nightly chain dumps (same Job as the full dump), 14d retention | CronJob in `dbaas` namespace | pg_dump -Fc per database → `/backup/per-db/<db>/`; Cloud `p_*` databases → `/backup/cloud-per-db/<db>/` |
+| Garage buckets (Cloud Buckets) | Nightly chain dumps, current plus 7 dated directories | CronJob `garage-backup` in `garage` namespace | `rclone sync --backup-dir` of every bucket → `/srv/nfs/cloud-buckets/current/<bucket>/`, overwritten or deleted objects → `/srv/nfs/cloud-buckets/<YYYY-MM-DD>/<bucket>/`; `docs/architecture/garage.md` |
 | MySQL Backup (full) | Daily 00:30, 14d retention | CronJob in `dbaas` namespace | mysqldump --all-databases |
 | MySQL Backup (per-db) | Daily 00:45, 14d retention | CronJob in `dbaas` namespace | mysqldump per database → `/backup/per-db/<db>/` |
 | etcd Backup | Weekly Sunday 01:00, 30d | CronJob in `kube-system` | etcdctl snapshot |

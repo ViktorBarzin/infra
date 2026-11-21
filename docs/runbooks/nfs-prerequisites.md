@@ -52,6 +52,7 @@ ssh root@192.168.1.127 'mkdir -p /srv/nfs/<app> && chown 10001:10001 /srv/nfs/<a
 | `vaultwarden-backup`           | `/srv/nfs/vaultwarden-backup`   | `stacks/vaultwarden/`   |
 | `clickhouse-backup`            | `/srv/nfs/clickhouse-backup`    | `stacks/rybbit/`        |
 | `dolt-backup`                  | `/srv/nfs/dolt-backup`          | `stacks/beads-server/`  |
+| `garage-backup-host` (Cloud Bucket backups) | `/srv/nfs/cloud-buckets` (10001:10001, 750) | `stacks/garage/` |
 | `reels-data` (renders, audio)  | `/srv/nfs/reels` (10001:10001, 750) | `stacks/reels/`     |
 | `<name>-data` per immich-memories instance (films, models) | `/srv/nfs/<name>` with `output/`, `models/` (1000:1000, 750) | `stacks/immich-memories/` |
 

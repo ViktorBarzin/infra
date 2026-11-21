@@ -8552,6 +8552,54 @@ serverFiles:
             annotations:
               summary: "Cloud reconciler loop {{ $labels.loop }} has not finished a pass for {{ $value | humanizeDuration }}"
               description: "The reconciler's {{ $labels.loop }} loop has not finished a pass for longer than many of its ticks. health_watch: crash and health Events and their notifications stop. cron_watch: cron runs and cron_failed stop. job_runs: cloud run jobs wait. toolbox: cloud psql sessions do not start. postgres_tasks: backups, exports and restores wait. builds: pushes are not built. postgres_size: database sizes and the read-only switch go stale. Usually the cloud database or the Kubernetes API is unreachable for that loop; its log line says why (homelab logs query '{namespace=\"cloud\", container=\"reconciler\"} |= \"failed\"'). A restart of the reconciler is safe (kubectl -n cloud rollout restart deploy/cloud-reconciler, after presence claim). Runbook: docs/runbooks/cloud.md, \"A reconciler loop stalled\"."
+      - name: Garage
+        rules:
+          # Garage, the S3 store behind Cloud Buckets (stacks/garage,
+          # docs/architecture/garage.md). Scrape job `garage` reads /metrics
+          # on the admin port. One node holds every Bucket, so down means
+          # every App's file reads and writes fail. Runbook: docs/runbooks/garage.md.
+          - alert: GarageDown
+            # No series at all (never scraped) counts as down.
+            expr: (max(up{job="garage"}) or on() vector(0)) == 0 or (max(kube_deployment_status_replicas_available{namespace="garage", deployment="garage"}) or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: critical
+              subsystem: cloud
+            annotations:
+              summary: "Garage (Cloud Buckets) is down or not scraped"
+              description: "Either Prometheus cannot scrape garage.garage:3903/metrics or the garage Deployment has no ready pod. Every Cloud App with a Bucket fails its file reads and writes meanwhile. Check kubectl -n garage get pods,events and the pod log; a scrape-only failure with a ready pod points at the garage NetworkPolicy (monitoring must reach 3903). Runbook: docs/runbooks/garage.md, \"Status\"."
+          - alert: GarageDiskFull
+            # Garage reports the filesystem under data_dir and metadata_dir.
+            # pvc-autoresizer grows each PVC at 80% (threshold 20% free) until
+            # its storage_limit (data 100Gi, metadata 10Gi), so this fires once
+            # a volume is at its limit or the resizer is stuck.
+            expr: (1 - garage_local_disk_avail{job="garage"} / garage_local_disk_total{job="garage"}) > 0.85
+            for: 15m
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "Garage {{ $labels.volume }} volume is {{ $value | humanizePercentage }} full"
+              description: "The {{ $labels.volume }} PVC in namespace garage is above 85%. When it fills, every S3 write from Cloud Apps fails. Check the PVC size against its resize.topolvm.io/storage_limit and the SAS thin pool before raising the limit. Runbook: docs/runbooks/garage.md, \"Disk full\"."
+          - alert: GarageBackupStale
+            # garage-backup pushes backup_last_success_timestamp only when every
+            # bucket synced. nightly-chain starts it every night from 00:00 UTC.
+            expr: (time() - backup_last_success_timestamp{job="garage-backup"}) > 93600
+            for: 30m
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "Garage bucket backup is {{ $value | humanizeDuration }} old (threshold: 26h, runs nightly)"
+              description: "garage/garage-backup has not synced every bucket to /srv/nfs/cloud-buckets. garage_backup_failed_buckets{job=\"garage-backup\"} says how many failed in the last run; read the last Job's log. Runbook: docs/runbooks/garage.md, \"Backup check\"."
+          - alert: GarageBackupNeverRun
+            expr: absent(backup_last_success_timestamp{job="garage-backup"})
+            for: 48h
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "Garage bucket backup has never reported a successful run to Pushgateway"
       - name: Mladost 3 site
         rules:
           - alert: Mladost3TunnelDown
@@ -10596,6 +10644,14 @@ extraScrapeConfigs: |
     # infra#80: read from a mounted Secret, never inlined here — this file is
     # rendered into a ConfigMap that oidc-power-user-readonly can read.
     bearer_token_file: /etc/secrets/haos/token
+  # Garage, the S3 store for Cloud Buckets (stacks/garage). /metrics sits on
+  # the admin port without a token; Garage's NetworkPolicy admits this
+  # namespace there.
+  - job_name: 'garage'
+    static_configs:
+        - targets:
+          - "garage.garage.svc.cluster.local:3903"
+    metrics_path: '/metrics'
   - job_name: 'nvidia'
     static_configs:
         - targets:
