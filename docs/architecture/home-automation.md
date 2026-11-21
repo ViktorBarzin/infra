@@ -1,7 +1,5 @@
 # Home automation
 
-<!-- showcase: The family home in Sofia runs on one Home Assistant instance, a VM on the same Dell server as the cluster. It reaches its devices through vendor clouds, Bluetooth, Matter and ESPHome, and a few cluster services feed it. -->
-
 Home Assistant (`ha-sofia`) runs Home Assistant OS as Proxmox VM 103 on the R730,
 next to the Kubernetes nodes, at `https://ha-sofia.viktorbarzin.me`. It covers
 the family home in Sofia, its garage and a second family property, and the
@@ -68,23 +66,7 @@ load. It reaches the intercom through an SSH tunnel to rpi-sofia with a key
 that may open only that tunnel. Details: `docs/runbooks/cameras-nvr-intercom.md`.
 HA's backups cover both add-ons and their options.
 
-## On the Showcase
-
-The Home view of the Showcase (ADR-0037) publishes counts only: devices,
-entities, integrations, automations by kind and dashboards. It never shows names
-of people, rooms, entities or automations, live states, or the brands of the
-alarm, lock and cameras, which appear as one "security" line. Dashboard
-screenshots are taken with `homelab showcase shots`, masked, approved by the
-repo owner, and committed; they change only when someone reruns that command. The build
-reads HA with its own long-lived token named `showcase` (Vault
-`secret/showcase`, field `ha_sofia_token`), which can be revoked without
-affecting anything else.
-
-The two sections below are quoted on the Showcase. Keep them free of digits, so
-nothing in them goes stale against the live numbers beside them.
-
 ## Server fans on a PID loop
-<!-- showcase-highlight: server-fans -->
 
 The R730's fans are driven by Home Assistant rather than by the server's own
 firmware curve. A PID controller in HA reads a five-minute mean of the CPU
@@ -96,7 +78,6 @@ server unmanaged. The tuning, setpoint and manual override live on a faceplate
 on the IT dashboard.
 
 ## Solar first, grid when the battery runs low
-<!-- showcase-highlight: solar-ats -->
 
 An automatic transfer switch decides whether the house runs from the solar
 inverter's battery or from the grid. HA watches the battery: once it has stayed

@@ -1,6 +1,6 @@
 # Homelab showcase page
 
-Status: done 2026-10-20. Approved the same day from a `/grill-with-docs` interview and two independent challenger reviews. Live at https://pages.viktorbarzin.me/homelab/, rebuilt daily at 06:30 UTC by `.woodpecker/showcase.yml`.
+Status: retired 2026-11-21 (ADR-0044); the page, pipeline and code are removed. Was done 2026-10-20. Approved the same day from a `/grill-with-docs` interview and two independent challenger reviews. Live at https://pages.viktorbarzin.me/homelab/, rebuilt daily at 06:30 UTC by `.woodpecker/showcase.yml`.
 
 ## Context
 

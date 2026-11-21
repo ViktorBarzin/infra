@@ -1,7 +1,5 @@
 # DNS Architecture
 
-<!-- showcase: Technitium answers for the internal zone and for recursive lookups, Cloudflare hosts the public zone, and records for new ingresses are created from the Kubernetes API. -->
-
 Last updated: 2026-11-14 (replicas follow the primary by NOTIFY within seconds, viktorbarzin.me SOA refresh 5 min, alert `TechnitiumReplicaSerialBehind`; Cloud App hosts get their internal CNAME from `external-dns-cloud`). Previously 2026-11-10 (OPNsense replaced pfSense as the edge firewall, ADR-0038: Unbound, Kea and the WAN DNS redirect run on OPNsense on the same addresses). Previously 2026-10-14 (external-dns now creates and deletes the records for `*.viktorbarzin.lan` Ingress hosts from the kube API, ADR-0033; the `technitium-dynamic-updates` CronJob keeps the TSIG keys and update policy on all three Technitium instances. Previously 2026-07-08: record cleanup: 13 verified-dead Cloudflare records deleted, zone now **185/200** of the free-plan cap — see "Zone record budget" below. Same day, ADR-0020 — mx2 is the deployed external vantage; `status.viktorbarzin.me` moves proxied-CNAME → grey-cloud A on mx2; new `test-failover` synthetic record. Previously 2026-04-19: WS C — NodeLocal DNSCache deployed; WS D — pfSense Unbound replaces dnsmasq; WS E — Kea multi-IP DHCP option 6 + TSIG-signed DDNS)
 
 ## Overview

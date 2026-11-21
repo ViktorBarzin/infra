@@ -209,9 +209,10 @@ Two design notes worth keeping:
 ## Publishing a multi-file bundle
 
 This is the older, token-per-directory form of `/publish-bundle`, kept for a
-static site that CI generates as a set of files, such as the homelab showcase page (`showcase/homelab/`, see
-`docs/plans/2026-10-20-homelab-showcase-design.md`). `/publish` renders one
-markdown doc, so it does not cover this case.
+static site that CI generates as a set of files. `/publish` renders one
+markdown doc, so it does not cover this case. The homelab Showcase
+(`showcase/homelab/`) was its only user until it was retired on 2026-11-21
+(ADR-0044); `bundle_keys` is `{}` since then.
 
 - Tokens come from `PAGES_BUNDLE_KEYS`, a JSON `{token: {"user", "slug"}}` map.
   Each token is bound to one directory, `<user>/<slug>/`, and the request

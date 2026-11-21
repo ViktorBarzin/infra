@@ -10,7 +10,7 @@
 - POST /publish-bundle -> with a user's API token (2026-11-12): publishes one
   HTML file as a page or several files as a Bundle in that user's Space, with
   its Bundle URL (app/bundles.py). With a legacy BUNDLE token (a separate map,
-  the Showcase CI): replaces <user>/<slug>/ with the files sent. No rendering.
+  none configured since the Showcase was retired, ADR-0044): replaces <user>/<slug>/ with the files sent. No rendering.
 - POST /share, /unshare -> API token; create or remove a public link
   /p/<token>/ to a page in the caller's Space or shared/.
 - POST /unpublish -> API token; delete a page or Bundle with its links.

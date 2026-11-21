@@ -20,7 +20,8 @@
 #                  — NOT the Authentik usernames, or served pages 404.
 #   - bundle_keys: JSON {token: {"user": ..., "slug": ...}} → env
 #                  PAGES_BUNDLE_KEYS. Each token may only POST /publish-bundle,
-#                  into <user>/<slug>/ (the showcase site: showcase/homelab).
+#                  into <user>/<slug>/. "{}" since the Showcase was retired
+#                  (ADR-0044); the key must stay, ESO reads it.
 #   - forgejo_deploy_key : SSH private key, a READ+WRITE deploy key on Forgejo
 #                  viktor/pages ("pages-publish (read-write)"), mounted 0400
 #                  at /etc/pages-deploy/id_ed25519 (never env). The older

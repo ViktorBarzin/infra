@@ -1,6 +1,6 @@
 # ADR-0037: The homelab showcase is generated from live state
 
-- Status: accepted
+- Status: superseded by ADR-0044 (2026-11-21): the public Showcase is retired
 - Date: 2026-10-20
 - Related: `docs/plans/2026-10-20-homelab-showcase-design.md`, ADR-0002, ADR-0014, `stacks/learn/`, `stacks/pages-publish/`, `cli/services.go`, `cli/edges.go`
 

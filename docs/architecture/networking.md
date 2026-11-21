@@ -1,7 +1,5 @@
 # Networking Architecture
 
-<!-- showcase: OPNsense splits the network into separate segments for management, Kubernetes and cameras. Traefik is the ingress controller, and every request passes a middleware chain for bot blocking, rate limits and login. -->
-
 Last updated: 2026-11-10 (OPNsense replaced pfSense as the edge firewall)
 
 ## Overview

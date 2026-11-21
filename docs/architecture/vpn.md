@@ -1,7 +1,5 @@
 # VPN & Remote Access Architecture
 
-<!-- showcase: Remote access goes through Headscale, a self-hosted Tailscale control server, with OPNsense advertising the home networks to the tailnet. WireGuard links the sites. -->
-
 Last updated: 2026-11-17
 
 > **Amendment (2026-11-10): OPNsense replaced pfSense as the edge firewall** (ADR-0038).

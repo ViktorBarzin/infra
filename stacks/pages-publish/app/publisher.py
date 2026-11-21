@@ -85,7 +85,7 @@ MAX_PAGE_BYTES = 8 * 1024 * 1024
 MAX_PAGE_REQUEST_BYTES = 2 * MAX_PAGE_BYTES
 
 
-# /publish-bundle limits, for the Showcase's bundle token and for every user's
+# /publish-bundle limits, for legacy bundle tokens and for every user's
 # Bundles (app/bundles.py adds a 10 MiB per-file cap and a file-type list).
 # 25 MiB per publish is decision 3 of the 2026-11-12 design.
 MAX_BUNDLE_FILES = 200
