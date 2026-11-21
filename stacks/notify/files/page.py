@@ -113,6 +113,7 @@ details{padding:0 0 8px}summary{cursor:pointer;color:var(--muted);font-size:13px
 #q{width:100%;margin:4px 0 8px}
 .bar{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line);padding:10px 16px;text-align:center}
 button.save{font:inherit;background:var(--accent);color:var(--accent-fg);border:0;border-radius:8px;padding:8px 22px;cursor:pointer}
+button.save:disabled{opacity:.45;cursor:default}
 a{color:var(--accent)}
 svg{width:100%;height:auto;display:block}
 .how p{margin:8px 0}
@@ -133,9 +134,28 @@ function paint(chipsEl){
   });
   var r=chipsEl.querySelector('.reset'); if(r) r.hidden=inh;
   var row=rowOf(chipsEl), from=row&&row.querySelector('.from'); if(from) from.hidden=!(inh&&set.length);
-  var orig=chipsEl.querySelector('input[name^="o:"]'), changed=(input.value!==orig.value);
+  // Changed = differs from what the page loaded; only changed rows are sent.
+  // (data-initial, not defaultValue: on a hidden input, setting .value also
+  // rewrites its default.)
+  if(input.dataset.initial===undefined) input.dataset.initial=input.value;
+  var orig=chipsEl.querySelector('input[name^="o:"]'), changed=(input.value!==input.dataset.initial);
   input.disabled=!changed; orig.disabled=!changed;
+  updateSave();
 }
+function dirty(){
+  var f=document.querySelector('form'); if(!f) return false;
+  if(f.querySelector('.chips input[type=hidden]:not([name^="o:"]):not([disabled])')) return true;
+  return Array.prototype.some.call(f.querySelectorAll('input[type=text],input[type=email],select'),function(el){
+    if(el.id==='q') return false;
+    if(el.tagName==='SELECT') return Array.prototype.some.call(el.options,function(o){return o.selected!==o.defaultSelected;});
+    return el.value!==el.defaultValue;
+  });
+}
+function updateSave(){
+  document.querySelectorAll('button.save').forEach(function(b){var d=!dirty(); b.disabled=d; b.title=d?'Nothing changed yet':'';});
+}
+document.addEventListener('input',function(e){if(e.target.id!=='q') updateSave();});
+document.addEventListener('change',updateSave);
 function paintGroup(g){g.querySelectorAll('.chips').forEach(paint);}
 function effective(chipsEl){var v=val(chipsEl).value; return v==='inherit'?groupSet(chipsEl):(v?v.split(','):[]);}
 document.addEventListener('click',function(e){
@@ -160,6 +180,7 @@ document.addEventListener('click',function(e){
   .then(function(){b.disabled=false;});
 });
 document.querySelectorAll('.chips').forEach(paint);
+updateSave();
 var q=document.getElementById('q');
 if(q){q.addEventListener('input',function(){
   var t=q.value.trim().toLowerCase();
