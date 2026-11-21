@@ -52,6 +52,45 @@
 #   probe      PING only, for the liveness and readiness probes (probe.sh).
 #   the rest   the same rights as `default` today.
 
+# The tenant part of redis-acl-sync (B27), configurable so a second Redis
+# for Cloud tenants can reuse this code with its own values. The defaults
+# are this Redis's.
+variable "cloud_tenants_url" {
+  description = "Cloud's read-only Key Value tenant route, asked every minute."
+  type        = string
+  default     = "http://cloud-reconciler.cloud.svc.cluster.local:9091/internal/redis-tenants"
+}
+
+variable "cloud_tenants_vault_path" {
+  description = "Vault KV v2 path (under secret/) of the route's bearer token that the sync reads."
+  type        = string
+  default     = "redis/cloud-tenants"
+}
+
+variable "cloud_tenants_cloud_vault_path" {
+  description = "Vault KV v2 path (under secret/) of Cloud's own copy of that token."
+  type        = string
+  default     = "cloud/redis-tenants"
+}
+
+variable "acl_users_vault_path" {
+  description = "Vault KV v2 path (under secret/) of the ACL users' passwords, acl-admin's among them."
+  type        = string
+  default     = "redis/users"
+}
+
+variable "acl_sync_pushgateway" {
+  description = "Pushgateway base URL and the job names the sync pushes to: <job>, <job>-kv and <job>-kv-usage."
+  type        = object({ url = string, job = string })
+  default     = { url = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job", job = "redis-acl-sync" }
+}
+
+variable "kv_measure_every_seconds" {
+  description = "How often the sync measures Key Value sizes, in whole minutes as seconds (the CronJob runs every minute)."
+  type        = number
+  default     = 300
+}
+
 variable "acl_sync_suspended" {
   description = "Suspend the redis-acl-sync CronJob (break glass, docs/runbooks/redis-acl.md)."
   type        = bool
@@ -87,7 +126,7 @@ resource "random_password" "redis_default" {
 # grants data and metadata write on secret/redis/users only.
 resource "vault_kv_secret_v2" "redis_users" {
   mount = "secret"
-  name  = "redis/users"
+  name  = var.acl_users_vault_path
   data_json = jsonencode(merge(
     { for name, _ in local.redis_acl_users : name => random_password.redis_acl[name].result },
     { default = random_password.redis_default.result },
@@ -112,13 +151,13 @@ resource "random_password" "cloud_tenants_token" {
 
 resource "vault_kv_secret_v2" "cloud_tenants" {
   mount     = "secret"
-  name      = "redis/cloud-tenants"
+  name      = var.cloud_tenants_vault_path
   data_json = jsonencode({ token = random_password.cloud_tenants_token.result })
 }
 
 resource "vault_kv_secret_v2" "cloud_tenants_cloud_copy" {
   mount     = "secret"
-  name      = "cloud/redis-tenants"
+  name      = var.cloud_tenants_cloud_vault_path
   data_json = jsonencode({ token = random_password.cloud_tenants_token.result })
 }
 
@@ -257,7 +296,7 @@ resource "kubernetes_cron_job_v1" "redis_acl_sync" {
               }
               env {
                 name  = "CLOUD_TENANTS_URL"
-                value = "http://cloud-reconciler.cloud.svc.cluster.local:9091/internal/redis-tenants"
+                value = var.cloud_tenants_url
               }
               env {
                 name  = "DEFAULT_USER_NAMESPACES"
@@ -265,16 +304,20 @@ resource "kubernetes_cron_job_v1" "redis_acl_sync" {
               }
               env {
                 name  = "PUSHGATEWAY_URL"
-                value = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/redis-acl-sync"
+                value = "${var.acl_sync_pushgateway.url}/${var.acl_sync_pushgateway.job}"
               }
               # Key Value series (B27), each group replaced whole on push.
               env {
                 name  = "PUSHGATEWAY_KV_URL"
-                value = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/redis-acl-sync-kv"
+                value = "${var.acl_sync_pushgateway.url}/${var.acl_sync_pushgateway.job}-kv"
               }
               env {
                 name  = "PUSHGATEWAY_KV_USAGE_URL"
-                value = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/redis-acl-sync-kv-usage"
+                value = "${var.acl_sync_pushgateway.url}/${var.acl_sync_pushgateway.job}-kv-usage"
+              }
+              env {
+                name  = "KV_MEASURE_EVERY_SECONDS"
+                value = tostring(var.kv_measure_every_seconds)
               }
               volume_mount {
                 name       = "config"

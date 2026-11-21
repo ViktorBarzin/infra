@@ -227,10 +227,13 @@ ANSWER_MAX_BYTES = 8 * 1024 * 1024
 # across restarts. A missing or unreadable value starts a new cycle, which
 # only costs time. The pushgateway is not state; the ACL list holds no
 # numbers.
-# The estimate is conservative: a tenant's bytes are its running total plus
-# every key not sized yet in this cycle counted at the largest key sized for
-# it (this cycle or the last). A complete cycle within one run (up to
-# MEMORY_USAGE_PER_RUN tenant keys in all) makes it exact. A cycle over K
+# The estimate: a tenant's bytes are its running total plus every key not
+# sized yet in this cycle counted at the largest key sized for it (this
+# cycle or the last). Keys a complete cycle has sized are never undercounted;
+# a key written during a cycle that is bigger than any sized so far counts
+# low until the cycle reaches it, at most one cycle later. A complete cycle
+# within one run (up to MEMORY_USAGE_PER_RUN tenant keys in all) makes the
+# figure exact. A cycle over K
 # tenant keys takes ceil(K / MEMORY_USAGE_PER_RUN) measuring runs; a tenant
 # with more than MAX_KEYS_PER_TENANT keys, which alone would fill a run, is
 # treated as over its Size. Cost at 10,000 tenant keys: about 16 + 16 SCAN
@@ -241,7 +244,10 @@ SCAN_COUNT = 1000
 PIPELINE_BATCH = 1000
 MEMORY_USAGE_PER_RUN = 100000
 MAX_KEYS_PER_TENANT = 100000
-STATE_KEY = "redis-acl-sync:kv-measure"
+# Configurable, like the Redis address, Vault paths, tenant route and
+# Pushgateway groups (main() reads those), so a second Redis for Cloud
+# tenants can run this job unchanged.
+STATE_KEY = os.environ.get("KV_STATE_KEY", "redis-acl-sync:kv-measure")
 
 
 @dataclass(frozen=True)
@@ -370,8 +376,8 @@ def key_prefix(key: str) -> str | None:
     return f"p:{parts[1]}:{parts[2]}:"
 
 
-def measure_due(now: float) -> bool:
-    return int(now) // 60 % (MEASURE_EVERY_SECONDS // 60) == 0
+def measure_due(now: float, every_seconds: int = MEASURE_EVERY_SECONDS) -> bool:
+    return int(now) // 60 % max(every_seconds // 60, 1) == 0
 
 
 def fetch_tenant_answer(url: str, token: str, timeout: float = 10.0) -> object:
@@ -1000,7 +1006,11 @@ def run(
         acl_list = admin.call("ACL", "LIST")
         current = parse_acl_list(acl_list if isinstance(acl_list, list) else [])
         categories = admin.call("ACL", "CAT")
-        extra = module_denials({str(c) for c in categories} if isinstance(categories, list) else set())
+        if not isinstance(categories, list) or not categories:
+            # An empty module part would drop the module denials: fail
+            # before writing anything.
+            raise SyncError(f"unexpected ACL CAT reply: {str(categories)[:80]!r}")
+        extra = module_denials({str(c) for c in categories})
         tenants, full, answer = plan_tenants(result, current, users_rules, fetch_tenants)
         tenant_users = [tenant_user(t, t.name in full, extra) for t in tenants]
 
@@ -1098,7 +1108,7 @@ def main() -> int:
             env.get("SA_CA_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"),
         ),
         fetch_tenants=fetch_tenants,
-        measure=measure_due(started),
+        measure=measure_due(started, int(env.get("KV_MEASURE_EVERY_SECONDS", str(MEASURE_EVERY_SECONDS)))),
     )
     now = time.time()
     gauges: dict[str, float] = {
