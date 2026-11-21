@@ -262,6 +262,26 @@ still finds the push within 30 s to 5 min.
   paths. If a hook URL leaks, the owner runs `cloud deploy-hook <project>
   <app> --regenerate`; the old URL answers 404 at once.
 
+## Project File sync
+
+A User turns it on with `cloud sync enable <project> --repo <url>` (the
+cloud repo's B33). The reconciler reads the repo every 60 s inside the
+build loop, so with `BUILDS_ENABLED=false` nothing syncs. Log lines are
+`cloud.sync` in the reconciler's logs.
+
+- A commit was not applied: `cloud sync status <project>` shows the head
+  Cloud read, the last commit applied and the error; `cloud changes
+  <project>` has a failed `sync.apply` with the reason. A fault that may
+  pass (Forgejo or the cluster not answering) is read again on the next
+  pass by itself.
+- A Service the User removed from the file still runs: that is the held
+  removal (`sync.remove`, `waiting for confirm`). Only the owner confirms
+  it, with `cloud changes confirm <id>`.
+- Stop it for one Project: the owner runs `cloud sync disable <project>`.
+  An Operator can delete the Project's `project_syncs` row in the `cloud`
+  database; the held removals then stay `waiting` and the owner's confirm
+  still works.
+
 ## Add a Cloud User
 
 The person needs an Authentik account first: their own sign-up, a guest

@@ -151,6 +151,14 @@ nothing: both processes read the password file on each new connection.
    with `--purge`, and one of a Project with no Services, destroys at
    once. The runbook, "Deleted Projects: restore and early purge", has
    the Operator steps.
+7. A Project can sync its Project File from a file in a Forgejo repo (the
+   cloud repo's B33). The reconciler's build loop reads each synced repo
+   every 60 s, or at once after a push webhook an App of the Project
+   signed, with Cloud's Forgejo read token after the owner's read check,
+   and plans and applies a changed file itself, writing the `cloud`
+   database as step 1 does. A Service the file lacks keeps running until
+   its owner confirms the removal. It needs no new credential, RBAC or
+   policy, and it stops with the build loop (`BUILDS_ENABLED=false`).
 
 ## Agent sign-in
 
