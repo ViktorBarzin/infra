@@ -666,6 +666,15 @@ resource "kubernetes_network_policy_v1" "redis_ingress" {
           }
         }
       }
+      # Cloud Key Value (B27): pods of every Cloud Project namespace. Each
+      # logs in as its own ACL user, confined to its key prefix
+      # (acl_sync.py, tenant section). Cloud's Project policy lets only a
+      # Project with a Key Value send here; infra's egress floor passes it.
+      from {
+        namespace_selector {
+          match_labels = { "cloud.viktorbarzin.me/managed" = "true" }
+        }
+      }
       ports {
         port     = "6379"
         protocol = "TCP"

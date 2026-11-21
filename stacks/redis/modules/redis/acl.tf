@@ -36,9 +36,11 @@
 # user's clients; ACL DELUSER does, and only users nobody wants are deleted.
 #
 # Users:
-#   acl-admin  ACL management, CLIENT LIST for the R3 counter, MULTI/EXEC.
-#              It can create any user, so it is admin in effect; only the
-#              sync job holds its password.
+#   acl-admin  ACL management, CLIENT LIST for the R3 counter, MULTI/EXEC,
+#              and for Cloud Key Value tenants (B27) SCAN, MEMORY USAGE and
+#              UNLINK on keys p:* only (measuring each tenant's prefix,
+#              deleting a purged one). It can create any user, so it is
+#              admin in effect; only the sync job holds its password.
 #   exporter   what redis_exporter v1.97.0 runs with our flags (measured
 #              with INFO commandstats on 8.10.3): INFO, CONFIG GET, SLOWLOG
 #              GET/LEN, LATENCY LATEST/HISTOGRAM, COMMAND INFO, CLIENT
@@ -88,6 +90,34 @@ resource "vault_kv_secret_v2" "redis_users" {
     { for name, _ in local.redis_acl_users : name => random_password.redis_acl[name].result },
     { default = random_password.redis_default.result },
   ))
+}
+
+# Cloud Key Value tenants (B27): the bearer token redis-acl-sync sends to
+# Cloud's read-only tenant route (the cloud repo's reconciler, GET
+# /internal/redis-tenants on port 9091). One value in two Vault paths:
+# secret/redis/cloud-tenants for the sync job (its Vault role reads that and
+# secret/redis/users only) and secret/cloud/redis-tenants, Cloud's own copy,
+# which stacks/cloud hands to the reconciler through an ExternalSecret. Not
+# secret/cloud/system: an authentik apply rewrites it. CI writes both paths
+# through the ci policy (stacks/vault/main.tf). A -replace of this password
+# rotates both copies in one apply; until ESO refreshes the reconciler's copy
+# (refresh 2m, and Reloader restarts the reconciler) the route answers 401
+# and the sync keeps the tenants Redis holds.
+resource "random_password" "cloud_tenants_token" {
+  length  = 40
+  special = false
+}
+
+resource "vault_kv_secret_v2" "cloud_tenants" {
+  mount     = "secret"
+  name      = "redis/cloud-tenants"
+  data_json = jsonencode({ token = random_password.cloud_tenants_token.result })
+}
+
+resource "vault_kv_secret_v2" "cloud_tenants_cloud_copy" {
+  mount     = "secret"
+  name      = "cloud/redis-tenants"
+  data_json = jsonencode({ token = random_password.cloud_tenants_token.result })
 }
 
 resource "kubernetes_secret" "redis_acl_seed" {
@@ -193,6 +223,9 @@ resource "kubernetes_cron_job_v1" "redis_acl_sync" {
         ttl_seconds_after_finished = 600
         template {
           metadata {
+            # stacks/cloud admits pods with this label, from this namespace,
+            # to the reconciler's tenant route on 9091.
+            labels = { app = "redis-acl-sync" }
             annotations = {
               "checksum/script" = sha256(kubernetes_config_map.redis_acl_sync.data["acl_sync.py"])
             }
@@ -217,12 +250,29 @@ resource "kubernetes_cron_job_v1" "redis_acl_sync" {
                 value = "secret/data/${vault_kv_secret_v2.redis_users.name}"
               }
               env {
+                name  = "CLOUD_TENANTS_TOKEN_PATH"
+                value = "secret/data/${vault_kv_secret_v2.cloud_tenants.name}"
+              }
+              env {
+                name  = "CLOUD_TENANTS_URL"
+                value = "http://cloud-reconciler.cloud.svc.cluster.local:9091/internal/redis-tenants"
+              }
+              env {
                 name  = "DEFAULT_USER_NAMESPACES"
                 value = join(",", local.redis_default_user_namespaces)
               }
               env {
                 name  = "PUSHGATEWAY_URL"
                 value = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/redis-acl-sync"
+              }
+              # Key Value series (B27), each group replaced whole on push.
+              env {
+                name  = "PUSHGATEWAY_KV_URL"
+                value = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/redis-acl-sync-kv"
+              }
+              env {
+                name  = "PUSHGATEWAY_KV_USAGE_URL"
+                value = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/redis-acl-sync-kv-usage"
               }
               volume_mount {
                 name       = "config"
