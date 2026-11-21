@@ -132,9 +132,9 @@ read |= set(re.findall(r'runtimeEnv\.([A-Z0-9_]+)', src))
 # Read outside env.server.ts: @viktorbarzin/pg (pgSettingsFromEnv) reads the
 # database pair, and the OS reads HOME.
 read |= {"DATABASE_URL", "DATABASE_PASSWORD_FILE", "HOME"}
-# Names set ahead of the code: Buckets (the cloud repo's B26), whose code
-# lands after this stack is applied. Drop each once the code reads it.
-pending = {"GARAGE_ADMIN_URL", "GARAGE_S3_URL", "GARAGE_ADMIN_TOKEN_FILE", "BUCKET_TASK_IMAGE", "BUCKET_TASK_UID", "VAULT_CONSOLE_ROLE"}
+# Names set ahead of the code that reads them: none now (Buckets, the
+# cloud repo's B26, landed). Add a name here only for one release.
+pending = set()
 
 def names(env):
     return [e["name"] for e in env]
