@@ -2312,6 +2312,25 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               labels = { source = "loki-ruler" }
             },
           ]
+        },
+        {
+          # Date Night (Forgejo viktor/datenight): the pod runs the Sunday
+          # history refresh and scout run itself (src/server/jobs.server.ts)
+          # and logs "<job> failed" at ERROR from logger datenight.jobs. A
+          # failed scout leaves Monday's shortlist on last week's ideas.
+          name = "Date Night"
+          rules = [
+            {
+              alert  = "DateNightJobFailed"
+              expr   = "sum(count_over_time({namespace=\"datenight\"} |= `\"logger.name\":\"datenight.jobs\"` |= `\"severity_text\":\"ERROR\"` [1h])) > 0"
+              for    = "0m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "A Date Night background job failed"
+                description = "The scout run or the history refresh logged an error in the last hour. Read it with homelab logs query '{namespace=\"datenight\"} |= \"datenight.jobs\"' --since 2h, fix the cause, then press Scout now or Refresh history on https://datenight.viktorbarzin.me."
+              }
+            },
+          ]
         }
       ]
     })
