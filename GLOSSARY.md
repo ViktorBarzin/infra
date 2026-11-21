@@ -1,6 +1,6 @@
 # Homelab infrastructure
 
-The language we use for the homelab's infrastructure. It covers network security monitoring, deal watches and notifications; add other areas as their terms settle.
+The language we use for the homelab's infrastructure. It covers network security monitoring, sites and backups, deal watches and notifications; add other areas as their terms settle.
 
 ## Language
 
@@ -37,6 +37,36 @@ _Avoid_: decrypted device, MITM target
 **East-west traffic**:
 Traffic between hosts on the same VLAN that never reaches the firewall, such as node-to-node traffic on VLAN 20.
 _Avoid_: internal traffic, lateral traffic
+
+### Sites and backups
+
+**Site**:
+A physical place where homelab hardware runs on its own network: Sofia or London.
+_Avoid_: location, region, datacenter
+
+**Off-site copy**:
+A backup copy kept at a different Site from the data it protects.
+_Avoid_: offsite (for a copy in the same Site), remote backup
+
+**Opportunistic worker**:
+A machine that runs non-critical, retryable work whenever it is online; nothing depends on it being up.
+_Avoid_: spare node, batch box, build server
+
+**Physical node**:
+A Kubernetes node running on its own hardware, as opposed to a VM node on the Sofia Proxmox host.
+_Avoid_: bare-metal node, edge node, server
+
+**State volume**:
+The encrypted volume on a Physical node that holds every secret and all cluster state; it opens only when the node can reach Tang in Sofia.
+_Avoid_: data disk, encrypted partition
+
+**Tether**:
+A Physical node's rule to close its State volume when Tang has been unreachable for ten minutes.
+_Avoid_: kill switch, dead man's switch
+
+**Spill-over**:
+Work that normally runs in the Sofia cluster or on hosted CI and moves to an Opportunistic worker while one is online.
+_Avoid_: offload, overflow, burst
 
 ### Deal watches
 

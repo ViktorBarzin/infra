@@ -23,3 +23,11 @@ In-cluster Woodpecker buildkit builds repeatedly hurt the homelab: registry-push
 - Woodpecker becomes deploy-only; its agents never build. The Kyverno-synced `registry-credentials` stays (Forgejo git + frozen last-known-good images); a cluster-wide Kyverno-synced `ghcr-credentials` joins it.
 - Builders with no live consumer (terminal-lobby, webhook-handler, hmrc-sync, trading-bot, travel-agent, trip-planner) are decommissioned rather than migrated; travel_blog is decommissioned outright (service + CI). Any revival adopts this ADR's pattern.
 - Workflows build single-manifest images (`provenance: false`, linux/amd64 only) so registry retention never faces the orphaned-index-children failure class that broke Forgejo's cleanup.
+
+## Amendment 2026-11-21: builds may run on an Opportunistic worker's host runner
+
+October 2026 used all 2,000 free minutes for private repos (tv 1,775). The London Dell becomes an Opportunistic worker (ADR-0045), and a self-hosted GitHub Actions runner runs on its host as a systemd service, for a list of repos that burn minutes (tv and tripit first).
+
+- This does not reopen in-cluster builds. The runner runs on a tainted Physical node that takes only opt-in work, with the kubelet reserving CPU and RAM. The original reasons (Forgejo OOM, sdc IO, registry PVC) do not apply: images still push to ghcr.io, and nothing writes to Sofia storage.
+- Workflows pick the London runner when it is online and fall back to GitHub-hosted runners when it is not. Builds never wait for the Dell.
+- The runner's token and work directories live on the node's State volume, so they decrypt only when the node reaches Tang (ADR-0045).
