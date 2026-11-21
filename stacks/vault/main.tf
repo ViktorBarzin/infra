@@ -840,6 +840,20 @@ resource "vault_policy" "ci" {
     path "secret/metadata/cloud/garage" {
       capabilities = ["create", "read", "update", "delete", "list"]
     }
+    # stacks/redis writes the token of Cloud's tenant route (B27,
+    # modules/redis/acl.tf) here, and Cloud's own copy of it.
+    path "secret/data/redis/cloud-tenants" {
+      capabilities = ["create", "read", "update", "delete"]
+    }
+    path "secret/metadata/redis/cloud-tenants" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    path "secret/data/cloud/redis-tenants" {
+      capabilities = ["create", "read", "update", "delete"]
+    }
+    path "secret/metadata/cloud/redis-tenants" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
     # stacks/devvm: the bootstrap handoff (scripts/devvm-drill-handoff) mints
     # one wrapped token per new devvm through this role, nothing wider.
     path "auth/token/create/devvm-bootstrap" {
@@ -1205,12 +1219,17 @@ resource "vault_kubernetes_auth_backend_role" "eso" {
 # --- Redis ACL sync Policy & Role (B40, stacks/redis/modules/redis/acl.tf) ---
 #
 # The redis-acl-sync CronJob reads the users' passwords, hashes them and
-# keeps the shared Redis's ACL users in step. Read on that one secret only.
+# keeps the shared Redis's ACL users in step, and reads the token it sends to
+# Cloud's tenant route (B27). Read on those two secrets only.
 
 resource "vault_policy" "redis_acl_sync" {
   name   = "redis-acl-sync"
   policy = <<-EOT
     path "secret/data/redis/users" {
+      capabilities = ["read"]
+    }
+    # B27: the bearer token for Cloud's tenant route.
+    path "secret/data/redis/cloud-tenants" {
       capabilities = ["read"]
     }
   EOT
