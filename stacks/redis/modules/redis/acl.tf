@@ -38,9 +38,11 @@
 # Users:
 #   acl-admin  ACL management, CLIENT LIST for the R3 counter, MULTI/EXEC,
 #              and for Cloud Key Value tenants (B27) SCAN, MEMORY USAGE and
-#              UNLINK on keys p:* only (measuring each tenant's prefix,
-#              deleting a purged one). It can create any user, so it is
-#              admin in effect; only the sync job holds its password.
+#              UNLINK on keys p:* (measuring each tenant's prefix, deleting
+#              a purged one), and GET and SET on redis-acl-sync:* (the
+#              measurement's cursor and running totals). It can create any
+#              user, so it is admin in effect; only the sync job holds its
+#              password.
 #   exporter   what redis_exporter v1.97.0 runs with our flags (measured
 #              with INFO commandstats on 8.10.3): INFO, CONFIG GET, SLOWLOG
 #              GET/LEN, LATENCY LATEST/HISTOGRAM, COMMAND INFO, CLIENT

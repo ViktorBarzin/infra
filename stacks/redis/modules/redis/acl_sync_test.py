@@ -27,6 +27,7 @@ from acl_sync import ADMIN_USER, DEFAULT_USER_LINE, Redis, SyncError
 HERE = Path(__file__).parent
 USERS = json.loads((HERE / "acl_users.json").read_text())
 IMAGE = "docker.io/library/redis:8.10.3-alpine"
+MODULES = ("redisbloom", "redisearch", "redistimeseries", "rejson")
 
 
 def fake_passwords(users: dict[str, str] = USERS, salt: str = "a") -> dict[str, str]:
@@ -260,8 +261,11 @@ class RedisBox:
     """One Redis container shaped like redis-v2: aclfile on the data volume,
     the init script run before each start, root-less for a clean tmp_path."""
 
-    def __init__(self, tmp: Path) -> None:
+    def __init__(self, tmp: Path, modules: bool = False) -> None:
         self.tmp = tmp
+        # redis-v2 runs redis-server directly, so no module is loaded; the
+        # image's entrypoint would load these four.
+        self.modules = modules
         self.data = tmp / "data"
         self.data.mkdir()
         (tmp / "seed").mkdir()
@@ -289,6 +293,7 @@ class RedisBox:
             "run", "-d", "--name", self.name, "--user", self.user(), "--entrypoint", "redis-server",
             "-v", f"{self.data}:/data", "-v", f"{self.tmp / 'redis.conf'}:/etc/redis/redis.conf:ro",
             "-p", "127.0.0.1::6379", IMAGE, "/etc/redis/redis.conf",
+            *[a for m in (MODULES if self.modules else []) for a in ("--loadmodule", f"/usr/local/lib/redis/modules/{m}.so")],
         )
         mapping = self.docker("port", self.name, "6379/tcp").stdout.split()[0]
         self.port = int(mapping.rsplit(":", 1)[1])
@@ -677,8 +682,13 @@ def test_tenant_lines_follow_the_template_and_redis_normal_form():
         "-@all +@read +@write +@keyspace +@hash +@list +@set +@sortedset +@stream +@string +@pubsub "
         "+@transaction +@scripting +@connection -@dangerous -select -scan -randomkey -function -script|flush "
         "-move -copy -script|kill -dbsize -pubsub|channels -pubsub|shardchannels -pubsub|numsub "
-        "-pubsub|shardnumsub -pubsub|numpat"
+        "-pubsub|shardnumsub -pubsub|numpat -script|debug -client|tracking -himport|prepare -himport|discard "
+        "-himport|discardall -lolwut"
     )
+    with_modules = acl_sync.tenant_user(tenant, full=False, extra=acl_sync.module_denials({"search", "timeseries", "json"}))
+    assert with_modules.line == normal.line + " -@search -ts.mget -ts.mrange -ts.mrevrange -ts.queryindex -ts.querylabels"
+    # A line from either configuration still reads as a tenant.
+    assert acl_sync.parse_tenant_line(with_modules.line) is not None
     assert normal.setuser_args[:7] == ["reset", "on", f"#{digest}", "resetkeys", "~p:shop:cache:*", "resetchannels", "&p:shop:cache:*"]
     full = acl_sync.tenant_user(tenant, full=True)
     assert "+@write" not in full.line and "+del" in full.line and "+unlink" in full.line
@@ -805,6 +815,26 @@ def tenant_box(box):
     return box, pw
 
 
+@pytest.fixture(params=[False, True], ids=["as-deployed", "with-modules"])
+def any_tenant_box(request, tmp_path):
+    b = RedisBox(tmp_path, modules=request.param)
+    pw = fake_passwords()
+    b.init(pw[ADMIN_USER])
+    b.start()
+    yield b, pw
+    b.stop()
+
+
+@pytest.fixture
+def modules_box(tmp_path):
+    b = RedisBox(tmp_path, modules=True)
+    pw = fake_passwords()
+    b.init(pw[ADMIN_USER])
+    b.start()
+    yield b, pw
+    b.stop()
+
+
 @needs_docker
 def test_tenant_rules_confine_a_tenant_to_its_prefix(tenant_box):
     box, pw = tenant_box
@@ -835,7 +865,10 @@ def test_tenant_rules_confine_a_tenant_to_its_prefix(tenant_box):
                         ["SORT", "p:shop:cache:k", "STORE", "p:other:cache:s"],
                         # Other tenants' traffic and the size of db 0.
                         ["SCRIPT", "KILL"], ["DBSIZE"], ["PUBSUB", "CHANNELS"], ["PUBSUB", "SHARDCHANNELS"],
-                        ["PUBSUB", "NUMSUB", "p:other:cache:chan"], ["PUBSUB", "SHARDNUMSUB", "x"], ["PUBSUB", "NUMPAT"]):
+                        ["PUBSUB", "NUMSUB", "p:other:cache:chan"], ["PUBSUB", "SHARDNUMSUB", "x"], ["PUBSUB", "NUMPAT"],
+                        # Second review: a server-wide block and other users' key names.
+                        ["SCRIPT", "DEBUG", "SYNC"], ["CLIENT", "TRACKING", "ON", "BCAST"], ["LOLWUT"],
+                        ["HIMPORT", "PREPARE", "fs", "f1"]):
             assert "NOPERM" in refused(c, *command), command
         for command in (["LMOVE", "p:shop:cache:k", "p:other:cache:l", "LEFT", "LEFT"],
                         ["SUNIONSTORE", "p:other:cache:s", "p:shop:cache:k"],
@@ -976,22 +1009,83 @@ def test_foreign_user_is_counted_and_removed(tenant_box):
     assert tenant_sync(box, pw, lambda: answer()).foreign_users == []
 
 
+def true_bytes(box: RedisBox, pw: dict[str, str], prefix: str) -> int:
+    """What every key of a prefix holds now, by MEMORY USAGE SAMPLES 0."""
+    c = box.connect()
+    try:
+        c.call("AUTH", "verify", pw["verify"])
+        total, cursor = 0, "0"
+        while True:
+            reply = cast(list, c.call("SCAN", cursor, "MATCH", f"{prefix}*", "COUNT", "1000"))
+            cursor = str(reply[0])
+            for key in reply[1]:
+                total += int(cast(int, c.call("MEMORY", "USAGE", str(key), "SAMPLES", "0")))
+            if cursor == "0":
+                return total
+    finally:
+        c.close()
+
+
 @needs_docker
-def test_measurement_cost_stays_bounded_per_tenant(tenant_box, monkeypatch):
+def test_measurement_rotates_across_runs_and_stays_conservative(tenant_box, monkeypatch):
     box, pw = tenant_box
-    monkeypatch.setattr(acl_sync, "MEMORY_SAMPLE_PER_TENANT", 50)
+    monkeypatch.setattr(acl_sync, "MEMORY_USAGE_PER_RUN", 25)
+    monkeypatch.setattr(acl_sync, "SCAN_COUNT", 5)
     a = tenant_entry(max_bytes=1 << 30)
     assert tenant_sync(box, pw, lambda: answer(a)).ok
     c = tenant_conn(box, a)
-    for i in range(0, 400, 100):
-        c.call("MSET", *[x for j in range(i, i + 100) for x in (f"p:shop:cache:{j}", "v" * 100)])
+    c.call("MSET", *[x for j in range(80) for x in (f"p:shop:cache:{j}", "v" * 50)])
+    c.call("SET", "p:shop:cache:big", "x" * 65536)  # one big value among small ones
     c.close()
-    result = tenant_sync(box, pw, lambda: answer(a), measure=True)
-    assert result.ok, result.error
-    assert result.kv_keys[("shop", "cache")] == 400.0
-    assert result.memory_usage_calls == 50
-    # Extrapolated from 50 equal keys: within 10% of 8 x the sample.
-    assert 300 * 100 < result.kv_bytes[("shop", "cache")] < 400 * 400
+    exact = true_bytes(box, pw, "p:shop:cache:")
+    seen: list[float] = []
+    for _ in range(12):
+        r = tenant_sync(box, pw, lambda: answer(a), measure=True)
+        assert r.ok, r.error
+        assert r.kv_keys[("shop", "cache")] == 81.0
+        # Per run: the cap, plus at most the rest of one SCAN page.
+        assert r.memory_usage_calls <= 25 + 20
+        if ("shop", "cache") in r.kv_bytes:
+            seen.append(r.kv_bytes[("shop", "cache")])
+            # Never below what the keys hold: unsampled keys count at the
+            # largest size seen.
+            assert r.kv_bytes[("shop", "cache")] >= exact
+        if r.measure_cycle_complete:
+            assert r.kv_bytes[("shop", "cache")] == exact
+            break
+    else:
+        pytest.fail(f"no measurement cycle completed in 12 runs: {seen}")
+    # The cursor lives in Redis between runs, under acl-admin's own key.
+    assert box.as_user("verify", pw["verify"], "EXISTS", acl_sync.STATE_KEY) == 1
+
+
+@needs_docker
+def test_a_lost_or_broken_measurement_state_starts_a_new_cycle(tenant_box):
+    box, pw = tenant_box
+    a = tenant_entry()
+    assert tenant_sync(box, pw, lambda: answer(a)).ok
+    c = tenant_conn(box, a)
+    c.call("SET", "p:shop:cache:k", "v")
+    c.close()
+    box.as_user("verify", pw["verify"], "SET", acl_sync.STATE_KEY, "{not json")
+    r = tenant_sync(box, pw, lambda: answer(a), measure=True)
+    assert r.ok and r.measure_error == ""
+    assert r.measure_cycle_complete
+    assert r.kv_bytes[("shop", "cache")] == true_bytes(box, pw, "p:shop:cache:")
+
+
+@needs_docker
+def test_a_tenant_with_more_keys_than_one_cycle_measures_is_full(tenant_box, monkeypatch):
+    box, pw = tenant_box
+    monkeypatch.setattr(acl_sync, "MAX_KEYS_PER_TENANT", 20)
+    a = tenant_entry(max_bytes=1 << 30)
+    assert tenant_sync(box, pw, lambda: answer(a)).ok
+    c = tenant_conn(box, a)
+    c.call("MSET", *[x for j in range(21) for x in (f"p:shop:cache:{j}", "v")])
+    c.close()
+    r = tenant_sync(box, pw, lambda: answer(a), measure=True)
+    assert r.ok, r.error
+    assert r.kv_full == {("shop", "cache"): 1.0}
 
 
 @needs_docker
@@ -1033,6 +1127,7 @@ def test_measurement_runs_after_the_acl_and_its_fault_fails_nothing(tenant_box, 
 def test_memory_usage_calls_are_capped_per_run(tenant_box, monkeypatch):
     box, pw = tenant_box
     monkeypatch.setattr(acl_sync, "MEMORY_USAGE_PER_RUN", 30)
+    monkeypatch.setattr(acl_sync, "SCAN_COUNT", 5)
     a, b = tenant_entry("shop", "cache"), tenant_entry("b", "kv")
     assert tenant_sync(box, pw, lambda: answer(a, b)).ok
     for entry, prefix in ((a, "p:shop:cache:"), (b, "p:b:kv:")):
@@ -1041,5 +1136,162 @@ def test_memory_usage_calls_are_capped_per_run(tenant_box, monkeypatch):
         c.close()
     result = tenant_sync(box, pw, lambda: answer(a, b), measure=True)
     assert result.ok, result.error
-    assert result.memory_usage_calls == 30
+    assert 30 <= result.memory_usage_calls <= 30 + 20
+    assert not result.measure_cycle_complete
     assert result.kv_keys == {("shop", "cache"): 40.0, ("b", "kv"): 40.0}
+
+
+# Keyless commands a tenant may run, reviewed one by one (rev-b27b). A
+# command with no key spec escapes the key pattern, so each needs a reason.
+KEYLESS_ALLOWED = {
+    # Connection and protocol: act on the caller's own connection only.
+    "auth": "logs the caller in",
+    "hello": "protocol version and AUTH for the caller",
+    "ping": "liveness",
+    "echo": "returns its argument",
+    "quit": "closes the caller's connection",
+    "reset": "resets the caller's connection state",
+    "asking": "cluster flag on the caller's connection; cluster is off",
+    "readonly": "cluster flag on the caller's connection; cluster is off",
+    "readwrite": "cluster flag on the caller's connection; cluster is off",
+    "client|getname": "the caller's own name",
+    "client|setname": "ioredis and BullMQ name their connections",
+    "client|setinfo": "client library name and version, the caller's own",
+    "client|id": "the caller's own id",
+    "client|info": "the caller's own connection only (CLIENT LIST is refused)",
+    "client|reply": "the caller's own replies",
+    "client|no-touch": "the caller's reads do not touch LRU; affects only its own keys",
+    "client|caching": "a no-op without CLIENT TRACKING, which is refused",
+    "client|getredir": "the caller's own tracking redirect; tracking is refused",
+    "client|trackinginfo": "the caller's own tracking state; tracking is refused",
+    "client|help": "help text",
+    # Transactions: queue and run the caller's own commands, each checked.
+    "multi": "starts the caller's transaction",
+    "exec": "runs queued commands, each checked against the rules when queued",
+    "discard": "drops the caller's queue",
+    "unwatch": "forgets the caller's watched keys",
+    # Blocking on replication: blocks only the caller's own connection.
+    "wait": "waits for replicas to ack the caller's writes",
+    "waitaof": "waits for the AOF to hold the caller's writes",
+    # Command metadata: the server's command table, no data.
+    "command|count": "command table metadata",
+    "command|docs": "command table metadata",
+    "command|getkeys": "parses the arguments it is given, reads no key",
+    "command|getkeysandflags": "parses the arguments it is given, reads no key",
+    "command|help": "help text",
+    "command|info": "command table metadata",
+    "command|list": "command table metadata",
+    "object|help": "help text",
+    "xgroup|help": "help text",
+    "xinfo|help": "help text",
+    "script|help": "help text",
+    # Scripts: ioredis loads its scripts; RedisScriptCacheHigh watches the memory.
+    "script|load": "ioredis and BullMQ load their Lua scripts",
+    "script|exists": "whether a script sha is loaded; shas carry no data",
+    # Pub/sub: Redis checks the channel names against &<prefix>*.
+    "publish": "channel checked against the tenant's channel pattern",
+    "subscribe": "channel checked against the tenant's channel pattern",
+    "unsubscribe": "leaves the caller's own subscriptions",
+    "punsubscribe": "leaves the caller's own subscriptions",
+}
+# The full rule set may run only these of them.
+KEYLESS_ALLOWED_FULL = set(KEYLESS_ALLOWED) - {"script|load", "script|exists", "script|help", "publish", "subscribe",
+                                                "unsubscribe", "punsubscribe", "object|help", "xgroup|help", "xinfo|help"}
+
+
+def keyless_commands(conn: Redis) -> list[tuple[str, int]]:
+    """Every command and subcommand without a key spec, with its arity."""
+    out: list[tuple[str, int]] = []
+
+    def walk(entries: object) -> None:
+        for e in entries if isinstance(entries, list) else []:
+            if not isinstance(e, list):
+                continue
+            subs = e[9] if len(e) > 9 else []
+            if subs:
+                walk(subs)
+                continue
+            keyspecs = e[8] if len(e) > 8 else []
+            if not keyspecs:
+                out.append((str(e[0]), int(cast(int, e[1]))))
+
+    walk(conn.call("COMMAND"))
+    return out
+
+
+def keyless_allowed_for(conn: Redis, user: str, channel: str) -> set[str]:
+    allowed: set[str] = set()
+    for name, arity in keyless_commands(conn):
+        parts = name.split("|")
+        # Pad to the arity with a name inside the tenant's channel pattern,
+        # so channel-checked commands show what they allow.
+        args = parts + [channel] * max(abs(arity) - len(parts), 0)
+        try:
+            reply = conn.call("ACL", "DRYRUN", user, *args)
+        except acl_sync.RedisError as exc:
+            assert "wrong number of arguments" in str(exc) or "no permissions" in str(exc), (name, str(exc))
+            continue
+        if reply == "OK":
+            allowed.add(name)
+    return allowed
+
+
+@needs_docker
+def test_every_keyless_command_a_tenant_may_run_is_reviewed(any_tenant_box):
+    box, pw = any_tenant_box
+    normal, full = tenant_entry("shop", "cache"), tenant_entry("b", "kv", max_bytes=1)
+    assert tenant_sync(box, pw, lambda: answer(normal, full)).ok
+    c = tenant_conn(box, full, "t" * 32)
+    c.call("SET", "p:b:kv:k", "x" * 100)
+    c.close()
+    assert tenant_sync(box, pw, lambda: answer(normal, full), measure=True).kv_full[("b", "kv")] == 1.0
+    admin = box.connect()
+    try:
+        admin.call("AUTH", "verify", pw["verify"])
+        assert len(keyless_commands(admin)) > 100  # the walk sees the whole table, subcommands included
+        got = keyless_allowed_for(admin, str(normal["user"]), "p:shop:cache:x")
+        assert got - set(KEYLESS_ALLOWED) == set(), "keyless commands not reviewed: " + ", ".join(sorted(got - set(KEYLESS_ALLOWED)))
+        got_full = keyless_allowed_for(admin, str(full["user"]), "p:b:kv:x")
+        assert got_full - KEYLESS_ALLOWED_FULL == set(), "keyless commands not reviewed (full): " + ", ".join(sorted(got_full - KEYLESS_ALLOWED_FULL))
+        # The allowlist stays honest: nothing on it is refused by accident.
+        assert {"ping", "script|load", "publish", "client|setname"} <= got
+    finally:
+        admin.close()
+
+
+@needs_docker
+def test_with_modules_loaded_the_module_rules_follow(modules_box):
+    box, pw = modules_box
+    a = tenant_entry()
+    assert tenant_sync(box, pw, lambda: answer(a)).ok
+    tenant = acl_sync.parse_tenant_answer(answer(a)).tenants[0]
+    extra = acl_sync.module_denials({"search", "timeseries"})
+    assert acl_sync.tenant_user(tenant, False, extra).line in box.acl_list()
+    c = tenant_conn(box, a)
+    try:
+        for command in (["FT._DROPIFX", "idx"], ["FT._LIST"], ["FT.SEARCH", "idx", "*"], ["TS.QUERYINDEX", "a=b"],
+                        ["TS.MGET", "FILTER", "a=b"], ["TS.MRANGE", "-", "+", "FILTER", "a=b"],
+                        ["TS.MREVRANGE", "-", "+", "FILTER", "a=b"], ["TS.QUERYLABELS", "FILTER", "a=b"]):
+            assert "NOPERM" in refused(c, *command), command
+        # Module commands with key specs stay confined to the prefix.
+        assert c.call("JSON.SET", "p:shop:cache:j", "$", "1") == "OK"
+        assert "NOPERM" in refused(c, "JSON.GET", "p:other:cache:j")
+    finally:
+        c.close()
+
+
+@needs_docker
+def test_a_tenant_cannot_drop_another_users_search_index(modules_box):
+    box, pw = modules_box
+    a = tenant_entry()
+    assert tenant_sync(box, pw, lambda: answer(a)).ok
+    box.as_user("verify", pw["verify"], "HSET", "doc:1", "t", "hello")
+    box.as_user("verify", pw["verify"], "FT.CREATE", "idx", "ON", "HASH", "PREFIX", "1", "doc:", "SCHEMA", "t", "TEXT")
+    c = tenant_conn(box, a)
+    try:
+        assert "NOPERM" in refused(c, "FT._DROPIFX", "idx")
+        assert "NOPERM" in refused(c, "FT.DROPINDEX", "idx", "DD")
+    finally:
+        c.close()
+    assert box.as_user("verify", pw["verify"], "EXISTS", "doc:1") == 1
+    assert "idx" in cast(list, box.as_user("verify", pw["verify"], "FT._LIST"))
