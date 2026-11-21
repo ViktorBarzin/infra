@@ -137,3 +137,19 @@ tests:
         alertname: CloudKeyValueTenantsFetchFailing
         exp_alerts:
           - exp_labels: {severity: warning, job: redis-acl-sync}
+
+  # Lua scripts at 20 MiB for 20 minutes: fires after 15; 1 MiB stays quiet.
+  - interval: 1m
+    input_series:
+      - series: 'redis_memory_used_scripts_bytes{namespace="redis", pod="redis-v2-0"}'
+        values: '20971520x30'
+      - series: 'redis_memory_used_scripts_bytes{namespace="redis", pod="redis-v2-1"}'
+        values: '1048576x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: RedisScriptCacheHigh
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: RedisScriptCacheHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, namespace: redis, pod: redis-v2-0}
