@@ -62,6 +62,7 @@ module "app" {
   extra_env = [
     { name = "SCHEDULER", value = "on" },
     { name = "SCOUT_URL", value = "http://claude-agent-restricted.claude-agent.svc.cluster.local:8080/v1/datenight/scout" },
+    { name = "LINK_URL", value = "http://claude-agent-restricted.claude-agent.svc.cluster.local:8080/v1/datenight/link" },
     { name = "CALDAV_BASE_URL", value = "https://nextcloud.viktorbarzin.me/remote.php/dav" },
     { name = "CALDAV_USER", value = "admin" },
     { name = "CALDAV_CALENDAR", value = "personal" },
