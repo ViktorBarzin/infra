@@ -1,0 +1,28 @@
+# Garage for Cloud Buckets (stacks/garage/main.tf, docs/architecture/garage.md).
+# One node, so one copy of each object: the backup CronJob is the second copy.
+# The secrets are not here: rpc_secret and admin_token come from the
+# GARAGE_RPC_SECRET and GARAGE_ADMIN_TOKEN env vars (ExternalSecret
+# garage-secrets). Garage refuses secret files that a group
+# can read, and a Kubernetes secret volume with fsGroup is group-readable.
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "lmdb"
+replication_factor = 1
+# A daily copy of the metadata database inside metadata_dir/snapshots, to
+# recover from a corrupted LMDB file without the backup.
+metadata_auto_snapshot_interval = "24h"
+
+# RPC is for other Garage nodes. There are none; the CLI in the pod
+# (`kubectl exec deploy/garage -- /garage status`) uses it over localhost.
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+
+[admin]
+api_bind_addr = "[::]:3903"
+# /metrics is open: the NetworkPolicy lets only cloud, monitoring and this
+# namespace reach the admin port, and the metrics hold no object data.
+metrics_require_token = false

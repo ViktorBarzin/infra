@@ -825,6 +825,21 @@ resource "vault_policy" "ci" {
     path "secret/metadata/redis/users" {
       capabilities = ["create", "read", "update", "delete", "list"]
     }
+    # stacks/garage writes Garage's own credentials (secret/garage) and the
+    # admin token copy Cloud's reconciler reads (secret/cloud/garage), from
+    # random values (cloud B25). Same shape as redis/users above.
+    path "secret/data/garage" {
+      capabilities = ["create", "read", "update", "delete"]
+    }
+    path "secret/metadata/garage" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    path "secret/data/cloud/garage" {
+      capabilities = ["create", "read", "update", "delete"]
+    }
+    path "secret/metadata/cloud/garage" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
     # stacks/devvm: the bootstrap handoff (scripts/devvm-drill-handoff) mints
     # one wrapped token per new devvm through this role, nothing wider.
     path "auth/token/create/devvm-bootstrap" {
