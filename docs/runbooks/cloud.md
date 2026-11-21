@@ -996,6 +996,98 @@ Operator's way into the existing database.
 
 The size loop measures the database again within 5 minutes.
 
+## Buckets
+
+A Bucket Service is a bucket in Garage (namespace `garage`, B25; its own
+runbook is [garage.md](garage.md)). Cloud's reconciler makes the bucket
+(alias `p-<project>-<service>-<10 hex>`), a key `cloud:<project>/<service>`
+that may read and write that bucket only, and a `maxSize` quota from the
+Size, and stores the key at
+`secret/cloud/p-<project>/_cloud/bucket-<service>`. The design and every
+name are in [docs/architecture/cloud.md](../architecture/cloud.md),
+"Buckets".
+
+### Apply order
+
+1. `stacks/garage` (B25): Garage runs and `secret/cloud/garage` holds
+   `admin_token`.
+2. `stacks/vault`: policy and Kubernetes auth role `cloud-console-buckets`.
+3. `stacks/cloud`: the egress floor's Pass to Garage, the reconciler's
+   Garage settings and token file, the console's Vault settings, the
+   backup volume, the restore policies and NetworkPolicy.
+4. The cloud release with Buckets.
+
+Step 3 before step 1 is safe: the token file is optional, so the
+reconciler starts without it, and ExternalSecret `cloud-reconciler-garage`
+syncs once the Vault path exists. A cloud release with Buckets before
+step 3 has no Garage address, token or restore policy, so leave it last.
+
+### List a Project's buckets
+
+From the Garage pod, with Garage's own CLI (no token needed there):
+
+```sh
+kubectl --context kubernetes-admin@kubernetes -n garage exec deploy/garage -- /garage bucket list | grep ' p-<project>-'
+kubectl --context kubernetes-admin@kubernetes -n garage exec deploy/garage -- /garage bucket info p-<project>-<service>-<10 hex>
+kubectl --context kubernetes-admin@kubernetes -n garage exec deploy/garage -- /garage key info 'cloud:<project>/<service>'
+```
+
+`bucket info` prints the size, the object count, the quota and the keys
+that may use the bucket: only `cloud:<project>/<service>` and B25's
+`cloud-backup`, which reads every bucket for the nightly backup. Through
+the admin API instead, from a pod the Garage NetworkPolicy admits (the
+reconciler's): `GET /v2/ListBuckets` and
+`GET /v2/GetBucketInfo?globalAlias=<alias>` with
+`Authorization: Bearer <admin token>` (`secret/cloud/garage`, never printed).
+
+### A restore
+
+`cloud bucket restore <p> <bucket> <key> --from <YYYY-MM-DD>` runs a Job in
+namespace `cloud`. It reads the key from the nightly backup at
+`/srv/nfs/cloud-buckets` (the first dated directory after the date that
+holds it, else `current/`) and writes it back with the Project's own key.
+
+```sh
+kubectl --context kubernetes-admin@kubernetes -n cloud get jobs -l cloud.viktorbarzin.me/component=bucket-restore
+kubectl --context kubernetes-admin@kubernetes -n cloud logs job/bucket-restore-<9 hex>
+```
+
+The Job and its key Secret `bucket-restore-<9 hex>` go an hour after it
+ends. The directory and its files belong to uid 10001 and the directory is
+mode 0750, so a restore that cannot read `/backup` means the owner or mode
+on the Proxmox host was changed by hand (`stacks/garage` comments give the
+command that makes it).
+
+### A restore Job is refused
+
+The reconciler reports `job_refused`. Find the policy:
+
+```sh
+kubectl --context kubernetes-admin@kubernetes -n cloud get events --field-selector reason=FailedCreate
+```
+
+- `cloud-bucket-task` or `cloud-bucket-task-secret`: the Job or Secret
+  differs from the agreed shape. The usual cause is the image pin: the
+  reconciler's `BUCKET_TASK_IMAGE` must equal `local.cloud_bucket_task.image`
+  in `stacks/cloud/access_rules.tf`. Both come from that local, so a
+  mismatch means the reconciler pod predates the last apply of
+  `stacks/cloud`; restart it (it finishes its running job first). A key
+  argument with a `.` or `..` segment, a leading `/` or a control character
+  is refused on purpose.
+- `cloud-bucket-backups-mount` on the pod: the Job controller's pod lacks
+  the restore labels or owner, or mounts the volume writable.
+- `cloud-reconciler-scope`: the Job is not in `cloud` or its name is not
+  `bucket-restore-<9 hex>`.
+
+Rollback of restores: in `stacks/cloud/access_rules.tf`, remove the
+`not-a-bucket-task` match condition from `cloud-pg-task` and
+`cloud-pg-task-secret` and apply. Those policies then check every Job and
+Secret of the reconciler in `cloud`, and refuse the restore ones, so every
+restore fails as `job_refused` and Buckets keep working. Do not remove only
+`cloud-bucket-task`: the Postgres policies skip `bucket-restore-*` names, so
+the restore Jobs would go unchecked. Removing the floor's Pass to Garage
+cuts every App off its Bucket.
+
 ## State encryption key
 
 Cloud backlog B09. Every Project's OpenTofu state and saved plan is

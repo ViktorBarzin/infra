@@ -13,8 +13,9 @@ locals {
   # kubelet refreshes the files when ESO writes a rotated value.
   cloud_reconciler_volumes = {
     for mount, secrets in local.cloud_reconciler_mounts : secrets[0] => {
-      mount = mount
-      items = [for f in local.cloud_reconciler_files : { key = f.secret_key, path = f.key } if f.secret == secrets[0]]
+      mount    = mount
+      items    = [for f in local.cloud_reconciler_files : { key = f.secret_key, path = f.key } if f.secret == secrets[0]]
+      optional = alltrue([for f in local.cloud_reconciler_files : try(f.optional, false) if f.secret == secrets[0]])
     }
   }
   # metrics port: the image's METRICS_PORT default.
@@ -159,6 +160,47 @@ resource "kubernetes_manifest" "reconciler_system" {
   depends_on = [module.console]
 }
 
+# B26: GARAGE_ADMIN_TOKEN, Garage's admin token, which only the reconciler
+# holds (buckets, keys, quotas, usage). Its own Vault path,
+# secret/cloud/garage, written by stacks/garage: never secret/cloud/system,
+# which stacks/authentik rewrites keeping only its carry list. Until that
+# path exists this ExternalSecret does not sync, the Secret is missing and
+# the reconciler starts without the file (local.cloud_reconciler_volumes).
+resource "kubernetes_manifest" "reconciler_garage" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "${local.cloud_reconciler}-garage"
+      namespace = module.console.namespace
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "${local.cloud_reconciler}-garage"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+        }
+      }
+      data = [
+        { secretKey = "admin-token", remoteRef = { key = "cloud/garage", property = "admin_token" } },
+      ]
+    }
+  }
+  depends_on = [module.console]
+}
+
 resource "kubernetes_deployment" "reconciler" {
   # CI owns rollouts (CI_SETS_IMAGE); the first apply may come before the
   # first image.
@@ -276,6 +318,9 @@ resource "kubernetes_deployment" "reconciler" {
             secret {
               secret_name  = volume.key
               default_mode = "0440"
+              # A Secret whose every file is optional (the Garage token,
+              # B26) may be missing: the pod starts without it.
+              optional = volume.value.optional
               dynamic "items" {
                 for_each = volume.value.items
                 content {
@@ -314,6 +359,7 @@ resource "kubernetes_deployment" "reconciler" {
     kubernetes_manifest.reconciler_postgres,
     kubernetes_manifest.reconciler_registry,
     kubernetes_manifest.reconciler_system,
+    kubernetes_manifest.reconciler_garage,
     kubernetes_cluster_role_binding.cloud_reconciler,
   ]
 }

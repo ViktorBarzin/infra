@@ -48,6 +48,7 @@ flowchart LR
 | Notifications (cloud B04) | The reconciler emails as `cloud@viktorbarzin.me` (an account in Vault `secret/platform` `mailserver_accounts`; password also in `secret/cloud/system` `smtp_password`, carried by `stacks/authentik`, reaching the reconciler as `SMTP_PASSWORD_FILE`) through `mail.viktorbarzin.me:587`, and POSTs signed webhooks on 443. Webhook hosts are resolved through DNS over HTTPS at 1.1.1.1, since the cluster's DNS answers internal addresses for `*.viktorbarzin.me`, and private answers are refused. The `cloud` namespace has no egress policy, so no Calico rule is needed; the paths a future lockdown must keep are in cloud `docs/build/b04-infra.md` | `stacks/cloud/deploy_rules.tf`, `stacks/authentik/cloud-apps.tf` |
 | Postgres tasks (cloud B28b, B28c) | Jobs `pg-<kind>-<9 hex>` the reconciler runs in namespace `cloud` for `cloud pg backups`, `backup`, `export` and `restore`, each from the pinned `postgres:18.7-trixie` image as uid 999 (renovate.json5 holds its major at the shared server's, 18), with a credentials Secret `pg-task-<9 hex>` the Job owns. PersistentVolumes and claims `cloud-pg-backups-nightly` (`/srv/nfs/postgresql-backup/cloud-per-db`, `ReadOnlyMany` and `ro`) and `cloud-pg-backups-manual` (`/srv/nfs/postgresql-backup/cloud-manual`, writable only by a backup Job). Role `cloud-reconciler-tasks` (Jobs, pods, logs, Secret create); admission policies `cloud-pg-task` and `cloud-pg-task-secret` pin the shapes and `cloud-reconciler-scope` admits nothing else of the reconciler in `cloud`; NetworkPolicy `cloud-pg-tasks` lets only the console's pods reach a task pod, on 8080, where an export serves its dump once, and lets task pods reach only DNS and the dbaas Postgres pods on 5432. `postgresql-backup` in `stacks/dbaas` writes the `p_*` nightly dumps there and deletes both directories' dumps after 14 days | `stacks/cloud/pg_backups.tf`, `access_rules.tf`; `stacks/dbaas` |
 | Bucket store (cloud B25) | Garage in namespace `garage`, cluster-only: S3 `http://garage.garage.svc.cluster.local:3900` (region `garage`), admin API `:3903`. The admin token for the reconciler is in Vault `secret/cloud/garage` (`admin_token`, `admin_url`, `s3_url`), written by `stacks/garage`. Nightly backup of every bucket to `/srv/nfs/cloud-buckets` (`current/` plus 7 dated directories) for `cloud bucket restore`. See `docs/architecture/garage.md` | `stacks/garage` |
+| Buckets (cloud B26) | Garage in namespace `garage` (`stacks/garage`, B25) holds one bucket per Bucket Service, alias `p-<project>-<service>-<10 hex>`, with its own key `cloud:<project>/<service>` and a `maxSize` quota from the Size. The reconciler makes them through Garage's admin API (`GARAGE_ADMIN_URL`, port 3903) with the admin token, and writes the key to `secret/cloud/<namespace>/_cloud/bucket-<service>`; Apps get it as `S3_*` env from Secret `s3-<service>`. The console runs `cloud bucket ls`, `cp` and `rm` with that key, read from Vault as role `cloud-console-buckets`. Restores: Jobs `bucket-restore-<9 hex>` in `cloud`, PersistentVolume and claim `cloud-bucket-backups` (`/srv/nfs/cloud-buckets`, read-only), policies `cloud-bucket-task`, `cloud-bucket-task-secret` and `cloud-bucket-backups-mount`, NetworkPolicy `cloud-bucket-tasks`. See "Buckets" below | `stacks/cloud/buckets.tf`, `access_rules.tf`, `deploy_rules.tf`, `reconciler.tf`; `stacks/vault/cloud.tf`; `stacks/garage` |
 | Alerts | group `Cloud` | `stacks/monitoring` `prometheus_chart_values.tpl` |
 | App hosts in internal DNS | Helm release `external-dns-cloud` (namespace `technitium`) writes `CNAME <host> -> viktorbarzin.me` plus an owner TXT record in Technitium within seconds of an App Ingress appearing, and deletes both with the Ingress. It reads only Ingresses labelled `cloud.viktorbarzin.me/managed=true`, which Cloud's `modules/app` sets. Publicly the hosts ride the Cloudflare wildcard. See `docs/architecture/dns.md`, "Cloud App hosts" | `stacks/technitium` `external_dns.tf` |
 
@@ -74,6 +75,8 @@ Kuma monitor `[External] cloud` by itself.
 | B05: `BUILD_LOG_KEY` (Cloud's age identity; opens the build logs the public builder seals) | Vault KV `secret/cloud/system` key `build_log_key`, written by hand (runbook, "Builder v2 keys") | reconciler only | ExternalSecret `cloud-reconciler-system`, file `/secrets/system/build-log-key`; carried by `stacks/authentik` (`cloud_system_carried_keys`) |
 | B05: the builder's job key | GitHub secret `CLOUD_JOB_KEY` of `ViktorBarzin/cloud-builder`, with a copy in Vault KV `secret/cloud/builder` `job_key` that no workload reads; its public recipient is `var.builder_job_recipient` in `stacks/cloud`, env `BUILD_JOB_RECIPIENT` | the builder workflow only | `scripts/publish-builder.sh --job-key` in the cloud repo |
 | M5: `SECRETS_PUBLIC_KEY`, `GITHUB_API_TOKEN` (optional) | Vault KV `secret/cloud/system` keys `secrets_public_key`, `github_api_token`, written by hand | console | ExternalSecret `cloud-console-system` (env, optional) |
+| B26: Garage's admin token (buckets, keys, quotas, usage) | Vault KV `secret/cloud/garage` `admin_token`, written by `stacks/garage`; never `secret/cloud/system` | reconciler only | ExternalSecret `cloud-reconciler-garage`, file `/secrets/garage/admin-token` (`GARAGE_ADMIN_TOKEN_FILE`), optional: before the path exists the pod starts without it |
+| B26: a Bucket's own key | the reconciler's OpenTofu writes `secret/cloud/<namespace>/_cloud/bucket-<service>` (`endpoint`, `region`, `bucket`, `access_key_id`, `secret_access_key`) | the Project's processes; the console for `cloud bucket ls`, `cp`, `rm`; a restore Job | ExternalSecret `s3-<service>` in the Project; console: Kubernetes auth role `cloud-console-buckets` (policy: read on `secret/data/cloud/+/_cloud/bucket-*` only, 1 h tokens); restore: Secret `bucket-restore-<9 hex>` owned by its Job |
 | `TELEMETRY_WRITE_KEY`, `SENTRY_DSN`, `SENTRY_BROWSER_DSN` | Vault KV `secret/rybbit` `write_keys` (key `cloud`) and `secret/glitchtip` `dsn_cloud` | console | Secret `cloud-telemetry` written by Terraform (`telemetry.tf`, env); product events and errors, cloud ADR-0007 |
 
 The two M5 ExternalSecrets read all of `secret/cloud/system` (`dataFrom`
@@ -83,7 +86,9 @@ The two M5 ExternalSecrets read all of `secret/cloud/system` (`dataFrom`
 not in Vault yet. A missing key becomes an empty file or an empty variable,
 which the cloud code treats as unset; the reconciler then falls back to
 reading Vault itself. The console holds no Vault token and gets only the
-public key and the GitHub API token, never `secrets_private_key`. The
+public key and the GitHub API token, never `secrets_private_key`; since B26
+it also logs in to Vault as `cloud-console-buckets`, which reads Bucket keys
+and nothing else. The
 reconciler's Vault policy has `patch` on `secret/data/cloud/p-*`, because
 App secrets are written as KV v2 merge patches; `secret/cloud/system` stays
 read-only for it. For a generated secret (`{generate: true}` in a Project
@@ -555,6 +560,44 @@ cannot say "the same namespace"; Cloud starts App pods only after the
 Project policy exists.
 Admission needs no new rule: an App Deployment never needed an edge
 sibling, and `tests/cloud-access.test.sh` applies one through every policy.
+
+## Buckets
+
+A Bucket Service (cloud B26) is a bucket in Garage, the S3 store in
+namespace `garage` (`stacks/garage`, B25; one pod, S3 on 3900, admin API on
+3903, region `garage`). Cloud's reconciler owns every bucket and key it
+makes. Garage's key `cloud-backup` belongs to `stacks/garage`, and Cloud
+never touches it.
+
+```mermaid
+flowchart LR
+  A["Project pods<br/>p-*"] -->|"S3 :3900, own key<br/>(floor Pass + Project policy)"| G["Garage<br/>ns garage"]
+  C["console<br/>ns cloud"] -->|"S3 :3900, the Bucket's key"| G
+  C -->|"role cloud-console-buckets"| V["Vault<br/>_cloud/bucket-*"]
+  R["reconciler<br/>ns cloud"] -->|"admin :3903, admin token"| G
+  R -->|"writes _cloud/bucket-*"| V
+  B["garage-backup CronJob"] -->|"nightly rclone sync"| N[("NFS /srv/nfs/cloud-buckets")]
+  J["restore Job<br/>bucket-restore-*"] -->|"read-only mount"| N
+  J -->|"S3 :3900, the Project's key"| G
+```
+
+| Piece | What it is |
+|---|---|
+| Names | bucket alias `p-<project>-<service>-<10 hex>`, key `cloud:<project>/<service>` with read and write on that bucket only, quota `maxSize` from the Size's Bucket storage |
+| Settings | reconciler: `GARAGE_ADMIN_URL`, `GARAGE_S3_URL`, `GARAGE_ADMIN_TOKEN_FILE`, `BUCKET_TASK_IMAGE`, `BUCKET_TASK_UID` (10001); console: `GARAGE_S3_URL`, `VAULT_ADDR`, `VAULT_KUBERNETES_MOUNT`, `VAULT_CONSOLE_ROLE` (`deploy_rules.tf`) |
+| Network | the egress floor Passes managed namespaces to Garage's pods (`app == 'garage'`) on TCP 3900 only, after the mail-port and toolbox Denies; Cloud's Project policy then allows it only for a Project with a Bucket. Namespace `cloud` has no egress policy (see "Builds and network"), so the console and reconciler need no rule; Garage's own NetworkPolicy admits 3900 from managed namespaces and namespace `cloud`, and 3903 from the console and reconciler pods |
+| Restore Job | `bucket-restore-<9 hex>` in `cloud`, labelled with the component `bucket-restore`, the Project and the task id; the pinned rclone image as uid and gid 10001, `/bin/sh -c <script> bucket-restore <bucket> <key> <date>`, no token, read-only root, every capability dropped, 30 min deadline, gone an hour after it ends; its key in Secret `bucket-restore-<9 hex>`, owned by the Job |
+| Backup volume | PersistentVolume `cloud-bucket-backups` on `/srv/nfs/cloud-buckets`, `ReadOnlyMany`, mount option `ro` and CSI `read_only`, bound by its claimRef to claim `cloud/cloud-bucket-backups` only |
+| Admission | `cloud-bucket-task` pins the Job's shape and its three arguments: a bucket name of Cloud's form, a key with no leading `/`, no `.` or `..` segment and no control character (the mount holds every Project's backups), and a date. `cloud-bucket-task-secret` pins the Secret. The reconciler's Jobs and Secrets in `cloud` split by name: `bucket-restore-*` go to these two, every other one to `cloud-pg-task` and `cloud-pg-task-secret`. `cloud-bucket-backups-mount`, for every pod in every namespace, lets only a restore pod in `cloud`, owned by its Job, mount the claim, read-only and without a subPath, and refuses any inline `nfs` or `csi` volume on the backup share |
+| Network of a restore | NetworkPolicy `cloud-bucket-tasks`: no ingress; egress to DNS and Garage's pods on 3900 only |
+| Image pin | `local.cloud_bucket_task.image` in `access_rules.tf`, fed to the reconciler as `BUCKET_TASK_IMAGE`; `tests/cloud-deploy.test.sh` checks they match. `stacks/garage` pins the same image for its CronJob; Renovate bumps both |
+
+The restore script and the bucket's own key limit what one restore writes:
+Garage refuses the key any bucket but its own. The mount lets a restore pod
+read every Project's backup, so the policy keeps the key argument inside
+its bucket's directory. `tests/cloud-access.test.sh` checks the Job, Secret
+and pod shapes, the refused variants, the floor rule and the console's
+Vault role in kind.
 
 ## Connections on the shared primary
 

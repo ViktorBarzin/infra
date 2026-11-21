@@ -16,7 +16,11 @@
 #      switch, and the console gets what buildApiSettings() and the logs
 #      tab read. The ExternalSecrets that
 #      copy secret/cloud/system render a key Vault does not hold yet as an
-#      empty value instead of failing the sync.
+#      empty value instead of failing the sync. B26: every image an
+#      admission policy pins (BUCKET_TASK_IMAGE too) reaches the reconciler
+#      from that same local; the reconciler and the console get Garage's
+#      addresses, the restore uid and, for the console, its Vault role, and
+#      only the reconciler gets the admin token, as an optional file.
 #   3. The Cloud alert group in stacks/monitoring (prometheus_chart_values.tpl)
 #      passes `promtool check rules` and the unit tests in
 #      tests/cloud-deploy/alerts.test.yml: what fires, after how long, and
@@ -69,7 +73,7 @@ locals {
   cloud_taken_hosts = {}
 }
 EOF
-if ! (cd "$TMP/locals" && echo 'jsonencode({console_rules = local.cloud_console_cluster_rules, console_env = local.cloud_console_env, reconciler_env = local.cloud_reconciler_env, reconciler_files = local.cloud_reconciler_files, reconciler_reload = local.cloud_reconciler_reload, secretstore_vault = local.cloud_secretstore_vault_server, console_secret_env = local.cloud_console_secret_env, reconciler_system_template = local.cloud_reconciler_system_template, console_system_template = local.cloud_console_system_template, reconciler_system_keys = local.cloud_reconciler_system_keys, console_system_keys = local.cloud_console_system_keys, reconciler_system_secret = local.cloud_reconciler_system_secret, console_system_secret = local.cloud_console_system_secret, pins = {EDGE_IMAGE = local.cloud_edge.image, OAUTH2_PROXY_IMAGE = local.cloud_oauth2_proxy.image, TOOLBOX_POSTGRES_IMAGE = local.cloud_toolbox.images.postgres, PG_TASK_IMAGE = local.cloud_pg_task.image}})' \
+if ! (cd "$TMP/locals" && echo 'jsonencode({console_rules = local.cloud_console_cluster_rules, console_env = local.cloud_console_env, reconciler_env = local.cloud_reconciler_env, reconciler_files = local.cloud_reconciler_files, reconciler_reload = local.cloud_reconciler_reload, secretstore_vault = local.cloud_secretstore_vault_server, console_secret_env = local.cloud_console_secret_env, reconciler_system_template = local.cloud_reconciler_system_template, console_system_template = local.cloud_console_system_template, reconciler_system_keys = local.cloud_reconciler_system_keys, console_system_keys = local.cloud_console_system_keys, reconciler_system_secret = local.cloud_reconciler_system_secret, console_system_secret = local.cloud_console_system_secret, pins = {EDGE_IMAGE = local.cloud_edge.image, OAUTH2_PROXY_IMAGE = local.cloud_oauth2_proxy.image, TOOLBOX_POSTGRES_IMAGE = local.cloud_toolbox.images.postgres, PG_TASK_IMAGE = local.cloud_pg_task.image, BUCKET_TASK_IMAGE = local.cloud_bucket_task.image}, bucket_uid = local.cloud_bucket_task.uid, garage = local.cloud_garage, console_vault_role = local.cloud_console_vault_role, vault_mount = local.cloud_secretstore_project_mount})' \
     | terraform console >"$TMP/locals.json" 2>"$TMP/locals.err"); then
   echo "FAIL: terraform console could not evaluate stacks/cloud/deploy_rules.tf (it must hold only locals)"
   cat "$TMP/locals.err"
@@ -128,8 +132,9 @@ read |= set(re.findall(r'runtimeEnv\.([A-Z0-9_]+)', src))
 # Read outside env.server.ts: @viktorbarzin/pg (pgSettingsFromEnv) reads the
 # database pair, and the OS reads HOME.
 read |= {"DATABASE_URL", "DATABASE_PASSWORD_FILE", "HOME"}
-# Names set ahead of the code; none now.
-pending = set()
+# Names set ahead of the code: Buckets (the cloud repo's B26), whose code
+# lands after this stack is applied. Drop each once the code reads it.
+pending = {"GARAGE_ADMIN_URL", "GARAGE_S3_URL", "GARAGE_ADMIN_TOKEN_FILE", "BUCKET_TASK_IMAGE", "BUCKET_TASK_UID", "VAULT_CONSOLE_ROLE"}
 
 def names(env):
     return [e["name"] for e in env]
@@ -166,8 +171,27 @@ for n, f in files.items():
 for n, pin in sorted(loc["pins"].items()):
     if renv.get(n) != pin:
         bad.append(f"the reconciler's {n} is {renv.get(n)!r}, want the pin its admission policy holds ({pin!r})")
-    if not re.search(rf'pinnedImage\("{n}"', src):
+    if n not in pending and not re.search(rf'pinnedImage\("{n}"', src):
         bad.append(f"the cloud code does not read {n} through pinnedImage()")
+# B26: the restore Jobs run as the uid cloud-bucket-task pins, and both
+# processes reach Garage at the addresses the floor and stacks/garage use.
+# The console reads Bucket keys from Vault with its own role, never the
+# admin token, which only the reconciler gets, as an optional file.
+cenv_all = {e["name"]: e["value"] for e in loc["console_env"]}
+if renv.get("BUCKET_TASK_UID") != str(loc["bucket_uid"]):
+    bad.append(f"the reconciler's BUCKET_TASK_UID is {renv.get('BUCKET_TASK_UID')!r}, want {loc['bucket_uid']} (cloud-bucket-task's uid)")
+for who, env, names_ in (("reconciler", renv, ("GARAGE_S3_URL", "GARAGE_ADMIN_URL")), ("console", cenv_all, ("GARAGE_S3_URL",))):
+    for n in names_:
+        want_url = loc["garage"]["s3_url" if n == "GARAGE_S3_URL" else "admin_url"]
+        if env.get(n) != want_url:
+            bad.append(f"the {who}'s {n} is {env.get(n)!r}, want {want_url!r}")
+if "GARAGE_ADMIN_URL" in cenv_all or any("GARAGE_ADMIN_TOKEN" in n for n in cenv_all):
+    bad.append("the console must never get Garage's admin API or token")
+g = files.get("GARAGE_ADMIN_TOKEN")
+if g is None or g["secret"] == loc["reconciler_system_secret"] or not g.get("optional"):
+    bad.append(f"GARAGE_ADMIN_TOKEN must be an optional file from its own Secret, not {loc['reconciler_system_secret']}: {g}")
+if (cenv_all.get("VAULT_ADDR"), cenv_all.get("VAULT_KUBERNETES_MOUNT"), cenv_all.get("VAULT_CONSOLE_ROLE")) != (loc["secretstore_vault"], loc["vault_mount"], loc["console_vault_role"]):
+    bad.append(f"the console's Vault settings are {cenv_all.get('VAULT_ADDR')!r}, {cenv_all.get('VAULT_KUBERNETES_MOUNT')!r}, {cenv_all.get('VAULT_CONSOLE_ROLE')!r}; want {loc['secretstore_vault']!r}, {loc['vault_mount']!r}, {loc['console_vault_role']!r}")
 if renv.get("VAULT_ADDR") != loc["secretstore_vault"]:
     bad.append(f"VAULT_ADDR {renv.get('VAULT_ADDR')!r} is not the in-cluster Vault address the admission policy pins ({loc['secretstore_vault']!r})")
 # M5. Builds: one switch, off until the GitHub tokens exist; the code reads

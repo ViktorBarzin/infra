@@ -9,6 +9,9 @@
 #     account cloud-secrets in any namespace labelled
 #     cloud.viktorbarzin.me/managed=true. Every Project's SecretStore logs in
 #     with it.
+#   cloud-console-buckets  policy + Kubernetes auth role for service account
+#     cloud-console in namespace cloud (cloud B26b): read on each Project's
+#     Bucket keys, secret/cloud/<namespace>/_cloud/bucket-<service>, only.
 #
 # The reconciler never writes Vault policies or auth roles; a new Project
 # needs nothing from this stack.
@@ -94,4 +97,22 @@ resource "kubernetes_cluster_role_binding" "vault_namespace_reader" {
     kind      = "ClusterRole"
     name      = kubernetes_cluster_role.vault_namespace_reader.metadata[0].name
   }
+}
+
+resource "vault_policy" "cloud_console_buckets" {
+  name   = "cloud-console-buckets"
+  policy = local.cloud_console_buckets_policy
+}
+
+# The console logs in with its mounted service account token (automount on
+# in stacks/cloud console.tf) when a User runs `cloud bucket ls`, `cp` or
+# `rm`, and again when the token expires.
+resource "vault_kubernetes_auth_backend_role" "cloud_console_buckets" {
+  backend                          = vault_auth_backend.kubernetes.path
+  role_name                        = "cloud-console-buckets"
+  bound_service_account_names      = ["cloud-console"]
+  bound_service_account_namespaces = ["cloud"]
+  token_policies                   = [vault_policy.cloud_console_buckets.name]
+  token_ttl                        = 3600
+  token_max_ttl                    = 3600
 }

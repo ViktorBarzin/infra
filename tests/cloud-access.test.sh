@@ -140,6 +140,23 @@
 #     namespace default; the reconciler may create and patch Jobs and create
 #     Secrets in cloud, delete task Jobs there but no other Job, but not read, change or delete a Secret there, and
 #     creates no pod or Deployment there;
+#   - Bucket restore Jobs (the cloud repo's B26c), built to the B26 shape:
+#     the Job and its key Secret are admitted as the reconciler in cloud
+#     (and a key with dots in a name, a 4096-character script, a
+#     1024-character key); each variant cloud-bucket-task forbids is refused
+#     (name, labels, owner, retries, deadline, TTL, token, service links,
+#     account, root, seccomp, host network, init or second container, image,
+#     command shape, args, port, probe, privilege, writable root, added
+#     capability, a bucket that is not Cloud's, a key with a . or ..
+#     segment, a leading / or a control character, a long key, a bad date,
+#     other env, another Secret or prefix, no limits, a hostPath, the
+#     Postgres dumps, a writable or inline backup volume, a writable or
+#     subPath mount), as is a Secret with another name, owner, key or type,
+#     both in namespace default, and a restore named for the Postgres rules;
+#     cloud-bucket-backups-mount admits the restore pod the Job controller
+#     makes and refuses every other pod that names the claim or the backup
+#     share inline, in any namespace; the egress floor passes Garage's pods
+#     on its S3 port only, once, after the mail-port and toolbox Denies;
 #   - worker and cron Services (the cloud repo's B18 and B19), built from the
 #     rendered App: a worker Deployment (component worker, a command, no
 #     ports, probes or init container, 1 or 0 replicas) and a pod from it are
@@ -181,6 +198,10 @@
 #     (the shared Cloud Apps client) or secret/cloud/state-key (the state
 #     encryption passphrase, which no Project token reads), and reads only
 #     its two database credentials;
+#   - the console's cloud-console-buckets role logs in only as
+#     cloud/cloud-console and reads Bucket keys (secret/cloud/*/_cloud/
+#     bucket-*) and nothing else: no App secret, Postgres entry, registry
+#     entry, secret/cloud/system, Garage's admin token or state key;
 #   - stacks/authentik writes the client id the oauth2-proxy pin expects.
 #
 # Needs docker, kind, kubectl, helm (Calico's operator, Kyverno, the External
@@ -220,7 +241,7 @@ TOFU="${TOFU_BIN:-$CLOUD_REPO/.tools/tofu}"
 TOFU_PLUGINS="${TOFU_PLUGIN_DIR:-$CLOUD_REPO/.tools/providers}"
 [ -x "$TOFU" ] && [ -d "$TOFU_PLUGINS" ] || { echo "FAIL: no pinned OpenTofu at $TOFU or provider mirror at $TOFU_PLUGINS (cloud repo README, \"Reconciler\")"; exit 1; }
 cloud_calico_preflight || exit 1
-CLUSTER="cloud-access-$$"
+CLUSTER="${CLOUD_ACCESS_CLUSTER:-cloud-access-$$}"
 TMP="$(mktemp -d)"
 VAULT_PID=""
 cleanup() {
@@ -255,10 +276,10 @@ hosts.update({f"homelab-host-{i:03d}.viktorbarzin.me": f"ingress ns-{i:03d}/web-
 open(sys.argv[1], "w").write("locals {\n  cloud_taken_hosts = " + json.dumps(hosts) + "\n}\n")
 PY
 render "$HERE/stacks/cloud/access_rules.tf" \
-  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies_applied, raw_policies = local.cloud_admission_policies, marker = local.cloud_taken_hosts_marker, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, tier = local.cloud_tier, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, app_port = local.cloud_app_port, egress = local.cloud_egress_excluded, denied_ports = local.cloud_egress_denied_tcp_ports, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required, live_guard = local.cloud_live_host_guard, live_guard_role = local.cloud_live_host_guard_kyverno_role, edge_transport = local.cloud_edge_transport, edge_transport_manifest = local.cloud_edge_transport_manifest, console_exec = local.cloud_console_exec, toolbox = local.cloud_toolbox, cloud_rules = local.cloud_reconciler_cloud_rules, pg_task = local.cloud_pg_task})' \
+  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies_applied, raw_policies = local.cloud_admission_policies, marker = local.cloud_taken_hosts_marker, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, tier = local.cloud_tier, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, app_port = local.cloud_app_port, egress = local.cloud_egress_excluded, denied_ports = local.cloud_egress_denied_tcp_ports, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required, live_guard = local.cloud_live_host_guard, live_guard_role = local.cloud_live_host_guard_kyverno_role, edge_transport = local.cloud_edge_transport, edge_transport_manifest = local.cloud_edge_transport_manifest, console_exec = local.cloud_console_exec, toolbox = local.cloud_toolbox, cloud_rules = local.cloud_reconciler_cloud_rules, pg_task = local.cloud_pg_task, bucket_task = local.cloud_bucket_task, garage = local.cloud_garage})' \
   "$TMP/k8s.raw" "$TMP/taken_hosts_stub.tf"
 render "$HERE/stacks/vault/cloud_policies.tf" \
-  'jsonencode({reconciler = local.cloud_reconciler_policy, project = local.cloud_project_policy_template, selector = local.cloud_project_namespace_selector, ns_reader = local.vault_namespace_reader_rules})' \
+  'jsonencode({reconciler = local.cloud_reconciler_policy, project = local.cloud_project_policy_template, selector = local.cloud_project_namespace_selector, ns_reader = local.vault_namespace_reader_rules, console_buckets = local.cloud_console_buckets_policy})' \
   "$TMP/vault.raw"
 render "$HERE/stacks/kyverno/modules/kyverno/generate-conditions.tf" \
   'jsonencode({condition = local.generate_skip_system_namespaces})' \
@@ -306,6 +327,7 @@ docs = [
 ]
 (d / "rbac.yaml").write_text(yaml.safe_dump_all(docs))
 (d / "pg_task.json").write_text(json.dumps(k["pg_task"]))
+(d / "bucket_task.json").write_text(json.dumps(k["bucket_task"]))
 (d / "vap.yaml").write_text(yaml.safe_dump_all(list(k["policies"].values())))
 # cloud-managed-ingress as it would be applied without the taken hosts.
 (d / "vap-ingress-unfilled.yaml").write_text(yaml.safe_dump(k["raw_policies"]["managed_ingress"]))
@@ -415,6 +437,18 @@ for i, r in enumerate(egress[:smtp[0] if smtp else 0]):
 tb_deny = [i for i, r in enumerate(egress) if r == {"action": "Deny", "source": {"selector": "cloud.viktorbarzin.me/component == 'toolbox'"}}]
 if len(tb_deny) != 1 or tb_deny[0] > first_pass:
     problems.append(f"floor: no single Deny of toolbox pods before the first Pass (rule {tb_deny}, first Pass {first_pass})")
+# Buckets (B26): one Pass to Garage's pods on its S3 port only, after the
+# mail-port and toolbox Denies; never an Allow, so Cloud's Project policy
+# decides which Projects reach it.
+g = k["garage"]
+to_garage = [i for i, r in enumerate(egress) if g["namespace"] in r.get("destination", {}).get("namespaceSelector", "")]
+want_garage = {"action": "Pass", "protocol": "TCP", "destination": {
+    "namespaceSelector": f"projectcalico.org/name == '{g['namespace']}'",
+    "selector": f"{g['pod_label']['key']} == '{g['pod_label']['value']}'", "ports": [g["s3_port"]]}}
+if len(to_garage) != 1 or egress[to_garage[0]] != want_garage:
+    problems.append(f"floor: want exactly one rule to Garage, {want_garage}; have {[egress[i] for i in to_garage]}")
+elif (smtp and to_garage[0] < smtp[0]) or (tb_deny and to_garage[0] < tb_deny[0]):
+    problems.append(f"floor: the Pass to Garage (rule {to_garage[0]}) comes before the mail-port or toolbox Deny")
 dns = [r for r in egress if r.get("action") == "Allow" and 53 in r.get("destination", {}).get("ports", [])]
 if not any(r["destination"].get("nets") == ["10.96.0.10/32"] for r in dns) or not any("kube-dns" in r["destination"].get("selector", "") for r in dns):
     problems.append(f"floor: DNS must be allowed to the kube-dns ClusterIP and the CoreDNS pods: {dns}")
@@ -499,6 +533,7 @@ vdocs = [
      "subjects": [sa("vault", "vault")],
      "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "vault-namespace-reader"}}))
 (d / "reconciler.hcl").write_text(v["reconciler"])
+(d / "console-buckets.hcl").write_text(v["console_buckets"])
 (d / "project.hcl.tpl").write_text(v["project"])
 (d / "selector.json").write_text(v["selector"])
 
@@ -1039,6 +1074,26 @@ if [ -f "$CLOUD_REPO/src/reconciler/pg-task-jobs.ts" ]; then
   can create deployments.apps -n cloud && bad "reconciler may create Deployments in cloud" || ok "reconciler may not create Deployments in cloud"
 fi
 
+# --- Bucket restore Jobs in namespace cloud (the cloud repo's B26c) -------------
+# bucket_tasks.py builds the restore Job, its key Secret and the pod the Job
+# controller makes, to the B26 shape, and the refused variants: the Job and
+# Secret as the reconciler, the pods (cloud-bucket-backups-mount) as the
+# cluster admin, since the Job controller, not the reconciler, makes them.
+if python3 "$HERE/tests/cloud-access/bucket_tasks.py" "$TMP/bucket_task.json" "$TMP/bucket-cases" >"$TMP/bucket-tasks.log" 2>&1; then
+  run_cases "$TMP/bucket-cases"
+  [ "$CASES_RUN" -gt 80 ] && ok "$CASES_RUN Bucket restore cases" || bad "only $CASES_RUN Bucket restore cases"
+  # Same Role as the Postgres tasks: create, patch and delete its Jobs,
+  # create the Secret, read pods and logs, and nothing more.
+  can patch jobs.batch -n cloud && can get pods/log -n cloud && can create secrets -n cloud \
+    && ok "reconciler may patch Jobs, read pod logs and create Secrets in cloud (a restore's needs)" \
+    || bad "reconciler lacks a right a Bucket restore needs in cloud"
+  ka create -f "$TMP/bucket-cases/delete-bucket-job.json" >/dev/null 2>&1 || bad "could not create the Bucket restore Job for the delete check"
+  expect_ok "reconciler may delete a Bucket restore Job in cloud" kr delete job -n cloud "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["metadata"]["name"])' "$TMP/bucket-cases/delete-bucket-job.json")" --dry-run=server
+  ka delete job -n cloud --all >/dev/null 2>&1
+else
+  bad "Bucket restore cases: $(cat "$TMP/bucket-tasks.log")"
+fi
+
 # --- Cloud's snapshot fixtures, each applied as the reconciler -----------------
 # The shapes Cloud's own tests render (render.fixtures.ts FIXTURES): one App,
 # one Postgres (quota pods 0, no Deployment), an App connected to Postgres, a
@@ -1236,6 +1291,7 @@ ACCESSOR="$(vault auth list -format=json | python3 -c 'import json,sys; print(js
 sed "s/@@KUBERNETES_ACCESSOR@@/$ACCESSOR/" "$TMP/project.hcl.tpl" >"$TMP/project.hcl"
 vault policy write cloud-project "$TMP/project.hcl" >/dev/null
 vault policy write cloud-reconciler "$TMP/reconciler.hcl" >/dev/null
+vault policy write cloud-console-buckets "$TMP/console-buckets.hcl" >/dev/null
 vault write auth/kubernetes/role/cloud-project bound_service_account_names=cloud-secrets \
   bound_service_account_namespace_selector="$(cat "$TMP/selector.json")" token_policies=cloud-project token_ttl=3600 >/dev/null 2>&1
 vault write auth/kubernetes/role/cloud-reconciler bound_service_account_names=cloud-reconciler \
@@ -1247,6 +1303,13 @@ vault kv put secret/cloud/p-other/_cloud/registry server=ghcr.io username=u pass
 vault kv put secret/cloud/system cloud_apps_client_id=cloud-apps cloud_apps_client_secret=s ghcr_pull_token=g >/dev/null
 vault kv put secret/cloud/state-key passphrase=state-key-for-the-kind-test-0123456789 >/dev/null
 vault kv put secret/viktor x=y >/dev/null
+# B26: a Bucket's key, a Postgres Service's credentials, Garage's admin token.
+vault kv put secret/cloud/p-demo/_cloud/bucket-files access_key_id=GK1 secret_access_key=s >/dev/null
+vault kv put secret/cloud/p-other/_cloud/bucket-media access_key_id=GK2 secret_access_key=s >/dev/null
+vault kv put secret/cloud/p-demo/db password=p >/dev/null
+vault kv put secret/cloud/garage admin_token=t >/dev/null
+vault write auth/kubernetes/role/cloud-console-buckets bound_service_account_names=cloud-console \
+  bound_service_account_namespaces=cloud token_policies=cloud-console-buckets token_ttl=3600 >/dev/null 2>&1
 
 login() { # role namespace sa
   vault write -field=token auth/kubernetes/login role="$1" jwt="$(ka create token "$3" -n "$2" --duration=10m)"
@@ -1295,6 +1358,19 @@ caps() { vtok "$RT" token capabilities "$1" 2>&1; }
 [ "$(caps database/static-creds/pg-cloud-provisioner)" = "read" ] && ok "reconciler reads pg-cloud-provisioner" || bad "pg-cloud-provisioner caps"
 [ "$(caps database/static-creds/pg-terraform-state)" = "deny" ] && ok "reconciler cannot read pg-terraform-state" || bad "pg-terraform-state caps: $(caps database/static-creds/pg-terraform-state)"
 [ "$(caps auth/kubernetes/role/cloud-project)" = "deny" ] && ok "reconciler cannot touch auth roles" || bad "auth role caps"
+
+# B26b: the console reads Bucket keys, every Project's, and nothing else.
+CT="$(login cloud-console-buckets cloud cloud-console 2>/dev/null)"
+[ -n "$CT" ] && ok "cloud-console-buckets logs in as cloud/cloud-console" || bad "cloud-console-buckets login"
+expect_fail "cloud-console-buckets refuses another service account in cloud" "service account|not authorized|permission denied" login cloud-console-buckets cloud cloud-reconciler
+expect_ok   "console token reads a Bucket key, secret/cloud/p-demo/_cloud/bucket-files" vtok "$CT" kv get -field=access_key_id secret/cloud/p-demo/_cloud/bucket-files
+expect_ok   "console token reads another Project's Bucket key (it serves every Project)" vtok "$CT" kv get -field=access_key_id secret/cloud/p-other/_cloud/bucket-media
+for path in secret/cloud/p-demo/app secret/cloud/p-demo/db secret/cloud/p-demo/_cloud/registry secret/cloud/system secret/cloud/garage secret/cloud/state-key secret/viktor; do
+  expect_fail "console token cannot read $path" "permission denied" vtok "$CT" kv get "$path"
+done
+expect_fail "console token cannot write a Bucket key" "permission denied" vtok "$CT" kv put secret/cloud/p-demo/_cloud/bucket-files access_key_id=x
+expect_fail "console token cannot list a Project's tree" "permission denied" vtok "$CT" kv list secret/cloud/p-demo/_cloud
+expect_fail "reconciler token cannot read Garage's admin token (only its ExternalSecret does)" "permission denied" vtok "$RT" kv get secret/cloud/garage
 
 # The client id the oauth2-proxy pin expects is the one stacks/authentik
 # gives the shared provider (not a locals-only file, so read as text).

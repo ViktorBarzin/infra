@@ -416,6 +416,68 @@ locals {
   }
   cloud_one_off_job_component_is = "has(object.spec.template.metadata.labels) && '${local.cloud_component_label}' in object.spec.template.metadata.labels && object.spec.template.metadata.labels['${local.cloud_component_label}'] == '${local.cloud_one_off_job.component}'"
 
+  # Garage, the S3 store behind Bucket Services (the cloud repo's B26;
+  # stacks/garage, B25): one pod in namespace garage, S3 on 3900 and the
+  # admin API on 3903. The Project egress floor below passes S3 to it;
+  # deploy_rules.tf gives the reconciler and the console these addresses.
+  # Garage's own NetworkPolicy admits S3 from managed namespaces and all of
+  # namespace cloud, and the admin API from the console and reconciler pods.
+  cloud_garage = {
+    namespace  = "garage"
+    pod_label  = { key = "app", value = "garage" }
+    s3_port    = 3900
+    admin_port = 3903
+    s3_url     = "http://garage.garage.svc.cluster.local:3900"
+    admin_url  = "http://garage.garage.svc.cluster.local:3903"
+  }
+
+  # A Bucket restore (the cloud repo's B26c, `cloud bucket restore`): a Job
+  # the reconciler starts in its own namespace `cloud`. It mounts Garage's
+  # nightly backup directory read-only (buckets.tf; stacks/garage writes it)
+  # and copies one key back into the Project's bucket with the Project's own
+  # Garage key, from a Secret the Job owns. It is the only pod that may
+  # mount that directory (cloud-bucket-backups-mount below). The image is
+  # pinned here alone and fed to the reconciler as BUCKET_TASK_IMAGE
+  # (deploy_rules.tf), so a Renovate bump moves the Jobs and the policy
+  # together. stacks/garage pins the same image for its backup CronJob.
+  cloud_bucket_task = {
+    component = "bucket-restore"
+    container = "restore"
+    image     = "docker.io/rclone/rclone:1.76.0@sha256:7cbeec24a44f206067597c0368be4de90ae19a64d5113c7d1938bd737a81e466"
+    # The owner of /srv/nfs/cloud-buckets and its files (stacks/garage
+    # backup_uid): the directory is 0750, so only this uid reads it.
+    uid = 10001
+    # bucket-restore-<the first 9 hex digits of the task id>; its Secret
+    # has the same name.
+    prefix        = "bucket-restore-"
+    name_re       = "^bucket-restore-[0-9a-f]{9}$"
+    task_label    = "cloud.viktorbarzin.me/bucket-task"
+    project_label = "cloud.viktorbarzin.me/project"
+    claim         = "cloud-bucket-backups"
+    mount_path    = "/backup"
+    nfs_path      = "/srv/nfs/cloud-buckets"
+    # Garage's global alias Cloud gives a bucket: p-<project>-<service>-<10
+    # hex>, at most 63 characters.
+    bucket_re   = "^p-[a-z0-9-]+-[0-9a-f]{10}$"
+    secret_keys = ["RCLONE_S3_ACCESS_KEY_ID", "RCLONE_S3_SECRET_ACCESS_KEY"]
+    env_names   = ["HOME", "RCLONE_S3_PROVIDER", "RCLONE_S3_ENDPOINT", "RCLONE_S3_REGION", "RCLONE_S3_FORCE_PATH_STYLE", "RCLONE_S3_ENV_AUTH", "RCLONE_S3_NO_CHECK_BUCKET", "RCLONE_CONFIG"]
+    # Cloud's restore Job: 30 min to run, an hour to read its log.
+    max_deadline   = 1800
+    max_ttl        = 3600
+    max_script_len = 4096
+    # An S3 key is at most 1024 bytes.
+    max_key_len = 1024
+  }
+  # Which Jobs and Secrets of the reconciler in `cloud` are a Bucket
+  # restore's: by name, so every one is checked by exactly one of
+  # cloud-bucket-task and cloud-pg-task (and of their Secret policies). A
+  # name Cloud did not give, or none, falls to the Postgres rules, which
+  # refuse it.
+  # The backup share as an inline nfs path or csi attribute, with any run of
+  # slashes and anything below it.
+  cloud_bucket_backup_share_re = "^/+srv/+nfs/+cloud-buckets(/|$)"
+  cloud_bucket_task_named      = "has(object.metadata.name) && object.metadata.name.startsWith('${local.cloud_bucket_task.prefix}')"
+
   # A psql toolbox (the cloud repo's B22, `cloud psql`): a Job the
   # reconciler starts for one session (src/reconciler/toolbox.ts
   # toolboxJob). Its pod only sleeps; the console runs psql in it through
@@ -798,13 +860,15 @@ locals {
   ]
 
   # Bound in namespace `cloud` only (main.tf, Role cloud-reconciler-tasks):
-  # the Postgres task Jobs (B28b, B28c). It creates a task's Job suspended,
+  # the Postgres task Jobs (B28b, B28c) and the Bucket restore Jobs (B26c),
+  # with the same rights. It creates a task's Job suspended,
   # creates the Secret with the task's credentials (owned by the Job, so
   # Kubernetes deletes it with the Job), lets the Job go with a patch, reads
   # its pod and log, and deletes a Job it gave up on. It may create Secrets
   # here but not read, change or delete any, and it creates no pod: the Job
-  # controller does. cloud-pg-task and cloud-pg-task-secret admit only the
-  # task shapes, and cloud-reconciler-scope nothing else in this namespace.
+  # controller does. cloud-pg-task, cloud-bucket-task and their Secret
+  # policies admit only the task shapes, and cloud-reconciler-scope nothing
+  # else in this namespace.
   cloud_reconciler_cloud_rules = [
     { api_groups = ["batch"], resources = ["jobs"], verbs = ["create", "get", "list", "delete", "patch"], resource_names = [] },
     { api_groups = [""], resources = ["pods", "events"], verbs = ["get", "list"], resource_names = [] },
@@ -965,6 +1029,19 @@ locals {
         # A psql toolbox (B22) reaches DNS and the CNPG primary above and
         # nothing else: no internet, no other pod, even its own namespace's.
         { action = "Deny", source = { selector = "${local.cloud_component_label} == '${local.cloud_toolbox.component}'" } },
+        # Buckets (the cloud repo's B26): Garage's S3 port, passed to the
+        # default tier, where Cloud's Project policy allows it only for a
+        # Project with a Bucket Service. Garage's own NetworkPolicy
+        # (stacks/garage) admits managed namespaces on this port only.
+        {
+          action   = "Pass"
+          protocol = "TCP"
+          destination = {
+            namespaceSelector = "projectcalico.org/name == '${local.cloud_garage.namespace}'"
+            selector          = "${local.cloud_garage.pod_label.key} == '${local.cloud_garage.pod_label.value}'"
+            ports             = [local.cloud_garage.s3_port]
+          }
+        },
         # Pods in a managed namespace: the Project policy allows only its own
         # namespace. A GlobalNetworkPolicy cannot say "the same namespace".
         { action = "Pass", destination = { namespaceSelector = "${local.cloud_managed_label} == 'true'" } },
@@ -1293,18 +1370,19 @@ locals {
           { name = "isRoleBinding", expression = "request.resource.group == 'rbac.authorization.k8s.io' && request.resource.resource == 'rolebindings'" },
           { name = "isQuota", expression = "request.resource.group == '' && request.resource.resource == 'resourcequotas'" },
           { name = "isLimitRange", expression = "request.resource.group == '' && request.resource.resource == 'limitranges'" },
-          # A Postgres task's Job, or its Secret, in the reconciler's own
-          # namespace; cloud-pg-task and cloud-pg-task-secret check the shape.
-          # A delete names a Job by its old object, which no other policy
-          # checks, so the name is checked here.
-          { name = "isPgTask", expression = "namespaceObject != null && namespaceObject.metadata.name == '${local.cloud_namespace}' && ((request.resource.group == 'batch' && request.resource.resource == 'jobs' && (request.operation != 'DELETE' || (oldObject != null && oldObject.metadata.name.matches('${local.cloud_pg_task.name_re}')))) || (request.resource.group == '' && request.resource.resource == 'secrets' && request.operation == 'CREATE'))" },
+          # A Postgres task's or a Bucket restore's Job, or its Secret, in
+          # the reconciler's own namespace; cloud-pg-task, cloud-bucket-task
+          # and their Secret policies check the shape. A delete names a Job
+          # by its old object, which no other policy checks, so the name is
+          # checked here.
+          { name = "isTask", expression = "namespaceObject != null && namespaceObject.metadata.name == '${local.cloud_namespace}' && ((request.resource.group == 'batch' && request.resource.resource == 'jobs' && (request.operation != 'DELETE' || (oldObject != null && (oldObject.metadata.name.matches('${local.cloud_pg_task.name_re}') || oldObject.metadata.name.matches('${local.cloud_bucket_task.name_re}'))))) || (request.resource.group == '' && request.resource.resource == 'secrets' && request.operation == 'CREATE'))" },
         ]
         validations = [
           {
             # The name check too: a homelab namespace someone labels by
             # mistake must not become reconciler-writable.
-            expression = "variables.isNamespace || variables.isPgTask || (namespaceObject != null && namespaceObject.metadata.name.startsWith('p-') && ${format(local.cloud_label_is_true, "namespaceObject", "namespaceObject", "namespaceObject")})"
-            message    = "cloud-reconciler may write only in namespaces named p-* labelled ${local.cloud_managed_label}=true, and Postgres task Jobs and their Secrets in ${local.cloud_namespace}"
+            expression = "variables.isNamespace || variables.isTask || (namespaceObject != null && namespaceObject.metadata.name.startsWith('p-') && ${format(local.cloud_label_is_true, "namespaceObject", "namespaceObject", "namespaceObject")})"
+            message    = "cloud-reconciler may write only in namespaces named p-* labelled ${local.cloud_managed_label}=true, and Postgres task and Bucket restore Jobs and their Secrets in ${local.cloud_namespace}"
             reason     = "Forbidden"
           },
           {
@@ -2063,10 +2141,17 @@ locals {
             { apiGroups = ["batch"], apiVersions = ["v1"], operations = ["CREATE", "UPDATE"], resources = ["jobs"] },
           ]
         }
-        matchConditions = [{
-          name       = "is-cloud-reconciler"
-          expression = "request.userInfo.username == '${local.cloud_reconciler_user}'"
-        }]
+        matchConditions = [
+          {
+            name       = "is-cloud-reconciler"
+            expression = "request.userInfo.username == '${local.cloud_reconciler_user}'"
+          },
+          # A Bucket restore's Job is cloud-bucket-task's.
+          {
+            name       = "not-a-bucket-task"
+            expression = "!(${local.cloud_bucket_task_named})"
+          },
+        ]
         variables = [
           { name = "labels", expression = "has(object.metadata.labels) ? object.metadata.labels : {}" },
           { name = "component", expression = "'${local.cloud_component_label}' in variables.labels ? variables.labels['${local.cloud_component_label}'] : ''" },
@@ -2147,10 +2232,17 @@ locals {
             { apiGroups = [""], apiVersions = ["v1"], operations = ["CREATE", "UPDATE"], resources = ["secrets"] },
           ]
         }
-        matchConditions = [{
-          name       = "is-cloud-reconciler"
-          expression = "request.userInfo.username == '${local.cloud_reconciler_user}'"
-        }]
+        matchConditions = [
+          {
+            name       = "is-cloud-reconciler"
+            expression = "request.userInfo.username == '${local.cloud_reconciler_user}'"
+          },
+          # A Bucket restore's Secret is cloud-bucket-task-secret's.
+          {
+            name       = "not-a-bucket-task"
+            expression = "!(${local.cloud_bucket_task_named})"
+          },
+        ]
         variables = [
           { name = "owners", expression = "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []" },
         ]
@@ -2173,6 +2265,206 @@ locals {
         matchResources = {
           namespaceSelector = { matchLabels = { "kubernetes.io/metadata.name" = local.cloud_namespace } }
         }
+      }
+    }
+    # A Bucket restore's Job (the cloud repo's B26c) in the reconciler's own
+    # namespace; cloud-bucket-task-secret below checks the Secret with the
+    # Project's Garage key, and cloud-bucket-backups-mount the pod. It runs
+    # the pinned rclone image as uid 10001 with Cloud's script and three
+    # arguments (bucket, key, date), no service account token, no
+    # capability and a read-only root, and mounts nothing but a bounded
+    # emptyDir and Garage's backups, read-only. The key may not climb out
+    # of its bucket's directory (no . or .. segment, no leading /), since
+    # the mount holds every Project's backups.
+    bucket_task = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-bucket-task" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [
+            { apiGroups = ["batch"], apiVersions = ["v1"], operations = ["CREATE", "UPDATE"], resources = ["jobs"] },
+          ]
+        }
+        matchConditions = [
+          {
+            name       = "is-cloud-reconciler"
+            expression = "request.userInfo.username == '${local.cloud_reconciler_user}'"
+          },
+          {
+            name       = "is-a-bucket-task"
+            expression = local.cloud_bucket_task_named
+          },
+        ]
+        variables = [
+          { name = "labels", expression = "has(object.metadata.labels) ? object.metadata.labels : {}" },
+          { name = "pod", expression = "object.spec.template.spec" },
+          { name = "podLabels", expression = "has(object.spec.template.metadata) && has(object.spec.template.metadata.labels) ? object.spec.template.metadata.labels : {}" },
+          { name = "owners", expression = "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []" },
+        ]
+        validations = [
+          {
+            expression = "object.metadata.name.matches('${local.cloud_bucket_task.name_re}') && ['${local.cloud_component_label}', '${local.cloud_bucket_task.task_label}', '${local.cloud_bucket_task.project_label}'].all(l, l in variables.labels && l in variables.podLabels && variables.podLabels[l] == variables.labels[l]) && variables.labels['${local.cloud_component_label}'] == '${local.cloud_bucket_task.component}' && size(variables.owners) == 0"
+            message    = "in ${local.cloud_namespace}, a Bucket restore Job is named ${local.cloud_bucket_task.prefix}<9 hex digits>, is labelled ${local.cloud_component_label}=${local.cloud_bucket_task.component} with ${local.cloud_bucket_task.task_label} and ${local.cloud_bucket_task.project_label} like its pod, and has no owner"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "has(object.spec.backoffLimit) && object.spec.backoffLimit == 0 && (!has(object.spec.parallelism) || object.spec.parallelism <= 1) && (!has(object.spec.completions) || object.spec.completions == 1) && !has(object.spec.podFailurePolicy) && !has(object.spec.successPolicy) && (!has(object.spec.manualSelector) || !object.spec.manualSelector) && has(object.spec.activeDeadlineSeconds) && object.spec.activeDeadlineSeconds <= ${local.cloud_bucket_task.max_deadline} && has(object.spec.ttlSecondsAfterFinished) && object.spec.ttlSecondsAfterFinished <= ${local.cloud_bucket_task.max_ttl}"
+            message    = "in ${local.cloud_namespace}, a Bucket restore Job runs one pod once (backoffLimit 0, no failure or success policy), with activeDeadlineSeconds up to ${local.cloud_bucket_task.max_deadline} and ttlSecondsAfterFinished up to ${local.cloud_bucket_task.max_ttl}"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "has(variables.pod.restartPolicy) && variables.pod.restartPolicy == 'Never' && has(variables.pod.automountServiceAccountToken) && variables.pod.automountServiceAccountToken == false && has(variables.pod.enableServiceLinks) && variables.pod.enableServiceLinks == false && (!has(variables.pod.serviceAccountName) || variables.pod.serviceAccountName == 'default') && (!has(variables.pod.hostNetwork) || !variables.pod.hostNetwork) && (!has(variables.pod.hostPID) || !variables.pod.hostPID) && (!has(variables.pod.hostIPC) || !variables.pod.hostIPC) && !has(variables.pod.initContainers) && !has(variables.pod.ephemeralContainers) && !has(variables.pod.nodeName) && has(variables.pod.securityContext) && has(variables.pod.securityContext.runAsNonRoot) && variables.pod.securityContext.runAsNonRoot && has(variables.pod.securityContext.runAsUser) && variables.pod.securityContext.runAsUser == ${local.cloud_bucket_task.uid} && has(variables.pod.securityContext.runAsGroup) && variables.pod.securityContext.runAsGroup == ${local.cloud_bucket_task.uid} && has(variables.pod.securityContext.seccompProfile) && variables.pod.securityContext.seccompProfile.type == 'RuntimeDefault'"
+            message    = "in ${local.cloud_namespace}, a Bucket restore pod sets restartPolicy Never, mounts no service account token, sets enableServiceLinks false, runs as uid and gid ${local.cloud_bucket_task.uid} with runAsNonRoot and seccomp RuntimeDefault, and has no host namespaces, init containers or nodeName"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "size(variables.pod.containers) == 1 && variables.pod.containers.all(c, c.name == '${local.cloud_bucket_task.container}' && c.image == '${local.cloud_bucket_task.image}' && has(c.command) && size(c.command) == 7 && c.command[0] == '/bin/sh' && c.command[1] == '-c' && size(c.command[2]) <= ${local.cloud_bucket_task.max_script_len} && c.command[3] == '${local.cloud_bucket_task.component}' && (!has(c.args) || size(c.args) == 0) && !has(c.lifecycle) && !has(c.livenessProbe) && !has(c.readinessProbe) && !has(c.startupProbe) && (!has(c.ports) || size(c.ports) == 0) && has(c.securityContext) && has(c.securityContext.allowPrivilegeEscalation) && c.securityContext.allowPrivilegeEscalation == false && has(c.securityContext.readOnlyRootFilesystem) && c.securityContext.readOnlyRootFilesystem && (!has(c.securityContext.privileged) || !c.securityContext.privileged) && has(c.securityContext.capabilities) && has(c.securityContext.capabilities.drop) && 'ALL' in c.securityContext.capabilities.drop && !has(c.securityContext.capabilities.add))"
+            message    = "in ${local.cloud_namespace}, a Bucket restore pod has one container ${local.cloud_bucket_task.container} running ${local.cloud_bucket_task.image} with /bin/sh -c, a script and three arguments, no args, port, probe or hook, no privilege escalation, a read-only root and every capability dropped"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "variables.pod.containers.all(c, size(c.command) == 7 && c.command[4].matches('${local.cloud_bucket_task.bucket_re}') && size(c.command[4]) <= 63 && size(c.command[5]) > 0 && size(c.command[5]) <= ${local.cloud_bucket_task.max_key_len} && !c.command[5].startsWith('/') && !c.command[5].matches('(^|/)[.][.]?(/|$)') && !c.command[5].matches('[[:cntrl:]]') && c.command[6].matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))"
+            message    = "in ${local.cloud_namespace}, a Bucket restore's arguments are a Cloud bucket name (p-<project>-<service>-<10 hex digits>), a key of at most ${local.cloud_bucket_task.max_key_len} characters with no leading /, no . or .. segment and no control character, and a date YYYY-MM-DD"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "variables.pod.containers.all(c, (!has(c.env) || c.env.all(e, e.name in ${jsonencode(local.cloud_bucket_task.env_names)} && !has(e.valueFrom))) && has(c.envFrom) && size(c.envFrom) == 1 && has(c.envFrom[0].secretRef) && !has(c.envFrom[0].configMapRef) && c.envFrom[0].secretRef.name == object.metadata.name && !has(c.envFrom[0].prefix) && has(c.resources) && has(c.resources.limits) && ${jsonencode(local.cloud_pod_resources)}.all(r, r in c.resources.limits))"
+            message    = "in ${local.cloud_namespace}, a Bucket restore pod sets only ${join(", ", local.cloud_bucket_task.env_names)} as plain values, reads its key only from its own Secret (the Job's name), and limits CPU, memory and ephemeral storage"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "has(variables.pod.volumes) && variables.pod.volumes.all(v, (has(v.emptyDir) && has(v.emptyDir.sizeLimit)) || (has(v.persistentVolumeClaim) && v.persistentVolumeClaim.claimName == '${local.cloud_bucket_task.claim}' && has(v.persistentVolumeClaim.readOnly) && v.persistentVolumeClaim.readOnly))"
+            message    = "in ${local.cloud_namespace}, a Bucket restore pod may use only bounded emptyDirs and ${local.cloud_bucket_task.claim}, read-only"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "variables.pod.containers.all(c, !has(c.volumeMounts) || c.volumeMounts.all(m, (!has(m.subPath) || m.subPath == '') && (!has(m.subPathExpr) || m.subPathExpr == '') && variables.pod.volumes.exists(v, v.name == m.name && (!has(v.persistentVolumeClaim) || (has(m.readOnly) && m.readOnly && m.mountPath == '${local.cloud_bucket_task.mount_path}')))))"
+            message    = "in ${local.cloud_namespace}, a Bucket restore pod mounts ${local.cloud_bucket_task.claim} read-only at ${local.cloud_bucket_task.mount_path}, with no subPath"
+            reason     = "Forbidden"
+          },
+        ]
+      }
+    }
+    bucket_task_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-bucket-task" }
+      spec = {
+        policyName        = "cloud-bucket-task"
+        validationActions = ["Deny"]
+        matchResources = {
+          namespaceSelector = { matchLabels = { "kubernetes.io/metadata.name" = local.cloud_namespace } }
+        }
+      }
+    }
+    # The Secret of a Bucket restore: the Project's own Garage key, owned by
+    # its Job (same name) so that Kubernetes deletes it with the Job.
+    bucket_task_secret = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-bucket-task-secret" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [
+            { apiGroups = [""], apiVersions = ["v1"], operations = ["CREATE", "UPDATE"], resources = ["secrets"] },
+          ]
+        }
+        matchConditions = [
+          {
+            name       = "is-cloud-reconciler"
+            expression = "request.userInfo.username == '${local.cloud_reconciler_user}'"
+          },
+          {
+            name       = "is-a-bucket-task"
+            expression = local.cloud_bucket_task_named
+          },
+        ]
+        variables = [
+          { name = "owners", expression = "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []" },
+        ]
+        validations = [
+          {
+            expression = "request.operation == 'CREATE' && object.metadata.name.matches('${local.cloud_bucket_task.name_re}') && has(object.type) && object.type == 'Opaque' && size(variables.owners) == 1 && variables.owners.all(o, o.apiVersion == 'batch/v1' && o.kind == 'Job' && has(o.controller) && o.controller && o.name == object.metadata.name) && (!has(object.data) || object.data.all(k, k in ${jsonencode(local.cloud_bucket_task.secret_keys)})) && (!has(object.stringData) || object.stringData.all(k, k in ${jsonencode(local.cloud_bucket_task.secret_keys)}))"
+            message    = "in ${local.cloud_namespace}, cloud-reconciler creates only Secrets ${local.cloud_bucket_task.prefix}<9 hex digits> of type Opaque, owned by the Bucket restore Job of the same name, holding only ${join(", ", local.cloud_bucket_task.secret_keys)}"
+            reason     = "Forbidden"
+          },
+        ]
+      }
+    }
+    bucket_task_secret_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-bucket-task-secret" }
+      spec = {
+        policyName        = "cloud-bucket-task-secret"
+        validationActions = ["Deny"]
+        matchResources = {
+          namespaceSelector = { matchLabels = { "kubernetes.io/metadata.name" = local.cloud_namespace } }
+        }
+      }
+    }
+    # Who may mount Garage's nightly backups (every Project's objects): a
+    # Bucket restore pod in `cloud`, made by its Job, and no other pod in any
+    # namespace, whoever creates it. Bound cluster-wide, for every creator
+    # (the Job controller makes the restore pods, so this is checked on the
+    # pod, not on the reconciler's request). A pod that names PVC
+    # cloud-bucket-backups, or an inline nfs or csi volume on the backup
+    # share, must be that pod; the inline volumes are refused outright.
+    # Elsewhere a PVC of that name cannot reach the share: the PersistentVolume
+    # is bound to cloud/cloud-bucket-backups by its claimRef (buckets.tf).
+    bucket_backups_mount = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-bucket-backups-mount" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [
+            { apiGroups = [""], apiVersions = ["v1"], operations = ["CREATE"], resources = ["pods"] },
+          ]
+        }
+        matchConditions = [{
+          name       = "uses-the-bucket-backups"
+          expression = "has(object.spec.volumes) && object.spec.volumes.exists(v, (has(v.persistentVolumeClaim) && v.persistentVolumeClaim.claimName == '${local.cloud_bucket_task.claim}') || (has(v.nfs) && v.nfs.path.matches('${local.cloud_bucket_backup_share_re}')) || (has(v.csi) && has(v.csi.volumeAttributes) && v.csi.volumeAttributes.exists(k, v.csi.volumeAttributes[k].matches('${local.cloud_bucket_backup_share_re}'))))"
+        }]
+        variables = [
+          { name = "labels", expression = "has(object.metadata.labels) ? object.metadata.labels : {}" },
+          { name = "owners", expression = "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []" },
+        ]
+        validations = [
+          {
+            expression = "!object.spec.volumes.exists(v, has(v.nfs) || has(v.csi))"
+            message    = "Garage's bucket backups are mounted only through PVC ${local.cloud_namespace}/${local.cloud_bucket_task.claim}, never as an inline nfs or csi volume"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "request.namespace == '${local.cloud_namespace}' && '${local.cloud_component_label}' in variables.labels && variables.labels['${local.cloud_component_label}'] == '${local.cloud_bucket_task.component}' && '${local.cloud_bucket_task.task_label}' in variables.labels && size(variables.owners) == 1 && variables.owners.all(o, o.apiVersion == 'batch/v1' && o.kind == 'Job' && has(o.controller) && o.controller && o.name.matches('${local.cloud_bucket_task.name_re}'))"
+            message    = "only a Bucket restore pod (${local.cloud_component_label}=${local.cloud_bucket_task.component}) in ${local.cloud_namespace}, made by its Job ${local.cloud_bucket_task.prefix}<9 hex digits>, may mount ${local.cloud_bucket_task.claim}"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "has(object.spec.automountServiceAccountToken) && object.spec.automountServiceAccountToken == false && !has(object.spec.initContainers) && !has(object.spec.ephemeralContainers) && has(object.spec.securityContext) && has(object.spec.securityContext.runAsUser) && object.spec.securityContext.runAsUser == ${local.cloud_bucket_task.uid} && size(object.spec.containers) == 1 && object.spec.containers.all(c, c.name == '${local.cloud_bucket_task.container}' && c.image == '${local.cloud_bucket_task.image}' && has(c.securityContext) && has(c.securityContext.readOnlyRootFilesystem) && c.securityContext.readOnlyRootFilesystem)"
+            message    = "a pod that mounts ${local.cloud_bucket_task.claim} runs one container ${local.cloud_bucket_task.container} from ${local.cloud_bucket_task.image} as uid ${local.cloud_bucket_task.uid}, with a read-only root, no service account token and no init container"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "object.spec.volumes.all(v, !has(v.persistentVolumeClaim) || v.persistentVolumeClaim.claimName != '${local.cloud_bucket_task.claim}' || (has(v.persistentVolumeClaim.readOnly) && v.persistentVolumeClaim.readOnly)) && object.spec.containers.all(c, !has(c.volumeMounts) || c.volumeMounts.all(m, (!has(m.subPath) || m.subPath == '') && (!has(m.subPathExpr) || m.subPathExpr == '') && !object.spec.volumes.exists(v, v.name == m.name && has(v.persistentVolumeClaim) && v.persistentVolumeClaim.claimName == '${local.cloud_bucket_task.claim}' && !(has(m.readOnly) && m.readOnly))))"
+            message    = "${local.cloud_bucket_task.claim} is mounted read-only, in the volume and in every mount, with no subPath"
+            reason     = "Forbidden"
+          },
+        ]
+      }
+    }
+    bucket_backups_mount_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-bucket-backups-mount" }
+      spec = {
+        policyName        = "cloud-bucket-backups-mount"
+        validationActions = ["Deny"]
       }
     }
     # Cron Services (the cloud repo's B19). Every pod rule applies to the

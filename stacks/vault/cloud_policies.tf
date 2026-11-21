@@ -38,7 +38,16 @@
 #                               oauth2-proxy secrets (a copy of the shared
 #                               client secret and the App's own cookie secret).
 #                               A Service name starts with a letter, so it
-#                               never collides.
+#                               never collides. A Bucket Service's key is
+#                               _cloud/bucket-<service> (cloud B26): written
+#                               by the reconciler, read by the Project's
+#                               SecretStore and by Cloud's console (policy
+#                               cloud-console-buckets below).
+#   secret/cloud/garage         written by Terraform (stacks/garage): Garage's
+#                               admin token, which only Cloud's reconciler
+#                               gets, through ExternalSecret
+#                               cloud-reconciler-garage (ESO's reader role).
+#                               Neither Cloud policy here reaches it.
 # <namespace> is p-<project>. The reconciler writes only under p-*; each
 # namespace's SecretStore reads only its own tree. Both trees are owned by
 # Cloud, not this repo (AGENTS.md, "Cloud-owned objects"), except
@@ -86,6 +95,19 @@ locals {
   # accessor of the kubernetes auth mount.
   cloud_project_policy_template = <<-EOT
     path "secret/data/cloud/{{identity.entity.aliases.@@KUBERNETES_ACCESSOR@@.metadata.service_account_namespace}}/*" {
+      capabilities = ["read"]
+    }
+  EOT
+
+  # Kubernetes auth role cloud-console-buckets (service account cloud-console
+  # in namespace cloud; cloud B26b). `cloud bucket ls`, `cp` and `rm` run in
+  # the console with the Bucket's own key, never Garage's admin token, so the
+  # console reads each Project's Bucket entries and nothing else: no App
+  # secret, no Postgres entry, no other _cloud/ entry, no secret/cloud/system.
+  # `+` matches one path segment (the namespace); the trailing glob is a
+  # prefix match on the last segment.
+  cloud_console_buckets_policy = <<-EOT
+    path "secret/data/cloud/+/_cloud/bucket-*" {
       capabilities = ["read"]
     }
   EOT

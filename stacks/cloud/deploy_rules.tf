@@ -119,9 +119,24 @@ locals {
     # cluster's resolvers answer *.viktorbarzin.me with internal addresses.
     # Pod IPv6 is ULA with no NAT66, so Apps reach the internet over IPv4 only.
     { name = "CLOUD_OUTBOUND_IPV4", value = var.public_ip },
+    # Buckets (cloud B26). `cloud bucket ls`, `cp` and `rm` go through the
+    # console, which calls Garage's S3 with the Project's own Bucket key,
+    # never the admin token. It reads that key from Vault
+    # (secret/cloud/<namespace>/_cloud/bucket-<service>) as Kubernetes auth
+    # role cloud-console-buckets (stacks/vault cloud.tf), logging in with its
+    # service account token. Namespace cloud has no egress policy, and
+    # Garage's NetworkPolicy (stacks/garage) admits namespace cloud on 3900.
+    { name = "GARAGE_S3_URL", value = local.cloud_garage.s3_url },
+    { name = "VAULT_ADDR", value = local.cloud_secretstore_vault_server },
+    { name = "VAULT_KUBERNETES_MOUNT", value = local.cloud_secretstore_project_mount },
+    { name = "VAULT_CONSOLE_ROLE", value = local.cloud_console_vault_role },
     ], var.renovate_account == "" ? [] : [
     { name = "RENOVATE_ACCOUNT", value = var.renovate_account },
   ])
+
+  # The console's Vault role for Bucket keys (stacks/vault cloud.tf, policy
+  # cloud-console-buckets: read on secret/cloud/+/_cloud/bucket-* only).
+  cloud_console_vault_role = "cloud-console-buckets"
 
   cloud_prometheus_url = "http://prometheus-server.monitoring.svc.cluster.local"
   cloud_loki_url       = "http://loki.monitoring.svc.cluster.local:3100"
@@ -217,6 +232,8 @@ locals {
   #                    (local.cloud_reconciler_system_keys). These are read
   #                    once at start, so Reloader's restart is what brings a
   #                    rotated value in.
+  #   GARAGE_ADMIN_TOKEN  B26, Garage's admin token from secret/cloud/garage
+  #                    (ExternalSecret cloud-reconciler-garage), optional.
   # Cloud's own database password is the console's cloud-db-creds, read by
   # @viktorbarzin/pg on every new connection like the console does, so it
   # needs no restart (reload = false).
@@ -226,6 +243,12 @@ locals {
       CLOUD_STATE_URL               = { secret = "${local.cloud_reconciler}-postgres", secret_key = "state-url", key = "state-url", mount = "/secrets/postgres", reload = true }
       POSTGRES_PROVISIONER_PASSWORD = { secret = "${local.cloud_reconciler}-postgres", secret_key = "provisioner-password", key = "provisioner-password", mount = "/secrets/postgres", reload = true }
       REGISTRY_TOKEN                = { secret = "${local.cloud_reconciler}-registry", secret_key = "token", key = "token", mount = "/secrets/registry", reload = true }
+      # Buckets (cloud B26): Garage's admin token, from its own Vault path
+      # secret/cloud/garage (stacks/garage writes it), never
+      # secret/cloud/system. Optional: until stacks/garage has written it
+      # the file is missing and the pod still starts, and Cloud reports
+      # Buckets as unavailable.
+      GARAGE_ADMIN_TOKEN = { secret = "${local.cloud_reconciler}-garage", secret_key = "admin-token", key = "admin-token", mount = "/secrets/garage", reload = true, optional = true }
     },
     {
       for env, key in local.cloud_reconciler_system_keys : env => {
@@ -269,6 +292,13 @@ locals {
       # Renovate bumped that pin on 2026-11-18 and 2026-11-19 while Cloud
       # still ran its own copy, and every task's Job was refused.
       { name = "PG_TASK_IMAGE", value = local.cloud_pg_task.image },
+      # B26: Garage, for Buckets. The admin API creates buckets, keys and
+      # quotas and reads usage; Apps get the S3 address. The restore Jobs
+      # run the image and uid cloud-bucket-task pins (access_rules.tf).
+      { name = "GARAGE_ADMIN_URL", value = local.cloud_garage.admin_url },
+      { name = "GARAGE_S3_URL", value = local.cloud_garage.s3_url },
+      { name = "BUCKET_TASK_IMAGE", value = local.cloud_bucket_task.image },
+      { name = "BUCKET_TASK_UID", value = tostring(local.cloud_bucket_task.uid) },
       # B09: OpenTofu state encryption. The passphrase is read from Vault
       # secret/cloud/state-key by the reconciler itself, never as a file.
       # false since 2026-11-17: every Project state was rewritten encrypted
