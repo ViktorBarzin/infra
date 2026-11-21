@@ -2923,7 +2923,7 @@ serverFiles:
           # Was the ha-sofia automation "Disk usage alert" (2026-11-21).
           - alert: HaSofiaDiskUsageHigh
             expr: max(haos_sensor_unit_percent{job="haos", entity="sensor.disk_usage_percent"}) > 70
-            for: 5m
+            for: 1m
             labels:
               severity: warning
             annotations:
@@ -2940,7 +2940,7 @@ serverFiles:
             expr: |
               max(haos_sensor_temperature_celsius{job="haos", entity="sensor.r730_system_board_inlet_temperature"}) > 34
               or max(haos_sensor_temperature_celsius{job="haos", entity="sensor.temperatura_vlazhnost_garazh_temperature"}) > 30
-            for: 5m
+            for: 1m
             labels:
               severity: warning
             annotations:
@@ -10579,6 +10579,11 @@ extraScrapeConfigs: |
         regex: '(.*)'
         replacement: 'thermostat_kids_room_$${1}'
   - job_name: 'haos'
+    # 30s, not the global 2m: alerts on ha-sofia sensors (group "Sofia home
+    # (Home Assistant)") replaced Home Assistant automations that fired within
+    # seconds, so they need near-HA latency (Viktor, 2026-11-21). One scrape is
+    # ~10.4k samples in ~0.25 s.
+    scrape_interval: 30s
     static_configs:
         - targets:
           - "ha-sofia.viktorbarzin.lan.:8123"
