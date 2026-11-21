@@ -85,11 +85,14 @@ probe p-other app-other "{\"$C\": \"app\", \"$S\": \"other\"}"
 # on the App port. Only the floor stands between them and p-other.
 probe p-third app-shop "{\"$C\": \"app\", \"$S\": \"shop\"}" 3000
 probe p-third app-quotes "{\"$C\": \"app\", \"$S\": \"quotes\", \"$A\": \"internal\"}" 3000
+# A toolbox pod (`cloud psql`, `cloud kv-cli`), for the floor's Redis Pass
+# before its toolbox Deny (B27).
+probe "$ns" toolbox-cache "{\"$C\": \"toolbox\", \"$S\": \"cache\", \"cloud.viktorbarzin.me/target\": \"keyvalue\"}"
 
 # Every probe answers its kubelet readiness probe, which comes from the node:
 # the floors must not block it.
 # Cloud's own pods may still be terminating, so wait for the probes by name.
-if k wait --for=condition=Ready -n "$ns" pod/app-recipes pod/mail-recipes pod/edge-recipes pod/edge-recipes-old pod/auth-recipes pod/app-menu pod/edge-menu pod/auth-menu pod/app-pricing --timeout=180s >/dev/null 2>&1 \
+if k wait --for=condition=Ready -n "$ns" pod/app-recipes pod/mail-recipes pod/edge-recipes pod/edge-recipes-old pod/auth-recipes pod/app-menu pod/edge-menu pod/auth-menu pod/app-pricing pod/toolbox-cache --timeout=180s >/dev/null 2>&1 \
   && k wait --for=condition=Ready -n p-other pod/edge-recipes pod/app-other --timeout=60s >/dev/null 2>&1 \
   && k wait --for=condition=Ready -n p-third pod/app-shop pod/app-quotes --timeout=60s >/dev/null 2>&1; then
   ok "every probe pod in $ns and p-other passes the kubelet's readiness probe"
@@ -149,6 +152,9 @@ dns_pod="$(k get pods -n kube-system -l k8s-app=kube-dns -o jsonpath='{.items[0]
 can    "$ns" app-recipes "$dns_pod:53"                     "App pods reach a CoreDNS pod (TCP 53)"
 can    "$ns" app-recipes "pg.dbaas.svc.cluster.local:5432"  "App pods resolve a Service name through the cluster DNS and reach the primary through it"
 cannot "$ns" app-recipes "$(ip authentik server):9000"     "App pods do not reach the Authentik server"
+redis="$(ip redis redis):6379"
+cannot "$ns" app-recipes "$redis"                          "App pods of a Project with no Key Value do not reach the shared Redis (Cloud's Project policy)"
+cannot "$ns" toolbox-cache "$redis"                        "a toolbox of a Project with no Key Value does not reach the shared Redis"
 can    "$ns" auth-recipes "$(ip authentik server):9000"    "oauth2-proxy reaches the Authentik server on 9000"
 cannot "$ns" auth-recipes "$(ip vault vault):8200"         "oauth2-proxy does not reach Vault"
 cannot "$ns" app-recipes "$(ip vault vault):8200"          "App pods do not reach Vault"
@@ -200,6 +206,10 @@ cannot "${T[@]}" "$(ip "$ns" app-recipes):8080"      "with an allow-all Project 
 cannot "${T[@]}" "$pricing"                          "with an allow-all Project policy, the floor still denies Traefik -> the internal App"
 cannot "$ns" app-menu "$(ip "$ns" app-recipes):8080" "with an allow-all Project policy, the floor still denies App pods -> App pods off the App port"
 cannot homelab-app client "$pricing"                 "with an allow-all Project policy, the floor still denies a homelab namespace -> the internal App"
+can    "$ns" app-recipes "$redis"                    "with an allow-all Project policy, the floor passes App pods to the shared Redis on 6379 (B27)"
+can    "$ns" toolbox-cache "$redis"                  "with an allow-all Project policy, the floor passes a toolbox to the shared Redis on 6379 (kv-cli)"
+cannot "$ns" toolbox-cache "$(ip homelab-app client):8080" "with an allow-all Project policy, the floor still denies a toolbox other homelab pods"
+cannot "$ns" toolbox-cache "$(ip "$ns" app-recipes):8080"  "with an allow-all Project policy, the floor still denies a toolbox its own namespace's pods"
 can    "$ns" edge-recipes "$mail:8080"                     "with an allow-all Project policy, the edge still reaches the mail-port probe on 8080"
 for port in 25 465 587 2525; do
   cannot "$ns" edge-recipes "$mail:$port"                  "with an allow-all Project policy, the floor still denies TCP $port"

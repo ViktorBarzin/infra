@@ -227,6 +227,11 @@ locals {
   #   REGISTRY_TOKEN   the read:packages ghcr token from secret/cloud/system
   #                    (ghcr_pull_token), copied into each Project; M5 also
   #                    reads the digest a build pushed with it
+  #   REDIS_TENANTS_TOKEN  B27: the bearer token redis-acl-sync sends to the
+  #                    tenant route, Cloud's copy at secret/cloud/redis-tenants
+  #                    (stacks/redis acl.tf writes both copies). Optional: the
+  #                    volume mounts empty until that path exists, and with no
+  #                    file the reconciler serves no tenant route.
   #   GITHUB_DISPATCH_TOKEN, GITHUB_OWNER_READ_TOKEN, FORGEJO_READ_TOKEN,
   #   FORGEJO_ADMIN_TOKEN, SECRETS_PRIVATE_KEY  M5, from secret/cloud/system
   #                    (local.cloud_reconciler_system_keys). These are read
@@ -248,7 +253,8 @@ locals {
       # secret/cloud/system. Optional: until stacks/garage has written it
       # the file is missing and the pod still starts, and Cloud reports
       # Buckets as unavailable.
-      GARAGE_ADMIN_TOKEN = { secret = "${local.cloud_reconciler}-garage", secret_key = "admin-token", key = "admin-token", mount = "/secrets/garage", reload = true, optional = true }
+      GARAGE_ADMIN_TOKEN  = { secret = "${local.cloud_reconciler}-garage", secret_key = "admin-token", key = "admin-token", mount = "/secrets/garage", reload = true, optional = true }
+      REDIS_TENANTS_TOKEN = { secret = "${local.cloud_reconciler}-redis-tenants", secret_key = "token", key = "token", mount = "/secrets/redis-tenants", reload = true, optional = true }
     },
     {
       for env, key in local.cloud_reconciler_system_keys : env => {
@@ -258,6 +264,12 @@ locals {
   )
 
   cloud_reconciler_reload = sort(distinct([for f in local.cloud_reconciler_files : f.secret if f.reload]))
+
+  # B27: the read-only tenant route redis-acl-sync asks every minute (GET
+  # /internal/redis-tenants, bearer REDIS_TENANTS_TOKEN), the image's
+  # TENANTS_PORT. Not on any Ingress; the reconciler's NetworkPolicy
+  # (reconciler.tf) admits only the sync job's pods.
+  cloud_reconciler_tenants_port = 9091
 
   # Settings besides the files. Everything else stays at the defaults in the
   # cloud repo's src/app.config.ts (`reconciler`), which name this cluster.
@@ -288,6 +300,15 @@ locals {
       { name = "OAUTH2_PROXY_IMAGE", value = local.cloud_oauth2_proxy.image },
       # B22: the psql toolbox image, the one cloud-managed-toolbox-job pins.
       { name = "TOOLBOX_POSTGRES_IMAGE", value = local.cloud_toolbox.images.postgres },
+      # B27: the kv-cli toolbox image, pinned the same way.
+      { name = "TOOLBOX_KEYVALUE_IMAGE", value = local.cloud_toolbox.images.keyvalue },
+      # B27: the tenant route redis-acl-sync reads (reconciler.tf).
+      { name = "TENANTS_PORT", value = tostring(local.cloud_reconciler_tenants_port) },
+      # B27: the Key Value storage_high and keyvalue_full notifications read
+      # cloud_kv_* from Prometheus every 5 min. Egress from namespace cloud
+      # (tier 4-aux) is open (wave1-egress-observe-tier34), and monitoring
+      # has no NetworkPolicy, as for the console.
+      { name = "PROMETHEUS_URL", value = local.cloud_prometheus_url },
       # B28: the Postgres task Jobs' image, the one cloud-pg-task pins.
       # Renovate bumped that pin on 2026-11-18 and 2026-11-19 while Cloud
       # still ran its own copy, and every task's Job was refused.

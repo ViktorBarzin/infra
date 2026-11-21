@@ -349,6 +349,7 @@ docs = [
 ]))
 (d / "project_role").write_text(k["project_role"])
 (d / "console_exec.json").write_text(json.dumps(k["console_exec"]))
+(d / "toolbox.json").write_text(json.dumps(k["toolbox"]))
 # The live host guard: Kyverno's ValidatingPolicy and the ClusterRole that
 # lets Kyverno's admission controller read IngressRoutes.
 lr = k["live_guard_role"]
@@ -375,9 +376,13 @@ if contract["images"]["edge"] != k["edge"]["image"]:
     problems.append(f"edge image: Cloud renders {contract['images']['edge']}, infra requires {k['edge']['image']}")
 if contract["images"]["oauth2Proxy"] != k["oauth2_proxy"]["image"]:
     problems.append(f"oauth2-proxy image: Cloud renders {contract['images']['oauth2Proxy']}, infra requires {k['oauth2_proxy']['image']}")
-# The psql toolbox image (B22): the one Cloud runs is the one the policy pins.
-if contract.get("toolboxImages") is not None and contract["toolboxImages"] != k["toolbox"]["images"]:
-    problems.append(f"toolbox images: Cloud runs {contract['toolboxImages']}, infra pins {k['toolbox']['images']}")
+# The toolbox images (B22, B27): each image Cloud runs is the one the policy
+# pins for that target. Infra may pin a target before Cloud runs it (Key
+# Value, B27, lands in infra first), never the other way round.
+if contract.get("toolboxImages") is not None:
+    for target, image in contract["toolboxImages"].items():
+        if k["toolbox"]["images"].get(target) != image:
+            problems.append(f"toolbox image for {target}: Cloud runs {image}, infra pins {k['toolbox']['images'].get(target)}")
 missing = set(k["strip_required"]) - set(contract["stripCookies"])
 if missing:
     problems.append(f"Cloud's strip list {contract['stripCookies']} lacks {sorted(missing)}")
@@ -433,11 +438,17 @@ for i, r in enumerate(egress[:smtp[0] if smtp else 0]):
     ports = r.get("destination", {}).get("ports")
     if not ports or set(ports) & set(k["denied_ports"]):
         problems.append(f"floor rule {i} comes before the mail-port Deny and lets a mail port through: {r}")
-# A psql toolbox (B22) gets DNS and the CNPG primary, then a Deny before any
-# Pass: no internet, no other pod.
+# A toolbox (B22) gets DNS and the CNPG primary, and the Pass to the shared
+# Redis on 6379 (B27, Key Value; the Project policy decides it), then a Deny
+# before any other Pass: no internet, no other pod.
+redis_pass = {"action": "Pass", "protocol": "TCP", "destination": {"namespaceSelector": "projectcalico.org/name == 'redis'", "selector": "app == 'redis-v2'", "ports": [6379]}}
+redis_at = [i for i, r in enumerate(egress) if r == redis_pass]
+if len(redis_at) != 1:
+    problems.append(f"floor: want exactly one Pass to the shared Redis pods on 6379 (B27), found {redis_at}")
+other_pass = min([i for i, r in enumerate(egress) if r.get("action") == "Pass" and r != redis_pass], default=len(egress))
 tb_deny = [i for i, r in enumerate(egress) if r == {"action": "Deny", "source": {"selector": "cloud.viktorbarzin.me/component == 'toolbox'"}}]
-if len(tb_deny) != 1 or tb_deny[0] > first_pass:
-    problems.append(f"floor: no single Deny of toolbox pods before the first Pass (rule {tb_deny}, first Pass {first_pass})")
+if len(tb_deny) != 1 or tb_deny[0] > other_pass or (redis_at and redis_at[0] > tb_deny[0]):
+    problems.append(f"floor: no single Deny of toolbox pods after the Redis Pass and before every other Pass (rule {tb_deny}, Redis Pass {redis_at}, first other Pass {other_pass})")
 # Buckets (B26): one Pass to Garage's pods on its S3 port only, after the
 # mail-port and toolbox Denies; never an Allow, so Cloud's Project policy
 # decides which Projects reach it.
@@ -1037,6 +1048,7 @@ if [ -f "$CLOUD_REPO/src/reconciler/toolbox.ts" ]; then
   [ -s "$TMP/dump/toolbox-job.json" ] && ok "Cloud's own code built a toolbox Job to check" || bad "Cloud has toolbox.ts but render.ts wrote no toolbox Job"
   grep -q '"name": "cloud-console-exec"' "$TMP/dump/objects.json" && ok "Cloud's modules bound the console's exec role in the Project namespace" || bad "Cloud has toolbox.ts but its modules wrote no cloud-console-exec RoleBinding"
 fi
+cp "$TMP/toolbox.json" "$TMP/dump/infra-toolbox.json" 2>/dev/null
 if [ -s "$TMP/dump/objects.json" ] && python3 "$HERE/tests/cloud-access/variants.py" "$TMP/dump" "$TMP/cases" p-demo >"$TMP/variants.log" 2>&1; then
   check="$(pods_check "$TMP/dump" "$TMP/cases" all-kinds)" && ok "every rendered Deployment's pod was admitted: $check" || bad "rendered pods: $check"
   # The SecretStore's service account must exist for a pod to name it.
@@ -1193,6 +1205,28 @@ PY2
     --from-literal=username=p_demo --from-literal=password=x --from-literal=database=p_demo >/dev/null 2>&1
   python3 -c 'import json,sys; j=json.load(open(sys.argv[1])); j["metadata"]["namespace"]="p-demo"; j["spec"]["template"]["metadata"]["labels"]; print(json.dumps(j))' "$TMP/dump/toolbox-job.json" >"$TMP/toolbox-p-demo.json"
   expect_ok "the reconciler starts Cloud's toolbox Job in p-demo" kr create -f "$TMP/toolbox-p-demo.json"
+  # B27: a Key Value toolbox (`cloud kv-cli`), the same Job with target
+  # keyvalue, the pinned redis image and REDISCLI_AUTH from kv-<its Key
+  # Value>, until Cloud's toolbox.ts writes one itself.
+  ka create secret generic "kv-$tb_svc" -n p-demo --from-literal=username=p_demo_kv --from-literal=password=x \
+    --from-literal=host=redis.invalid --from-literal=port=6379 >/dev/null 2>&1
+  python3 - "$TMP/toolbox-p-demo.json" "$TMP/toolbox.json" >"$TMP/kv-toolbox-p-demo.json" <<'PY2'
+import json, sys
+j, tb = json.load(open(sys.argv[1])), json.load(open(sys.argv[2]))
+svc = j["metadata"]["labels"]["cloud.viktorbarzin.me/service"]
+session = "00000000-0000-4000-8000-00000000b027"
+for md in (j["metadata"], j["spec"]["template"]["metadata"]):
+    md["labels"]["cloud.viktorbarzin.me/target"] = "keyvalue"
+    md["labels"]["cloud.viktorbarzin.me/session"] = session
+j["metadata"]["name"] = "toolbox-" + session.replace("-", "")[:9]
+c = j["spec"]["template"]["spec"]["containers"][0]
+c["image"] = tb["images"]["keyvalue"]
+c["env"] = [{"name": "REDISCLI_AUTH", "valueFrom": {"secretKeyRef": {"name": "kv-" + svc, "key": "password"}}},
+            {"name": "HOME", "value": "/tmp"}, {"name": "TERM", "value": "xterm-256color"}]
+print(json.dumps(j))
+PY2
+  expect_ok "the reconciler starts a Key Value toolbox Job in p-demo" kr create -f "$TMP/kv-toolbox-p-demo.json"
+  kv_job="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["metadata"]["name"])' "$TMP/kv-toolbox-p-demo.json")"
   expect_ok "admin starts an App pod (app, edge and oauth2-proxy containers) in p-demo" ka create -f - < <(exec_pod_doc p-demo app menu app edge oauth2-proxy)
   ka create namespace exec-plain >/dev/null 2>&1
   ka create -f - >/dev/null < <(exec_pod_doc exec-plain app menu app)
@@ -1206,6 +1240,9 @@ PY2
     && ok "the toolbox pod runs, as the App uid with a read-only root and no token" \
     || bad "the toolbox pod did not run: $(ka get pods -n p-demo -l "job-name=$tb_job" -o jsonpath='{.items[*].status}') $(ka get events -n p-demo --field-selector reason=FailedCreate -o jsonpath='{.items[*].message}')"
   tb_pod="$(ka get pods -n p-demo -l "job-name=$tb_job" -o jsonpath='{.items[0].metadata.name}')"
+  ka wait --for=condition=Ready pod -l "job-name=$kv_job" -n p-demo --timeout=300s >/dev/null 2>&1 \
+    || bad "the Key Value toolbox pod did not run: $(ka get pods -n p-demo -l "job-name=$kv_job" -o jsonpath='{.items[*].status}')"
+  kv_pod="$(ka get pods -n p-demo -l "job-name=$kv_job" -o jsonpath='{.items[0].metadata.name}')"
   for ns in exec-plain cloud; do ka wait --for=condition=Ready pod/exec-app -n "$ns" --timeout=120s >/dev/null 2>&1; done
   EXEC_REFUSED="may exec only"
   expect_ok   "the console runs sh in an App pod's app container over a WebSocket, as Cloud does" ws_exec p-demo exec-app app sh
@@ -1219,6 +1256,11 @@ PY2
       ok "the console runs psql in the toolbox container over a WebSocket: $out"
     else bad "the console could not run psql in the toolbox: $out"; fi
     expect_fail "the console cannot run sh in the toolbox container" "$EXEC_REFUSED" kc exec -n p-demo "$tb_pod" -c toolbox -- sh
+    if out="$(ws_exec p-demo "$kv_pod" toolbox redis-cli --version 2>&1)" && grep -q "redis-cli 8" <<<"$out"; then
+      ok "the console runs redis-cli in a Key Value toolbox over a WebSocket: $out"
+    else bad "the console could not run redis-cli in the Key Value toolbox: $out"; fi
+    expect_fail "the console cannot run sh in a Key Value toolbox" "$EXEC_REFUSED" kc exec -n p-demo "$kv_pod" -c toolbox -- sh
+    expect_fail "the console cannot run redis-server in a Key Value toolbox" "$EXEC_REFUSED" kc exec -n p-demo "$kv_pod" -c toolbox -- redis-server
     if out="$(ka exec -n p-demo "$tb_pod" -c toolbox -- sh -c 'id -u; touch /x 2>&1; ls /var/run/secrets/kubernetes.io 2>&1; printenv PGUSER' 2>&1)" \
        && grep -q '^10001$' <<<"$out" && grep -qi "read-only" <<<"$out" && grep -qi "no such file" <<<"$out" && grep -q '^p_demo$' <<<"$out"; then
       ok "the toolbox runs as uid 10001 with a read-only root, no service account token and the Postgres role in PGUSER"
@@ -1233,6 +1275,7 @@ PY2
   ka delete rolebinding console-mistake -n cloud >/dev/null 2>&1
   ka delete pod exec-app -n cloud --wait=false >/dev/null 2>&1
   ka delete job "$tb_job" -n p-demo --wait=false >/dev/null 2>&1
+  ka delete job "$kv_job" -n p-demo --wait=false >/dev/null 2>&1
   ka delete pod exec-app -n p-demo --wait=false >/dev/null 2>&1
 fi
 

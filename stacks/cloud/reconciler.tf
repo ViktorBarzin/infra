@@ -267,6 +267,10 @@ resource "kubernetes_deployment" "reconciler" {
             name           = "metrics"
             container_port = local.cloud_reconciler_metrics_port
           }
+          port {
+            name           = "tenants"
+            container_port = local.cloud_reconciler_tenants_port
+          }
 
           dynamic "env" {
             for_each = local.cloud_reconciler_env
@@ -385,10 +389,17 @@ resource "kubernetes_service" "reconciler" {
       port        = local.cloud_reconciler_metrics_port
       target_port = local.cloud_reconciler_metrics_port
     }
+    port {
+      name        = "tenants"
+      port        = local.cloud_reconciler_tenants_port
+      target_port = local.cloud_reconciler_tenants_port
+    }
   }
 }
 
-# Nothing calls the reconciler; only Prometheus reads /metrics.
+# Prometheus reads /metrics; the redis-acl-sync CronJob's pods (label
+# app=redis-acl-sync in namespace redis, stacks/redis acl.tf) read the tenant
+# route (B27). Nothing else calls the reconciler.
 resource "kubernetes_network_policy_v1" "reconciler" {
   metadata {
     name      = "${local.cloud_reconciler}-ingress"
@@ -412,5 +423,62 @@ resource "kubernetes_network_policy_v1" "reconciler" {
         protocol = "TCP"
       }
     }
+    ingress {
+      from {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "redis"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            app = "redis-acl-sync"
+          }
+        }
+      }
+      ports {
+        port     = tostring(local.cloud_reconciler_tenants_port)
+        protocol = "TCP"
+      }
+    }
   }
+}
+
+# B27: Cloud's copy of the tenant route's token (stacks/redis acl.tf writes
+# secret/cloud/redis-tenants). Its own ExternalSecret and path, never
+# secret/cloud/system. Until stacks/redis has written the path, ESO cannot
+# sync it and the reconciler runs without a tenant route.
+resource "kubernetes_manifest" "reconciler_redis_tenants" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "${local.cloud_reconciler}-redis-tenants"
+      namespace = module.console.namespace
+    }
+    spec = {
+      refreshInterval = "2m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "${local.cloud_reconciler}-redis-tenants"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+        }
+      }
+      data = [
+        { secretKey = "token", remoteRef = { key = "cloud/redis-tenants", property = "token" } },
+      ]
+    }
+  }
+  depends_on = [module.console]
 }

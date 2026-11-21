@@ -796,6 +796,45 @@ stop answering their callers; public and private Apps are unaffected.
 
 If Cloud's `APP_PORT` changes, change `cloud_app_port` in the same release.
 
+## Apply B27 (Key Value)
+
+Cloud's Key Value kind (cloud backlog B27) puts each Project's data on the
+shared Redis under its own ACL user, `p_<project>_<service>_<hash>`,
+confined to keys and channels `p:<project>:<service>:*`. Land it only
+after B40 R4 has locked Redis's `default` user. Apply in this order:
+
+1. `stacks/vault`: policy `ci` may write `secret/redis/cloud-tenants` and
+   `secret/cloud/redis-tenants`; policy `redis-acl-sync` may read the first.
+2. `stacks/redis`: the token in both Vault paths, `acl-admin`'s new rule
+   (`~p:* +scan +memory|usage +unlink`), the sync's tenant section, the
+   Redis NetworkPolicy's namespaceSelector
+   `cloud.viktorbarzin.me/managed=true`. Until Cloud serves its route the
+   sync logs "Cloud tenants route unreachable", keeps the tenants Redis
+   holds (none) and `CloudKeyValueTenantsFetchFailing` fires after 15 min.
+3. `stacks/cloud`: ExternalSecret `cloud-reconciler-redis-tenants`, the
+   reconciler's `REDIS_TENANTS_TOKEN_FILE`, `TENANTS_PORT` and
+   `TOOLBOX_KEYVALUE_IMAGE`, port `tenants` 9091 on Service
+   `cloud-reconciler` and the NetworkPolicy rule that admits only
+   `app=redis-acl-sync` pods from namespace `redis`, the egress floor's
+   Pass to the Redis pods on 6379 (before the toolbox Deny), the toolbox
+   rules for target `keyvalue` (Secret `kv-<name>`, the redis image) and
+   `redis-cli` in `cloud-console-exec`. The token volume is optional, so
+   the reconciler starts before ESO has synced it.
+4. The Cloud release with B27.
+
+Check it: `kubectl -n redis logs job/<latest redis-acl-sync job>` ends `ok`
+with no tenants warning; a fixture App with `cache: {kind: keyvalue, size:
+nano}` and `connects: [cache]` answers `/kv-selftest` with `ok` within 2
+minutes of its apply (the sync runs every minute);
+`cloud_kv_ready{project="<p>",service="cache"}` is 1; `cloud kv-cli <p>
+cache` answers `PING` with `PONG` and `KEYS *` with `NOPERM`.
+
+Rollback: remove the Key Value kind (a Cloud release); the route stops
+listing tenants and the sync deletes their users on its next run, keeping
+their keys ([redis-acl.md](redis-acl.md), "Purge"). Revert the infra
+commit and apply the same stacks in reverse order to remove the route's
+token, port and rules.
+
 ## CrowdSec and the home address
 
 Project pods leave through the home WAN, so a request from a Project App to
@@ -1468,15 +1507,20 @@ Since cloud backlog B22 `cloud shell <project> <app>` runs `sh` in the
 `app` container of a ready App pod, and `cloud psql <project> <postgres>`
 runs `psql` in a toolbox pod the reconciler starts for that one session
 (Job `toolbox-<first 9 hex of the session id>`, component `toolbox`,
-image `postgres:18-alpine` pinned in `cloud_toolbox`). Both go through
+image `postgres:18-alpine` pinned in `cloud_toolbox`). Since B27 `cloud
+kv-cli <project> <keyvalue>` runs `redis-cli` the same way in a toolbox
+with target `keyvalue` (image `redis:8.10.3-alpine`, `REDISCLI_AUTH` from
+Secret `kv-<keyvalue>`, the user and host as arguments). All three go through
 `pods/exec` as the console's service account `cloud/cloud-console`, which
 holds ClusterRole `cloud-console-exec` (pods get and list, pods/exec
 get and create) only through RoleBinding `cloud-console-exec` in each `p-*`
 namespace, made by Cloud's `modules/project`. Admission policy
 `cloud-console-exec` lets it run only `sh` in container `app` and `psql`
-in container `toolbox`, in managed `p-*` namespaces. The toolbox holds the
-Postgres's own role from Secret `pg-<postgres>`, no Kubernetes token, and
-the egress floor lets it reach DNS and the CNPG primary only. A session
+or `redis-cli` in container `toolbox`, in managed `p-*` namespaces. The
+toolbox holds its Service's own credentials (Secret `pg-<postgres>` or
+`kv-<keyvalue>`), no Kubernetes token, and the egress floor lets it reach
+DNS, the CNPG primary and the shared Redis only (Redis where the Project
+policy allows it, that is with a Key Value). A session
 lasts at most 1 h and ends after 15 min with no bytes either way; a
 Project runs one psql session at a time.
 
@@ -1534,6 +1578,8 @@ within 15 s, at its next beat.
 | `CloudBuildsFailingForCloud` | no | "Builds fail for Cloud's reason", below |
 | `CloudReconcilerLoopStalled` | no | "A reconciler loop stalled", below |
 | `CloudProvisionerForeignRole`, `CloudProjectRoleUnlimited`, `CloudProjectConnectionsOverCeiling` | yes | their summaries hold the query; [docs/agents/databases.md](../agents/databases.md), "Cloud" |
+| `CloudKeyValueTotalHigh`, `CloudKeyValueTenantsFetchFailing`, `RedisMemoryHigh` | no | [redis-acl.md](redis-acl.md), "Cloud Key Value tenants" |
+| `RedisForeignUser` | yes | [redis-acl.md](redis-acl.md), "Foreign users" |
 
 ### Postgres tasks fail
 

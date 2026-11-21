@@ -32,11 +32,15 @@
 #      25, 465, 587 and 2525 are denied even to a pod the sender may reach on
 #      8080 (and to smtp.gmail.com with CLOUD_CALICO_INTERNET=1, where
 #      1.1.1.1:443 connects).
+#      Cloud's Project policy for a Project with no Key Value keeps App pods
+#      off the shared Redis (B27).
 #      Then, with an allow-all Project policy in the default tier, the floor
 #      alone still denies Traefik to oauth2-proxy pods, oauth2-proxy pods to
 #      edge pods (the private App's path before app-kit K1), Traefik to
 #      App pods (the internal App too), App pods to App pods off the App
-#      port, a homelab namespace to the internal App, and the mail ports.
+#      port, a homelab namespace to the internal App, and the mail ports; it
+#      passes App pods and a toolbox pod to the shared Redis on 6379 (B27)
+#      and still denies the toolbox everything else.
 #
 # Needs docker, kind, kubectl, helm, python3 with PyYAML, bun, terraform (for
 # `terraform console`) and a cloud repo checkout with its pinned OpenTofu and
@@ -159,6 +163,8 @@ standin authentik server '{"app.kubernetes.io/name": "authentik", "app.kubernete
 standin dbaas primary '{"cnpg.io/cluster": "pg", "cnpg.io/instanceRole": "primary"}' 5432
 standin dbaas replica '{"cnpg.io/cluster": "pg", "cnpg.io/instanceRole": "replica"}' 5432
 standin vault vault '{"app.kubernetes.io/name": "vault"}' 8200
+# The shared Redis (B27, Key Value), on its real port and label.
+standin redis redis '{"app": "redis-v2"}' 6379
 kubectl create service clusterip pg -n dbaas --tcp=5432:5432 >/dev/null
 kubectl set selector service pg -n dbaas 'cnpg.io/instanceRole=primary' >/dev/null
 # Two more Project namespaces for the cross-Project checks, with no Project
@@ -173,7 +179,7 @@ metadata:
     pod-security.kubernetes.io/enforce: restricted
 EOF
 done
-for n in traefik homelab-app authentik dbaas vault; do
+for n in traefik homelab-app authentik dbaas vault redis; do
   kubectl wait --for=condition=Ready pod --all -n "$n" --timeout=180s >/dev/null || { bad "stand-in pods in $n not Ready"; }
 done
 
