@@ -1,5 +1,5 @@
 {
-  "acl-admin": "~p:* resetchannels -@all +ping +acl +client|list +multi +exec +scan +memory|usage +unlink",
+  "acl-admin": "~p:* ~redis-acl-sync:* resetchannels -@all +ping +acl +client|list +multi +exec +scan +memory|usage +unlink +get +set",
   "exporter": "resetchannels -@all +ping +client|setname +client|getname +client|id +client|info +info +config|get +slowlog|len +slowlog|get +latency|latest +latency|histogram +command|info +cluster|info +select +dbsize",
   "backup": "resetchannels -@all +ping +bgsave +sync +psync +replconf",
   "probe": "resetchannels -@all +ping",

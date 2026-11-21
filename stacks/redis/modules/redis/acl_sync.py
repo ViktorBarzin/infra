@@ -143,18 +143,55 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 # redis:8.10.3): MOVE and COPY ... DB n put keys in another db, where they
 # are never measured, purged or evicted; SCRIPT KILL stops another client's
 # script; DBSIZE and the PUBSUB introspection subcommands show other
-# tenants' keys and channels. SWAPDB, RESTORE, MIGRATE and SORT ... STORE
-# are already refused by -@dangerous; LMOVE, SUNIONSTORE and RENAME to
-# another prefix by the key pattern.
+# tenants' keys and channels. Second review: SCRIPT DEBUG SYNC with EVAL
+# blocks the whole server; the search module's commands (FT._DROPIFX has no
+# key spec and dropped another user's index); CLIENT TRACKING ... BCAST
+# sends the names of every key written by anyone; TS.MGET, TS.MRANGE,
+# TS.MREVRANGE, TS.QUERYINDEX and TS.QUERYLABELS search every time series
+# by label; the keyless HIMPORT session subcommands hold memory outside any
+# key; LOLWUT burns CPU on demand. SWAPDB, RESTORE, MIGRATE and SORT ...
+# STORE are already refused by -@dangerous; LMOVE, SUNIONSTORE and RENAME
+# to another prefix by the key pattern. acl_sync_test.py walks COMMAND and
+# fails on any keyless command a tenant may run that its reviewed
+# allowlist does not name.
 TENANT_DENIED = (
     "-move -copy -script|kill -dbsize -pubsub|channels -pubsub|shardchannels -pubsub|numsub "
-    "-pubsub|shardnumsub -pubsub|numpat"
+    "-pubsub|shardnumsub -pubsub|numpat "
+    "-script|debug -client|tracking -himport|prepare -himport|discard -himport|discardall -lolwut"
+)
+# Module commands. redis:8.10.3-alpine ships the search, timeseries, bloom
+# and json modules, but redis-v2 runs redis-server directly (main.tf), which
+# skips the image's entrypoint that loads them: today none is loaded, and
+# ACL SETUSER refuses a rule that names an unknown category or command. So
+# the sync reads ACL CAT every run and adds these only for a loaded module.
+# Bloom's keyless commands and json's are refused or have key specs already
+# (acl_sync_test.py walks both configurations).
+MODULE_DENIALS: tuple[tuple[str, str], ...] = (
+    ("search", "-@search"),
+    ("timeseries", "-ts.mget -ts.mrange -ts.mrevrange -ts.queryindex -ts.querylabels"),
 )
 TENANT_RULES = (
     "-@all +@read +@write +@keyspace +@hash +@list +@set +@sortedset +@stream +@string +@pubsub "
     "+@transaction +@scripting +@connection -@dangerous -select -scan -randomkey -function -script|flush "
     + TENANT_DENIED
 )
+def module_denials(categories: set[str]) -> str:
+    """The module part of the tenant rules for the categories ACL CAT lists."""
+    return " ".join(rule for category, rule in MODULE_DENIALS if category in categories)
+
+
+def _known_module_denials() -> list[str]:
+    found = [""]
+    for _, rule in MODULE_DENIALS:
+        found += [f"{f} {rule}".strip() for f in found]
+    return found
+
+
+def tenant_rules(full: bool, extra: str = "") -> str:
+    base = TENANT_FULL_RULES if full else TENANT_RULES
+    return f"{base} {extra}" if extra else base
+
+
 # Over its Size: read and delete only. No scripts and no PUBLISH, which
 # would write or cost memory; MULTI/EXEC/WATCH stay so a client's
 # transaction of reads and deletes still runs.
@@ -171,24 +208,40 @@ MAX_TENANTS = 10000
 MAX_TENANT_BYTES = 1 << 40
 ANSWER_MAX_BYTES = 8 * 1024 * 1024
 
-# Measurement, every MEASURE_EVERY_SECONDS: one SCAN MATCH p:* pass over db
-# 0 (COUNT SCAN_COUNT a call; SCAN visits every key of db 0 whatever the
-# MATCH, 5,828 keys on 2026-11-21), MEMORY USAGE for at most
-# MEMORY_SAMPLE_PER_TENANT keys of each tenant, pipelined PIPELINE_BATCH at
-# a time, and an extrapolation for a bigger tenant (SCAN's order follows the
-# hash table, so the first keys are a fair sample). The key count is exact.
-# MEMORY USAGE ... SAMPLES 0 reads every element of a list, set, hash or
-# sorted set, so a few small elements cannot hide a big key. At most
-# MEMORY_USAGE_PER_RUN calls a run across all tenants; a tenant left with no
-# sample after that has no byte count this run and keeps its mode.
-# Cost at 10,000 tenant keys: SCAN of db 0 at about 16,000 keys is 16 calls,
-# plus 10 pipelined batches of 1,000 MEMORY USAGE, about 10 ms of Redis CPU
-# for small strings and well under a second of wall time.
+# Measurement, every MEASURE_EVERY_SECONDS, in two passes over db 0.
+#  1. Count: one SCAN MATCH p:* pass (COUNT SCAN_COUNT a call) counts each
+#     tenant's keys exactly and UNLINKs the keys of purged prefixes. SCAN
+#     visits every key of db 0 whatever the MATCH (5,828 keys on
+#     2026-11-21): about 6 calls today.
+#  2. Size: a second SCAN that goes on from the cursor the last run left,
+#     sending MEMORY USAGE <key> SAMPLES 0 (every element, so small first
+#     elements cannot hide a big list) for every tenant key it meets,
+#     pipelined, until MEMORY_USAGE_PER_RUN calls; it may finish the SCAN
+#     page it is on, so a run sends at most the cap plus one page. When the
+#     SCAN comes back to 0 the cycle is complete and every tenant key
+#     present for the whole cycle was sized once.
+# The cursor and each tenant's running total live in Redis itself, in the
+# string key STATE_KEY: acl-admin may GET and SET it (its rule names
+# ~redis-acl-sync:*), no tenant can (they hold p:<project>:<service>:*
+# only), it has no TTL so volatile-lru never evicts it, and the AOF keeps it
+# across restarts. A missing or unreadable value starts a new cycle, which
+# only costs time. The pushgateway is not state; the ACL list holds no
+# numbers.
+# The estimate is conservative: a tenant's bytes are its running total plus
+# every key not sized yet in this cycle counted at the largest key sized for
+# it (this cycle or the last). A complete cycle within one run (up to
+# MEMORY_USAGE_PER_RUN tenant keys in all) makes it exact. A cycle over K
+# tenant keys takes ceil(K / MEMORY_USAGE_PER_RUN) measuring runs; a tenant
+# with more than MAX_KEYS_PER_TENANT keys, which alone would fill a run, is
+# treated as over its Size. Cost at 10,000 tenant keys: about 16 + 16 SCAN
+# calls and 10 batches of 1,000 MEMORY USAGE, about 10 ms of Redis CPU for
+# small strings.
 MEASURE_EVERY_SECONDS = 300
 SCAN_COUNT = 1000
 PIPELINE_BATCH = 1000
-MEMORY_SAMPLE_PER_TENANT = 10000
 MEMORY_USAGE_PER_RUN = 100000
+MAX_KEYS_PER_TENANT = 100000
+STATE_KEY = "redis-acl-sync:kv-measure"
 
 
 @dataclass(frozen=True)
@@ -264,8 +317,8 @@ def parse_tenant_answer(doc: object) -> TenantAnswer:
     return TenantAnswer(tenants, purge, warnings)
 
 
-def tenant_user(tenant: Tenant, full: bool) -> User:
-    rules = TENANT_FULL_RULES if full else TENANT_RULES
+def tenant_user(tenant: Tenant, full: bool, extra: str = "") -> User:
+    rules = tenant_rules(full, extra)
     p = tenant.prefix
     return User(
         name=tenant.name,
@@ -280,13 +333,16 @@ def parse_tenant_line(line: str) -> tuple[Tenant, bool] | None:
     m = TENANT_LINE_RE.match(line)
     if m is None or m.group(3) != m.group(4) or not TENANT_NAME_RE.match(m.group(1)):
         return None
-    if m.group(5) not in (TENANT_RULES, TENANT_FULL_RULES):
+    # Any module part, so a line written before a module came or went is
+    # still a tenant: the plan rewrites it, and it is never "foreign".
+    shapes = {tenant_rules(f, e): f for f in (False, True) for e in _known_module_denials()}
+    if m.group(5) not in shapes:
         return None
     prefix_match = TENANT_PREFIX_RE.match(m.group(3))
     if prefix_match is None:
         return None
     tenant = Tenant(m.group(1), m.group(2), m.group(3), prefix_match.group(1), prefix_match.group(2))
-    return tenant, m.group(5) == TENANT_FULL_RULES
+    return tenant, shapes[m.group(5)]
 
 
 def tenants_from_acl(current: dict[str, str]) -> list[Tenant]:
@@ -343,6 +399,46 @@ class Usage:
     bytes: dict[str, float]
     purged: int = 0
     memory_usage_calls: int = 0
+    cycle_complete: bool = False
+    too_many_keys: set[str] = field(default_factory=set)
+
+
+@dataclass
+class MeasureState:
+    """The size pass's progress, kept in STATE_KEY between runs."""
+
+    cursor: str = "0"
+    # prefix -> [bytes sized this cycle, keys sized, largest key]
+    partial: dict[str, list[int]] = field(default_factory=dict)
+    # prefix -> largest key of the last complete cycle
+    largest: dict[str, int] = field(default_factory=dict)
+
+
+def parse_state(raw: object) -> MeasureState:
+    """STATE_KEY's value, or a fresh state when it is missing or broken."""
+    if not isinstance(raw, str):
+        return MeasureState()
+    try:
+        doc = json.loads(raw)
+    except ValueError:
+        return MeasureState()
+    if not isinstance(doc, dict) or doc.get("v") != 1:
+        return MeasureState()
+    cursor, partial, largest = doc.get("cursor"), doc.get("partial"), doc.get("largest")
+    if not isinstance(cursor, str) or not cursor.isdigit() or not isinstance(partial, dict) or not isinstance(largest, dict):
+        return MeasureState()
+    st = MeasureState(cursor=cursor)
+    for prefix, v in partial.items():
+        if TENANT_PREFIX_RE.match(str(prefix)) and isinstance(v, list) and len(v) == 3 and all(isinstance(x, int) and not isinstance(x, bool) and x >= 0 for x in v):
+            st.partial[str(prefix)] = [int(x) for x in v]
+    for prefix, v in largest.items():
+        if TENANT_PREFIX_RE.match(str(prefix)) and isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+            st.largest[str(prefix)] = v
+    return st
+
+
+def dump_state(st: MeasureState) -> str:
+    return json.dumps({"v": 1, "cursor": st.cursor, "partial": st.partial, "largest": st.largest}, sort_keys=True)
 
 
 def render(users_rules: dict[str, str], passwords: dict[str, str], tenants: list[User] | None = None) -> dict[str, User]:
@@ -577,48 +673,74 @@ class Redis:
 RedisFactory = Callable[[], Redis]
 
 
+def _scan_page(admin: Redis, cursor: str) -> tuple[str, list[str]]:
+    reply = admin.call("SCAN", cursor, "MATCH", "p:*", "COUNT", str(SCAN_COUNT))
+    if not isinstance(reply, list) or len(reply) != 2 or not isinstance(reply[1], list):
+        raise SyncError("unexpected SCAN reply")
+    return str(reply[0]), [str(k) for k in reply[1]]
+
+
 def measure(admin: Redis, prefixes: set[str], purge: set[str]) -> Usage:
-    """One SCAN pass: count and size each tenant prefix, and UNLINK the keys
-    of the prefixes in `purge` (the caller checked that no user has them)."""
+    """Count every tenant's keys, UNLINK purged prefixes, size the next
+    slice of tenant keys and estimate each tenant's bytes (see
+    MEASURE_EVERY_SECONDS). The caller checked that no user holds a purge
+    prefix."""
     keys = {p: 0 for p in prefixes}
-    sampled = {p: 0 for p in prefixes}
-    sample_bytes = {p: 0 for p in prefixes}
     usage = Usage(keys=keys, bytes={})
-    calls_left = MEMORY_USAGE_PER_RUN
     cursor = "0"
-    while True:
-        reply = admin.call("SCAN", cursor, "MATCH", "p:*", "COUNT", str(SCAN_COUNT))
-        if not isinstance(reply, list) or len(reply) != 2 or not isinstance(reply[1], list):
-            raise SyncError("unexpected SCAN reply")
-        cursor = str(reply[0])
-        to_size: list[tuple[str, str]] = []
+    while True:  # 1. count and purge
+        cursor, page = _scan_page(admin, cursor)
         to_unlink: list[str] = []
-        for key in reply[1]:
-            prefix = key_prefix(str(key))
+        for key in page:
+            prefix = key_prefix(key)
             if prefix in keys:
                 keys[prefix] += 1
-                if sampled[prefix] < MEMORY_SAMPLE_PER_TENANT and calls_left > 0:
-                    sampled[prefix] += 1
-                    calls_left -= 1
-                    to_size.append((prefix, str(key)))
             elif prefix in purge:
-                to_unlink.append(str(key))
-        for i in range(0, len(to_size), PIPELINE_BATCH):
-            batch = to_size[i : i + PIPELINE_BATCH]
-            replies = admin.pipeline([["MEMORY", "USAGE", k, "SAMPLES", "0"] for _, k in batch])
-            usage.memory_usage_calls += len(batch)
-            for (prefix, _), size in zip(batch, replies):
-                if isinstance(size, RedisError):
-                    raise SyncError(f"MEMORY USAGE refused: {size}")
-                if isinstance(size, int):  # None: the key went away meanwhile
-                    sample_bytes[prefix] += size
+                to_unlink.append(key)
         for i in range(0, len(to_unlink), PIPELINE_BATCH):
             removed = admin.call("UNLINK", *to_unlink[i : i + PIPELINE_BATCH])
             usage.purged += removed if isinstance(removed, int) else 0
         if cursor == "0":
             break
-    # A prefix with keys but no sample (the run's cap) gets no byte count.
-    usage.bytes = {p: (sample_bytes[p] * keys[p] / sampled[p]) if sampled[p] else 0.0 for p in prefixes if sampled[p] or not keys[p]}
+
+    st = parse_state(admin.call("GET", STATE_KEY))
+    st.partial = {p: v for p, v in st.partial.items() if p in prefixes}
+    st.largest = {p: v for p, v in st.largest.items() if p in prefixes}
+    cursor = st.cursor
+    while usage.memory_usage_calls < MEMORY_USAGE_PER_RUN:  # 2. size
+        cursor, page = _scan_page(admin, cursor)
+        to_size = [(key_prefix(k), k) for k in page]
+        sized = [(p, k) for p, k in to_size if p is not None and p in keys]
+        for i in range(0, len(sized), PIPELINE_BATCH):
+            batch = sized[i : i + PIPELINE_BATCH]
+            replies = admin.pipeline([["MEMORY", "USAGE", k, "SAMPLES", "0"] for _, k in batch])
+            usage.memory_usage_calls += len(batch)
+            for (prefix, _), size in zip(batch, replies):
+                if isinstance(size, RedisError):
+                    raise SyncError(f"MEMORY USAGE refused: {size}")
+                entry = st.partial.setdefault(str(prefix), [0, 0, 0])
+                if isinstance(size, int):  # None: the key went away meanwhile
+                    entry[0] += size
+                    entry[1] += 1
+                    entry[2] = max(entry[2], size)
+        if cursor == "0":
+            usage.cycle_complete = True
+            break
+    st.cursor = cursor
+
+    for p in prefixes:
+        sized_bytes, sized_keys, big = st.partial.get(p, [0, 0, 0])
+        largest = max(big, st.largest.get(p, 0))
+        unsized = max(keys[p] - sized_keys, 0)
+        if keys[p] > MAX_KEYS_PER_TENANT:
+            usage.too_many_keys.add(p)
+        if unsized and not largest:
+            continue  # nothing sized yet for it: no estimate this run
+        usage.bytes[p] = float(sized_bytes + unsized * largest)
+    if usage.cycle_complete:
+        st.largest = {p: v[2] for p, v in st.partial.items()}
+        st.partial = {}
+    admin.call("SET", STATE_KEY, dump_state(st))
     return usage
 
 
@@ -741,6 +863,7 @@ class Result:
     # Each tenant's clients from this run's CLIENT LIST, 0 for none.
     kv_connections: dict[tuple[str, str], float] = field(default_factory=dict)
     measured: bool = False
+    measure_cycle_complete: bool = False
     measure_error: str = ""
     kv_bytes: dict[tuple[str, str], float] = field(default_factory=dict)
     kv_keys: dict[tuple[str, str], float] = field(default_factory=dict)
@@ -782,6 +905,7 @@ def measure_tenants(
     tenants: list[Tenant],
     full: set[str],
     answer: TenantAnswer | None,
+    extra: str = "",
 ) -> set[str]:
     """Measure, purge, and switch tenants between normal and full. Runs after
     the infra users are applied and checked; any fault here is recorded in
@@ -798,13 +922,18 @@ def measure_tenants(
         result.measured = True
         result.purged = usage.purged
         result.memory_usage_calls = usage.memory_usage_calls
+        result.measure_cycle_complete = usage.cycle_complete
         wanted = set(full)
         for t in tenants:
             key = (t.project, t.service)
             result.kv_keys[key] = float(usage.keys.get(t.prefix, 0))
+            if t.prefix in usage.too_many_keys:
+                wanted.add(t.name)
             if t.prefix not in usage.bytes:
                 continue
             result.kv_bytes[key] = float(usage.bytes[t.prefix])
+            if t.prefix in usage.too_many_keys:
+                continue
             if t.max_bytes is not None:
                 if result.kv_bytes[key] > t.max_bytes:
                     wanted.add(t.name)
@@ -812,7 +941,7 @@ def measure_tenants(
                     wanted.discard(t.name)
         changed = [t for t in tenants if (t.name in wanted) != (t.name in full)]
         if changed:
-            users = [tenant_user(t, t.name in wanted) for t in changed]
+            users = [tenant_user(t, t.name in wanted, extra) for t in changed]
             replies = admin.transaction([["ACL", "SETUSER", u.name, *u.setuser_args] for u in users])
             admin.call("ACL", "SAVE")
             refused = [str(r) for r in replies if isinstance(r, RedisError)]
@@ -870,8 +999,10 @@ def run(
 
         acl_list = admin.call("ACL", "LIST")
         current = parse_acl_list(acl_list if isinstance(acl_list, list) else [])
+        categories = admin.call("ACL", "CAT")
+        extra = module_denials({str(c) for c in categories} if isinstance(categories, list) else set())
         tenants, full, answer = plan_tenants(result, current, users_rules, fetch_tenants)
-        tenant_users = [tenant_user(t, t.name in full) for t in tenants]
+        tenant_users = [tenant_user(t, t.name in full, extra) for t in tenants]
 
         desired = render(users_rules, passwords, tenant_users)
         commands = plan(current, desired)
@@ -914,7 +1045,7 @@ def run(
         # The infra users are applied and checked; the measurement comes
         # last, so its faults never skip or fail them.
         if measure:
-            full = measure_tenants(result, admin, current, tenants, full, answer)
+            full = measure_tenants(result, admin, current, tenants, full, answer, extra)
         for t in tenants:
             result.kv_full[(t.project, t.service)] = 1.0 if t.name in full else 0.0
             result.kv_connections[(t.project, t.service)] = float(result.counts.get(t.name, 0))
