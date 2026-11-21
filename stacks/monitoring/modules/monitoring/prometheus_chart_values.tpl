@@ -2934,19 +2934,24 @@ serverFiles:
               notification_resolved_body: "Мястото на диска на Home Assistant в София е нормално."
           # Was the ha-sofia automation "Гараж — прегряване (независим пазач)"
           # (2026-11-21): R730 inlet above 34 °C (its rated ceiling is 35) or the
-          # garage above 30 °C. The two sensors come by separate paths (iDRAC
-          # REST and Tuya cloud), so one frozen source does not blind it.
+          # garage above 30 °C. The two readings come by separate paths, so one
+          # frozen source does not blind the other: the inlet straight from the
+          # iDRAC over SNMP (job snmp-idrac, every 30s, in tenths of a degree),
+          # the garage from Tuya through Home Assistant. Home Assistant's own
+          # inlet sensor is itself read from this Prometheus series, so going
+          # through it only added a round trip. A missing source has its own
+          # alerts (iDRACSNMPMetricsMissing, HomeAssistantMetricsMissing).
           - alert: GarageOverheating
             expr: |
-              max(haos_sensor_temperature_celsius{job="haos", entity="sensor.r730_system_board_inlet_temperature"}) > 34
+              max(r730_idrac_temperatureProbeReading{job="snmp-idrac", temperatureProbeLocationName="System Board Inlet Temp"}) / 10 > 34
               or max(haos_sensor_temperature_celsius{job="haos", entity="sensor.temperatura_vlazhnost_garazh_temperature"}) > 30
             for: 1m
             labels:
               severity: warning
             annotations:
-              summary: 'Garage overheating: R730 inlet {{ with query `max(haos_sensor_temperature_celsius{entity="sensor.r730_system_board_inlet_temperature"})` }}{{ . | first | value | printf "%.1f" }}{{ end }} °C (limit 34, rated ceiling 35), garage {{ with query `max(haos_sensor_temperature_celsius{entity="sensor.temperatura_vlazhnost_garazh_temperature"})` }}{{ . | first | value | printf "%.1f" }}{{ end }} °C (limit 30)'
+              summary: 'Garage overheating: R730 inlet {{ with query `max(r730_idrac_temperatureProbeReading{job="snmp-idrac", temperatureProbeLocationName="System Board Inlet Temp"}) / 10` }}{{ . | first | value | printf "%.1f" }} °C{{ else }}no reading{{ end }} (limit 34, rated ceiling 35), garage {{ with query `max(haos_sensor_temperature_celsius{entity="sensor.temperatura_vlazhnost_garazh_temperature"})` }}{{ . | first | value | printf "%.1f" }} °C{{ else }}no reading{{ end }} (limit 30)'
               notification_title: "Гаражът прегрява"
-              notification_body: 'Вход на R730: {{ with query `max(haos_sensor_temperature_celsius{entity="sensor.r730_system_board_inlet_temperature"})` }}{{ . | first | value | printf "%.1f" }}{{ end }} °C (каталожен таван 35 °C). Гараж: {{ with query `max(haos_sensor_temperature_celsius{entity="sensor.temperatura_vlazhnost_garazh_temperature"})` }}{{ . | first | value | printf "%.1f" }}{{ end }} °C. Влажност: {{ with query `max(haos_sensor_humidity_percent{entity="sensor.temperatura_vlazhnost_garazh_humidity"})` }}{{ . | first | value | printf "%.0f" }}{{ end }} %.'
+              notification_body: 'Вход на R730: {{ with query `max(r730_idrac_temperatureProbeReading{job="snmp-idrac", temperatureProbeLocationName="System Board Inlet Temp"}) / 10` }}{{ . | first | value | printf "%.1f" }} °C{{ else }}няма данни{{ end }} (каталожен таван 35 °C). Гараж: {{ with query `max(haos_sensor_temperature_celsius{entity="sensor.temperatura_vlazhnost_garazh_temperature"})` }}{{ . | first | value | printf "%.1f" }} °C{{ else }}няма данни{{ end }}. Влажност: {{ with query `max(haos_sensor_humidity_percent{entity="sensor.temperatura_vlazhnost_garazh_humidity"})` }}{{ . | first | value | printf "%.0f" }} %%{{ else }}няма данни{{ end }}.'
               notification_resolved_title: "Гаражът вече не прегрява"
               notification_resolved_body: "Входът на R730 е под 34 °C и гаражът е под 30 °C."
       - name: Power

@@ -197,9 +197,10 @@ def _pipes(pipeline: str) -> list:
 
 
 def _parse(text: str) -> list:
-    """-> nodes: ("text", s) | ("expr", pipeline) | ("with", pipeline, nodes)."""
+    """-> nodes: ("text", s) | ("expr", pipeline) | ("with", pipeline, nodes, else_nodes)."""
     root, stack, pos, trim_next = [], [], 0, False
     current = root
+    withs = []  # the open `with` nodes, innermost last
     for m in ACTION.finditer(text):
         chunk = text[pos:m.start()]
         if trim_next:
@@ -211,12 +212,17 @@ def _parse(text: str) -> list:
         action, trim_next, pos = m.group(2), bool(m.group(3)), m.end()
         head = action.split(None, 1)[0] if action else ""
         if head == "with":
-            node = ("with", action[4:].strip(), [])
+            node = ("with", action[4:].strip(), [], [])
             current.append(node)
             stack.append(current)
+            withs.append(node)
             current = node[2]
+        elif head == "else" and action == "else" and withs:
+            current = withs[-1][3]
         elif head == "end":
             current = stack.pop() if stack else root
+            if withs:
+                withs.pop()
         elif head in ("if", "range", "else", "define", "template", "block"):
             current.append(("skip", action))
         else:
@@ -289,6 +295,8 @@ def render(text: str, labels: dict, value: float, prom, at=None) -> str:
                     v = pipeline(node[1], dot)
                     if v not in (None, "", [], 0, 0.0):
                         out.append(walk(node[2], v))
+                    else:
+                        out.append(walk(node[3], dot))
             except (Skip, Unavailable, IndexError, KeyError, TypeError, ValueError):
                 continue
         return "".join(out)

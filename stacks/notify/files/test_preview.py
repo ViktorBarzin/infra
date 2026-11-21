@@ -71,6 +71,12 @@ class RenderTest(unittest.TestCase):
         prom = FakeProm({('max(t{entity="sensor.x"})', None): [row(22.5)]})
         self.assertEqual(self.r('{{ with query `max(t{entity="sensor.x"})` }}{{ . | first | value | printf "%.1f" }}{{ end }} C', prom=prom), "22.5 C")
 
+    def test_with_else_renders_the_else_branch_when_empty(self):
+        text = 'Garage: {{ with query "nothing" }}{{ . | first | value }} C{{ else }}no reading{{ end }}.'
+        self.assertEqual(self.r(text), "Garage: no reading.")
+        prom = FakeProm({("t", None): [row(21.0)]})
+        self.assertEqual(self.r('{{ with query "t" }}{{ . | first | value }} C{{ else }}none{{ end }}', prom=prom), "21 C")
+
     def test_with_query_without_result_drops_the_block(self):
         self.assertEqual(self.r('A{{ with query "nothing" }}B{{ . | first | value }}{{ end }}C'), "AC")
 
