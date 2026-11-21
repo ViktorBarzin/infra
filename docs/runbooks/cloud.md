@@ -827,10 +827,7 @@ Apply in this order:
 5. The Cloud release with B27, whose defaults name
    `cloud-redis.cloud-redis.svc.cluster.local`.
 
-`stacks/redis` drops its tenant half in the same branch; its apply restarts
-the shared Redis once (`proto-max-bulk-len 128mb` and the init step), so
-land it in a planned window after `presence claim redis:redis-v2`
-([redis-acl.md](redis-acl.md)).
+`stacks/redis` drops its tenant half in the same branch. Its apply changes only the `redis-acl-sync` ConfigMap and CronJob, so the homelab's shared Redis does not restart.
 
 Check it: the newest `cloud-redis-acl-sync` Job's log ends `ok` with no
 tenants warning; a fixture App with `cache: {kind: keyvalue, size: nano}`

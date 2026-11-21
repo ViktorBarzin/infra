@@ -1,6 +1,6 @@
 # cloud-redis runbook
 
-`cloud-redis` (namespace `cloud-redis`, Service `cloud-redis.cloud-redis.svc.cluster.local:6379`, StatefulSet `cloud-redis`, stack `stacks/cloud-redis`) holds Cloud's Key Values (cloud backlog B27, option b of `decision-b27-redis.md`). It is apart from the homelab's shared Redis (`stacks/redis`, [redis-acl.md](redis-acl.md)) so that a tenant's busy script, Lua OOM or client buffers restart only this pod.
+`cloud-redis` (namespace `cloud-redis`, Service `cloud-redis.cloud-redis.svc.cluster.local:6379`, StatefulSet `cloud-redis`, stack `stacks/cloud-redis`) is Cloud's Key Value Redis (cloud backlog B27, option b of `decision-b27-redis.md`). It is apart from the homelab's shared Redis (`stacks/redis`, [redis-acl.md](redis-acl.md)) so that a tenant's busy script, Lua OOM or client buffers restart only this pod.
 
 ## Pieces
 
@@ -18,7 +18,13 @@
 ## First apply
 
 1. `stacks/vault`, applied by an admin by hand (CI does not apply vault): policy `ci` may write `secret/cloud-redis/*` and `secret/cloud/redis-tenants`; policy and role `cloud-redis-acl-sync`.
-2. On the NFS host, as for other backups, then record it in `secrets/nfs_directories.txt` from the main checkout: `mkdir -p /srv/nfs/cloud-redis-backup && chown root:www-data /srv/nfs/cloud-redis-backup && chmod 2777 /srv/nfs/cloud-redis-backup`.
+2. The NFS directory, as `stacks/garage` made its own (B25, [garage.md](garage.md)). The backup Job writes as root (the export has `no_root_squash`):
+
+   ```sh
+   ssh root@192.168.1.127 'mkdir -p /srv/nfs/cloud-redis-backup && chown root:root /srv/nfs/cloud-redis-backup && chmod 750 /srv/nfs/cloud-redis-backup'
+   ```
+
+   At land time, add `cloud-redis-backup` to `secrets/nfs_directories.txt` in sorted order, from the main checkout only (git-crypt; a worktree holds ciphertext), and commit that file to master.
 3. `stacks/cloud-redis`: CI applies it on the push. The apply writes `secret/cloud-redis/users` and both token paths itself; nobody writes them by hand.
 4. `stacks/cloud` (the egress floor's Pass and the reconciler's NetworkPolicy point at cloud-redis), then the Cloud release whose defaults name `cloud-redis.cloud-redis.svc.cluster.local`.
 
@@ -32,13 +38,12 @@ Each run of the sync:
 
 1. reads the route and checks every field: user `^p_[a-z0-9_]+$`, a 64-hex hash, prefix `^p:[a-z0-9-]+:[a-z0-9-]+:$` equal to `p:<project>:<service>:`, a positive Size, no name or prefix twice. One bad field rejects the whole answer;
 2. when the route fails or the answer is bad, keeps the tenant users cloud-redis already holds, unchanged, and pushes `cloud_kv_tenants_fetch_ok 0`. A Cloud outage drops no tenant, and new, resized or deleted Key Values wait;
-3. writes each tenant from the fixed template (cloud repo, `checklist-and-backlog.md`, "Cloud tenants"), never from Cloud's input. Redis prints it as `user <name> on sanitize-payload #<sha256> ~<prefix>* resetchannels &<prefix>* -@all +@read +@write +@keyspace +@hash +@list +@set +@sortedset +@stream +@string +@pubsub +@transaction +@scripting +@connection -@dangerous -select -scan -randomkey -function -script|flush -move -copy -script|kill -dbsize -pubsub|channels -pubsub|shardchannels -pubsub|numsub -pubsub|shardnumsub -pubsub|numpat -script|debug -client|tracking -himport|prepare -himport|discard -himport|discardall -lolwut`. `KEYS`, `SELECT`, `FLUSHALL`, `SCAN`, `CONFIG`, `INFO`, `MOVE`, `COPY` (which can name another db), `SWAPDB`, `RESTORE`, `MIGRATE`, `SCRIPT KILL`, `SCRIPT DEBUG` (with `EVAL` it blocks the whole server), `CLIENT TRACKING` (`BCAST` sends the name of every key anyone writes), `DBSIZE`, the PUBSUB introspection subcommands, the keyless `HIMPORT` session subcommands, `LOLWUT`, and every key or channel outside the prefix answer `NOPERM` (tested against `redis:8.10.3-alpine`). `SCRIPT LOAD` stays, because ioredis needs it; `RedisScriptCacheHigh` watches the memory loaded scripts hold, which Redis never evicts. cloud-redis loads no module; if one is ever loaded, the sync (from `ACL CAT`) and the init step (from the config) add `-@search` and `-ts.mget -ts.mrange -ts.mrevrange -ts.queryindex -ts.querylabels`. `acl_sync_test.py` walks `COMMAND`, subcommands included, with `ACL DRYRUN` for both rule sets, with and without the modules, and fails on any keyless command a tenant may run that its reviewed allowlist (`KEYLESS_ALLOWED`, one reason per entry) does not name;
+3. writes each tenant from the fixed template (cloud repo, `checklist-and-backlog.md`, "Cloud tenants"), never from Cloud's input. Redis prints it as `user <name> on sanitize-payload #<sha256> ~<prefix>* resetchannels &<prefix>* -@all +@read +@write +@keyspace +@hash +@list +@set +@sortedset +@stream +@string +@pubsub +@transaction +@scripting +@connection -@dangerous -select -scan -randomkey -function -script|flush -move -copy -script|kill -dbsize -pubsub|channels -pubsub|shardchannels -pubsub|numsub -pubsub|shardnumsub -pubsub|numpat -script|debug -client|tracking -himport|prepare -himport|discard -himport|discardall -lolwut`. `KEYS`, `SELECT`, `FLUSHALL`, `SCAN`, `CONFIG`, `INFO`, `MOVE`, `COPY` (which can name another db), `SWAPDB`, `RESTORE`, `MIGRATE`, `SCRIPT KILL`, `SCRIPT DEBUG` (with `EVAL` it blocks the whole server), `CLIENT TRACKING` (`BCAST` sends the name of every key anyone writes), `DBSIZE`, the PUBSUB introspection subcommands, the keyless `HIMPORT` session subcommands, `LOLWUT`, and every key or channel outside the prefix answer `NOPERM` (tested against `redis:8.10.3-alpine`). `SCRIPT LOAD` stays, because ioredis needs it; `RedisScriptCacheHigh` watches the memory loaded scripts hold, which Redis never evicts. cloud-redis loads no module; if one is ever loaded, the sync (from `ACL CAT`) adds `-@search` and `-ts.mget -ts.mrange -ts.mrevrange -ts.queryindex -ts.querylabels`. `acl_sync_test.py` walks `COMMAND`, subcommands included, with `ACL DRYRUN` for both rule sets, with and without the modules, and fails on any keyless command a tenant may run that its reviewed allowlist (`KEYLESS_ALLOWED`, one reason per entry) does not name;
 4. after the infra users are applied and checked, so a fault here never fails them, a measuring run (every 5 min, when the UTC minute divides by 5) makes two `SCAN MATCH p:* COUNT 1000` passes over db 0. The first counts each tenant's keys exactly and deletes purged prefixes. The second goes on from where the last run stopped and sends `MEMORY USAGE <key> SAMPLES 0` (every element of a list, set, hash or sorted set, so a few small elements cannot hide a big key) for every tenant key it meets, up to 100,000 calls a run plus the rest of one SCAN page. The cursor and each tenant's running total live in Redis, in key `redis-acl-sync:kv-measure` (`acl-admin` holds `~redis-acl-sync:*` with `GET` and `SET`; no tenant can reach it; no TTL, so never evicted). A missing or broken value starts a new cycle. A tenant's bytes are its running total plus every key not sized yet in the cycle counted at the largest key sized for it. Keys a complete cycle has sized are never undercounted; a key written during a cycle that is bigger than any sized so far counts low until the cycle reaches it, at most one cycle later. When every tenant key in all fits in one run (100,000 keys) each run is a complete cycle and the figure is exact. A cycle over K tenant keys takes ceil(K / 100,000) measuring runs. A tenant with more than 100,000 keys is treated as over its Size. Cost at 10,000 tenant keys: about 32 SCAN calls and 10 batches, about 10 ms of Redis CPU for small strings. A fault during the measurement is logged ("Key Value measurement failed") and leaves the run ok;
 5. a tenant over its Size gets the read-and-delete rule set `-@all +@read +@connection +del +unlink +multi +exec +discard +watch +unwatch -@dangerous -select -scan -randomkey -move -copy -script|kill -dbsize -pubsub|channels -pubsub|shardchannels -pubsub|numsub -pubsub|shardnumsub -pubsub|numpat -script|debug -client|tracking -himport|prepare -himport|discard -himport|discardall -lolwut` (plus the module part) on the same prefix, in a second `MULTI` right after the measurement: GET and DEL work, writes, scripts and PUBLISH answer `NOPERM`. It goes back to the full template at the first measurement under its Size. Between measurements the mode stays as ACL LIST shows it; the ACL is the only state kept between runs.
 
 `acl-admin` holds `~p:* ~redis-acl-sync:* +scan +memory|usage +unlink +get +set` for the measurement, its state key and the purge, and nothing else on keys.
 
-`acl-admin` holds `~p:* ~redis-acl-sync:* +scan +memory|usage +unlink +get +set` for the measurement, its state key and the purge.
 
 Between two measurements a tenant can keep writing, each write at most 32 MiB (`proto-max-bulk-len`), until the read-and-delete rule set lands; past `maxmemory` volatile-lru evicts Key Value keys with a TTL and then refuses writes. Only Key Values share that risk.
 
@@ -60,12 +65,22 @@ A Key Value's keys go only when Cloud lists its prefix under `purge` (the Key Va
 | Alert | Pages | First step |
 |---|---|---|
 | `CloudRedisDown` | yes | `kubectl -n cloud-redis describe pod cloud-redis-0`; the redis container's log |
-| `CloudRedisBusy` | no | a script past 5 s or a restart: `SLOWLOG GET` through break glass, `kubectl -n cloud-redis logs cloud-redis-0 -c redis --previous` |
+| `CloudRedisBusy` | no | "A busy script" below |
 | `CloudRedisMemoryPressure`, `CloudRedisEvictions`, `CloudKeyValueTotalHigh` | no | `topk(5, cloud_kv_bytes)`; raise `maxmemory` and the pod limit together |
 | `CloudRedisBackupStale`, `CloudRedisBackupNeverSucceeded` | yes | the newest `cloud-redis-backup` Job's log; the NFS directory |
 | `CloudRedisAclSyncStale`, `CloudRedisAclSyncNeverSucceeded`, `CloudKeyValueTenantsFetchFailing` | no | the newest `cloud-redis-acl-sync` Job's log |
 | `RedisForeignUser` | yes | "Foreign users" above |
 | `RedisScriptCacheHigh` | no | find the client, then flush through break glass |
+
+## A busy script
+
+A tenant's script that runs past 5 s (`busy-reply-threshold`) makes Redis answer `BUSY` to every client; tenants cannot `SCRIPT KILL`. The redis_exporter then reports `redis_up 0` (measured on 8.10.3), and the liveness probe (`stacks/cloud-redis/probe.sh`) fails on `BUSY`, so the kubelet restarts the pod after about 30 s; the restart loses at most 1 s of writes (AOF everysec). `CloudRedisBusy` fires on `redis_up == 0` or a restart of the redis container in the last 10 min. If the pod is still busy, restart it yourself; this works while Redis is busy, unlike any redis-cli command:
+
+```sh
+kubectl -n cloud-redis delete pod cloud-redis-0
+```
+
+Then find the tenant in the redis container's log of the previous run (`kubectl -n cloud-redis logs cloud-redis-0 -c redis --previous`) and in `SLOWLOG GET` through break glass.
 
 ## Break glass
 

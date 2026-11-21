@@ -5159,7 +5159,7 @@ serverFiles:
             annotations:
               summary: "Redis pod {{ $labels.pod }} has used {{ $value | humanizePercentage }} of maxmemory for 15 min"
               description: "Find the biggest consumers by database (redis_db_keys). Raise maxmemory in stacks/redis before 80%."
-          # cloud-redis, the Redis of Cloud's Key Values (cloud B27 option b,
+          # cloud-redis, Cloud's Key Value Redis (cloud B27 option b,
           # stacks/cloud-redis; runbook docs/runbooks/cloud-redis.md). The
           # copies of the shared Redis's alerts first, then the tenant ones.
           - alert: CloudRedisDown
@@ -5215,8 +5215,10 @@ serverFiles:
               summary: "cloud-redis-acl-sync has never pushed a success to the pushgateway; check the CronJob in namespace cloud-redis (docs/runbooks/cloud-redis.md)"
           - alert: CloudRedisBusy
             # A tenant's script past busy-reply-threshold (5 s) blocks
-            # everyone (the exporter's PING fails, redis_up 0), and a Lua OOM
-            # or a liveness failure restarts the pod. Only Key Values are
+            # everyone: Redis answers BUSY, and redis_exporter v1.97.0 then
+            # reports redis_up 0 (measured on 8.10.3). probe.sh fails on
+            # BUSY, so liveness restarts the pod after about 30 s; a Lua OOM
+            # restarts it too. Either shows here. Only Key Values are
             # affected, so it warns and does not page.
             expr: redis_up{namespace="cloud-redis"} == 0 or increase(kube_pod_container_status_restarts_total{namespace="cloud-redis", container="redis"}[10m]) > 0
             for: 0m

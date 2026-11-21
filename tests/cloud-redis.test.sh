@@ -6,7 +6,8 @@
 #      cloud-redis's own redis.conf (read from stacks/cloud-redis/main.tf) and
 #      users (acl_users.json): default off, the client limits nest, a legal
 #      32 MiB value is neither cut off nor evicted, unread replies are cut off
-#      at the output limit, and the tenant and full rule sets.
+#      at the output limit, the probe fails on BUSY, and the tenant and full
+#      rule sets.
 #   2. cloud-redis's alerts (CloudRedis*, CloudKeyValueTotalHigh,
 #      CloudKeyValueTenantsFetchFailing, RedisForeignUser,
 #      RedisScriptCacheHigh) pass `promtool check rules` and the unit tests in
@@ -24,7 +25,7 @@ FAILS=0
 
 # 1. pytest: the tenant tests run on a cloud-redis box.
 if ! (cd "$HERE/stacks/redis/modules/redis" && python3 -m pytest acl_sync_test.py -q -p no:cacheprovider \
-    -k "tenant or cloud_redis or 32_mib or unread or keyless or modules or search_index or measurement or purge or foreign or full or kv or proto or restart_with"); then
+    -k "tenant or cloud_redis or 32_mib or unread or keyless or modules or search_index or measurement or purge or foreign or full or kv or probe or acl_cat"); then
   echo "FAIL: acl_sync_test.py (cloud-redis)"; FAILS=$((FAILS + 1))
 fi
 

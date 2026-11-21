@@ -10,7 +10,7 @@ variable "acl_sync_suspended" {
   default     = false
 }
 
-#### cloud-redis: the Redis of Cloud's Key Values (cloud backlog B27, option b)
+#### cloud-redis: Cloud's Key Value Redis (cloud backlog B27, option b)
 #
 # Viktor chose a separate Redis for Cloud tenants over Key Values on the
 # shared homelab Redis (decision-b27-redis.md): a tenant's busy script, Lua
@@ -24,7 +24,7 @@ variable "acl_sync_suspended" {
 # p_<project>_<service>_<hash>, confined to keys and channels
 # p:<project>:<service>:*, which the CronJob cloud-redis-acl-sync writes from
 # Cloud's read-only tenant route (the shared code in
-# stacks/redis/modules/redis: acl_sync.py, acl_init.sh, probe.sh).
+# stacks/redis/modules/redis: acl_sync.py, acl_init.sh; its own probe.sh).
 
 locals {
   name      = "cloud-redis"
@@ -33,8 +33,8 @@ locals {
   labels    = { app = local.name }
   users     = jsondecode(file("${path.module}/acl_users.json"))
   sync_name = "${local.name}-acl-sync"
-  # redis-server's command line, shared with the acl-seed init step (its
-  # REDIS_ARGS). No modules, so tenant rules never carry a module part.
+  # redis-server's command line. No modules, so tenant rules never carry a
+  # module part.
   server_command = ["redis-server", "/etc/redis/redis.conf"]
   pushgateway    = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job"
   # Cloud's read-only tenant route (the cloud repo's reconciler, port 9091).
@@ -125,8 +125,13 @@ resource "kubernetes_config_map" "conf" {
     namespace = kubernetes_namespace.cloud_redis.metadata[0].name
   }
   data = {
-    # The pod's limit is 1Gi: maxmemory 512mb leaves about 500 MiB for Lua,
-    # client buffers and the AOF rewrite's fork. The client limits nest, as
+    # Memory in the 1Gi pod (request = limit): 512 MiB data (maxmemory) +
+    # 128 MiB client buffers (maxmemory-clients) = 640 MiB, leaving 384 MiB
+    # for Lua and for the copy-on-write of the fork that the AOF rewrite and
+    # the backup's BGSAVE make. That copy grows with the pages written while
+    # the fork lives, up to the whole 512 MiB of data in the worst case; past
+    # the limit the kernel kills this pod only (CloudRedisBusy, CloudRedisDown),
+    # never the homelab's Redis. The client limits nest, as
     # they must (Redis does not check it): one value (proto-max-bulk-len
     # 32mb) fits a client's query buffer (64mb), which fits the memory all
     # clients may hold before Redis evicts the biggest (maxmemory-clients
@@ -134,8 +139,10 @@ resource "kubernetes_config_map" "conf" {
     # reply of the largest value, which a 32mb limit cut off (the GET of a
     # legal 32 MiB value closed the connection, tested on 8.10.3). A client
     # that does not read its replies is cut off at 64mb of output, or 16mb
-    # held for 60 s. busy-reply-threshold: a script past 5 s makes other
-    # clients get BUSY (CloudRedisBusy).
+    # held for 60 s; a replica (the backup's `redis-cli --rdb` uses the
+    # replication protocol) gets the same 64mb/16mb/60 s. busy-reply-threshold:
+    # a script past 5 s makes other clients get BUSY, and probe.sh then fails
+    # liveness, so the kubelet restarts the pod (CloudRedisBusy).
     "redis.conf" = <<-EOT
       bind 0.0.0.0 -::*
       port 6379
@@ -146,6 +153,7 @@ resource "kubernetes_config_map" "conf" {
       maxmemory-clients 128mb
       client-output-buffer-limit normal 64mb 16mb 60
       client-output-buffer-limit pubsub 64mb 16mb 60
+      client-output-buffer-limit replica 64mb 16mb 60
       client-query-buffer-limit 64mb
       proto-max-bulk-len 32mb
       busy-reply-threshold 5000
@@ -226,18 +234,9 @@ resource "kubernetes_stateful_set_v1" "cloud_redis" {
           name    = "acl-seed"
           image   = local.image
           command = ["/bin/sh", "-c", file("${local.shared}/acl_init.sh")]
-          env {
-            name  = "REDIS_ARGS"
-            value = join(" ", local.server_command)
-          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
-          }
-          volume_mount {
-            name       = "conf"
-            mount_path = "/etc/redis"
-            read_only  = true
           }
           volume_mount {
             name       = "acl-seed"
@@ -283,16 +282,20 @@ resource "kubernetes_stateful_set_v1" "cloud_redis" {
           }
           liveness_probe {
             exec {
-              command = ["sh", "-c", file("${local.shared}/probe.sh")]
+              command = ["sh", "-c", file("${path.module}/probe.sh")]
             }
+            # A BUSY reply or no answer fails (probe.sh): a script running
+            # past about 30 s (3 failures 10 s apart, after the 5 s before
+            # Redis starts answering BUSY) gets the pod restarted; a shorter
+            # one survives.
             initial_delay_seconds = 15
             period_seconds        = 10
-            timeout_seconds       = 10
-            failure_threshold     = 5
+            timeout_seconds       = 5
+            failure_threshold     = 3
           }
           readiness_probe {
             exec {
-              command = ["sh", "-c", file("${local.shared}/probe.sh")]
+              command = ["sh", "-c", file("${path.module}/probe.sh")]
             }
             initial_delay_seconds = 5
             period_seconds        = 5
@@ -396,7 +399,7 @@ module "nfs_backup" {
   source             = "../../modules/kubernetes/nfs_volume"
   name               = "${local.name}-backup-host"
   namespace          = kubernetes_namespace.cloud_redis.metadata[0].name
-  nfs_server         = "192.168.1.127"
+  nfs_server         = var.nfs_server
   nfs_path           = "/srv/nfs/cloud-redis-backup"
   storage_class_name = "nfs-pve"
 }

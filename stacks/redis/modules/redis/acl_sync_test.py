@@ -48,10 +48,6 @@ def conf_bytes(value: str) -> int:
     return int(value)
 IMAGE = "docker.io/library/redis:8.10.3-alpine"
 MODULES = ("redisbloom", "redisearch", "redistimeseries", "rejson")
-# The production redis.conf's value (main.tf), so the box runs with it.
-PROTO_MAX_BULK_LEN = next(
-    line.strip() for line in (HERE / "main.tf").read_text().splitlines() if line.strip().startswith("proto-max-bulk-len ")
-)
 
 
 def fake_passwords(users: dict[str, str] = USERS, salt: str = "a", default: bool = True) -> dict[str, str]:
@@ -308,7 +304,7 @@ class RedisBox:
         (tmp / "redis.conf").write_text(
             cloud_redis_conf()
             if cloud
-            else "port 6379\ndir /data\naclfile /data/acl/users.acl\nappendonly no\nsave \"\"\n" + PROTO_MAX_BULK_LEN + "\n"
+            else "port 6379\ndir /data\naclfile /data/acl/users.acl\nappendonly no\nsave \"\"\n"
         )
         self.name = f"b40-acl-test-{uuid.uuid4().hex[:8]}"
         self.port = 0
@@ -1356,60 +1352,6 @@ def test_a_tenant_cannot_drop_another_users_search_index(modules_box):
     assert "idx" in cast(list, box.as_user("verify", pw["verify"], "FT._LIST"))
 
 
-MODULE_PART = " -@search -ts.mget -ts.mrange -ts.mrevrange -ts.queryindex -ts.querylabels"
-
-
-def tenant_line_in(box: RedisBox, entry: dict[str, object]) -> str:
-    return next(line for line in box.acl_list() if line.startswith(f"user {entry['user']} "))
-
-
-@needs_docker
-def test_a_restart_without_modules_drops_the_module_rules_and_starts(modules_box):
-    # A users.acl saved while the modules were loaded names -@search; a
-    # redis-server without them would refuse that file and not start, so the
-    # init step rewrites the tenant lines first.
-    box, pw = modules_box
-    a = tenant_entry()
-    assert tenant_sync(box, pw, lambda: answer(a)).ok
-    assert tenant_line_in(box, a).endswith(MODULE_PART)
-    assert MODULE_PART in (box.data / "acl" / "users.acl").read_text()
-    box.stop()
-    box.modules = False
-    box.init(pw[ADMIN_USER])
-    box.start()
-    line = tenant_line_in(box, a)
-    assert not line.endswith(MODULE_PART)
-    assert line == acl_sync.tenant_user(acl_sync.parse_tenant_answer(answer(a)).tenants[0], False).line
-    c = tenant_conn(box, a)
-    try:
-        assert c.call("SET", "p:shop:cache:k", "1") == "OK"
-    finally:
-        c.close()
-    # Infra users are untouched, and the next sync has nothing to change.
-    assert box.as_user("verify", pw["verify"], "PING") == "PONG"
-    assert tenant_sync(box, pw, lambda: answer(a)).changes == 0
-
-
-@needs_docker
-def test_a_restart_with_modules_has_the_module_rules_before_any_sync(tenant_box):
-    box, pw = tenant_box
-    a = tenant_entry()
-    assert tenant_sync(box, pw, lambda: answer(a)).ok
-    box.stop()
-    box.modules = True
-    box.init(pw[ADMIN_USER])
-    box.start()
-    # No sync has run: the init step put the module rules in place.
-    assert tenant_line_in(box, a).endswith(MODULE_PART)
-    c = tenant_conn(box, a)
-    try:
-        assert "NOPERM" in refused(c, "FT._DROPIFX", "idx")
-        assert "NOPERM" in refused(c, "TS.QUERYINDEX", "a=b")
-    finally:
-        c.close()
-    assert tenant_sync(box, pw, lambda: answer(a)).changes == 0
-
-
 def test_an_acl_cat_reply_that_is_not_a_list_fails_the_run_and_writes_nothing():
     sent: list[tuple[str, ...]] = []
 
@@ -1437,22 +1379,6 @@ def test_an_acl_cat_reply_that_is_not_a_list_fails_the_run_and_writes_nothing():
     assert not any(a[:2] in (("ACL", "SAVE"), ("ACL", "SETUSER")) or a == ("MULTI",) for a in sent)
 
 
-@needs_docker
-def test_one_write_is_bounded_by_proto_max_bulk_len(tenant_box):
-    # The largest Size, 128 MiB: one SETRANGE or APPEND cannot grow a value
-    # past it, so a write between two measurements adds at most that much.
-    box, pw = tenant_box
-    assert PROTO_MAX_BULK_LEN == "proto-max-bulk-len 128mb"
-    a = tenant_entry()
-    assert tenant_sync(box, pw, lambda: answer(a)).ok
-    c = tenant_conn(box, a)
-    try:
-        assert "maximum allowed size" in refused(c, "SETRANGE", "p:shop:cache:big", str(128 * 1024 * 1024), "x")
-        assert c.call("SETRANGE", "p:shop:cache:ok", "10", "x") == 11
-    finally:
-        c.close()
-
-
 # --- cloud-redis's own configuration (B27 option b) ------------------------------
 
 
@@ -1474,10 +1400,10 @@ def test_cloud_redis_client_limits_nest():
     maxmemory = conf_bytes(cloud_conf_value("maxmemory")[0])
     assert bulk < query < clients < maxmemory
     assert (bulk, query, clients, maxmemory) == (32 * 1024**2, 64 * 1024**2, 128 * 1024**2, 512 * 1024**2)
-    # One reply of the largest value fits the output hard limit, normal and
-    # pubsub, and the hard limit fits what all clients may hold.
+    # One reply of the largest value fits the output hard limit (normal,
+    # pubsub, replica), and the hard limit fits what all clients may hold.
     limits = [line.split()[1:] for line in cloud_redis_conf().splitlines() if line.startswith("client-output-buffer-limit ")]
-    assert {cls for cls, *_ in limits} == {"normal", "pubsub"}
+    assert {cls for cls, *_ in limits} == {"normal", "pubsub", "replica"}
     for _, hard, soft, seconds in limits:
         assert bulk < conf_bytes(hard) <= clients and conf_bytes(soft) < conf_bytes(hard) and int(seconds) > 0
     assert cloud_conf_value("busy-reply-threshold") == ["5000"]
@@ -1548,3 +1474,47 @@ def test_unread_pipelined_replies_are_cut_off_at_the_output_limit(tenant_box):
     stats = cast(str, box.as_user("verify", pw["verify"], "INFO", "stats"))
     disconnects = int(next(line.split(":")[1] for line in stats.splitlines() if line.startswith("client_output_buffer_limit_disconnections:")))
     assert closed and disconnects >= 1
+
+
+# --- cloud-redis's probe (stacks/cloud-redis/probe.sh) ----------------------------
+
+CLOUD_PROBE = CLOUD_STACK / "probe.sh"
+
+
+def run_probe(box: RedisBox, password: str) -> subprocess.CompletedProcess[str]:
+    return box.docker("exec", "-e", f"REDIS_PROBE_PASSWORD={password}", box.name, "sh", "-c", CLOUD_PROBE.read_text(), check=False)
+
+
+@needs_docker
+def test_the_probe_fails_while_a_tenant_script_keeps_redis_busy(tenant_box):
+    # stacks/redis's probe.sh exits 0 on BUSY (redis-cli prints the error and
+    # exits 0), so a frozen Redis never fails liveness; cloud-redis's fails.
+    box, pw = tenant_box
+    a = tenant_entry()
+    assert tenant_sync(box, pw, lambda: answer(a)).ok
+    assert run_probe(box, pw["probe"]).returncode == 0
+    c = tenant_conn(box, a)
+    c.send("EVAL", "while true do end", "0")  # +@scripting: a tenant may
+    time.sleep(6)  # past busy-reply-threshold (5 s), Redis answers BUSY
+    busy = run_probe(box, pw["probe"])
+    assert busy.returncode != 0 and "BUSY" in busy.stdout
+    c.close()
+
+
+@pytest.mark.parametrize(
+    "reply, code, want",
+    [
+        ("PONG", 0, 0),
+        ("LOADING Redis is loading the dataset in memory", 0, 0),
+        ("BUSY Redis is busy running a script. You can only call SCRIPT KILL or SHUTDOWN NOSAVE.", 0, 1),
+        ("AUTH failed: WRONGPASS invalid username-password pair or user is disabled.\nNOAUTH Authentication required.", 0, 0),
+        ("Could not connect to Redis at 127.0.0.1:6379: Connection refused", 1, 1),
+    ],
+)
+def test_the_probe_reads_redis_cli_replies(tmp_path, reply, code, want):
+    stub = tmp_path / "redis-cli"
+    stub.write_text(f"#!/bin/sh\nprintf '%s\\n' {json.dumps(reply)}\nexit {code}\n")
+    stub.chmod(0o755)
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "REDIS_PROBE_PASSWORD": "x"}
+    got = subprocess.run(["sh", "-c", CLOUD_PROBE.read_text()], env=env, capture_output=True, text=True)
+    assert got.returncode == want, got.stdout

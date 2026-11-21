@@ -38,8 +38,7 @@
 # Users:
 #   acl-admin  ACL management, CLIENT LIST for the R3 counter, MULTI/EXEC.
 #              It can create any user, so it is admin in effect; only the
-#              sync job holds its password. Cloud Key Value tenants live on
-#              cloud-redis (B27 option b, stacks/cloud-redis), not here.
+#              sync job holds its password.
 #   exporter   what redis_exporter v1.97.0 runs with our flags (measured
 #              with INFO commandstats on 8.10.3): INFO, CONFIG GET, SLOWLOG
 #              GET/LEN, LATENCY LATEST/HISTOGRAM, COMMAND INFO, CLIENT
@@ -48,20 +47,6 @@
 #              sends REPLCONF and SYNC.
 #   probe      PING only, for the liveness and readiness probes (probe.sh).
 #   the rest   the same rights as `default` today.
-
-# Configurable, as the B27 review asked, so another Redis could reuse this
-# file; the defaults are this Redis's.
-variable "acl_users_vault_path" {
-  description = "Vault KV v2 path (under secret/) of the ACL users' passwords, acl-admin's among them."
-  type        = string
-  default     = "redis/users"
-}
-
-variable "acl_sync_pushgateway" {
-  description = "Pushgateway base URL and the job name the sync pushes to."
-  type        = object({ url = string, job = string })
-  default     = { url = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job", job = "redis-acl-sync" }
-}
 
 variable "acl_sync_suspended" {
   description = "Suspend the redis-acl-sync CronJob (break glass, docs/runbooks/redis-acl.md)."
@@ -98,7 +83,7 @@ resource "random_password" "redis_default" {
 # grants data and metadata write on secret/redis/users only.
 resource "vault_kv_secret_v2" "redis_users" {
   mount = "secret"
-  name  = var.acl_users_vault_path
+  name  = "redis/users"
   data_json = jsonencode(merge(
     { for name, _ in local.redis_acl_users : name => random_password.redis_acl[name].result },
     { default = random_password.redis_default.result },
@@ -237,7 +222,7 @@ resource "kubernetes_cron_job_v1" "redis_acl_sync" {
               }
               env {
                 name  = "PUSHGATEWAY_URL"
-                value = "${var.acl_sync_pushgateway.url}/${var.acl_sync_pushgateway.job}"
+                value = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/redis-acl-sync"
               }
               volume_mount {
                 name       = "config"

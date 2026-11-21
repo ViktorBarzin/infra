@@ -77,7 +77,7 @@ Read the last failed Job's log; it names the reason on one line (`FAILED, nothin
 
 ## Cloud Key Value tenants
 
-Cloud's Key Values live on their own Redis, cloud-redis (cloud B27 option b): [cloud-redis.md](cloud-redis.md). This Redis runs the same `acl_sync.py` with the tenant section off (no `CLOUD_TENANTS_URL`): it wants no tenant, and any user it did not make, a `p_*` one included, is removed on the next run. The `acl-seed` init step still rewrites `p_*` lines to the modules this `redis-server` loads (`acl_init.sh`), which keeps an aclfile from blocking a start, and `proto-max-bulk-len 128mb` caps one write here. **A change to `redis.conf` or the init step restarts Redis**: land it in a planned window after `presence claim redis:redis-v2`.
+Cloud's Key Values live on their own Redis, cloud-redis, Cloud's Key Value Redis (cloud B27 option b): [cloud-redis.md](cloud-redis.md). This Redis runs the same `acl_sync.py` with the tenant section off (no `CLOUD_TENANTS_URL`): it wants no tenant, and any user it did not make, a `p_*` one included, is removed on the next run.
 
 ## Add a user
 
