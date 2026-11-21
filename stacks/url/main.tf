@@ -405,7 +405,7 @@ resource "kubernetes_deployment" "shlink-web" {
       }
       spec {
         container {
-          image = "shlinkio/shlink-web-client:4.9.0"
+          image = "shlinkio/shlink-web-client:4.9.1"
           name  = "shlink-web"
           volume_mount {
             mount_path = "/usr/share/nginx/html/servers.json"
