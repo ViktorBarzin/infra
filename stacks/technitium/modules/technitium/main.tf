@@ -516,7 +516,7 @@ resource "kubernetes_job" "pg_db_init" {
       spec {
         container {
           name  = "db-init"
-          image = "postgres:18.7-alpine"
+          image = "postgres:19.0-alpine"
           resources {
             requests = {
               cpu    = "10m"
