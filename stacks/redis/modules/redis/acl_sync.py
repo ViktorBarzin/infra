@@ -122,18 +122,213 @@ def validate_rules(users_rules: dict[str, str]) -> None:
         raise SyncError(f"{ADMIN_USER} must keep +acl, or the sync locks itself out")
 
 
-def render_tenant_users() -> list[User]:
-    """Cloud Key Value tenants, B27. None until then.
+# --- Cloud Key Value tenants (B27) --------------------------------------------
+#
+# Cloud publishes the Key Values it wants at a read-only internal route
+# (the cloud repo's reconciler, GET /internal/redis-tenants with a bearer
+# token from Vault secret/redis/cloud-tenants): user name, password hash,
+# key prefix and Size in bytes, and a `purge` list of prefixes whose data
+# must go. Cloud has no Redis right of its own. The sync checks every field
+# and writes each tenant's rules itself from the fixed template below
+# (B40 design, "Cloud tenants"), so a stolen Cloud credential can make only
+# prefix-confined users. Redis 8.10.3 prints a tenant as
+#   user <name> on sanitize-payload #<sha256> ~<prefix>* resetchannels &<prefix>* <rules>
+# (resetkeys is dropped), which is the line the plan compares.
 
-    B27 fills this from Cloud's read-only internal route (name, password
-    hash, Size): reject any name that does not match ^p_[a-z0-9_]+$, and
-    write each tenant's rules from the fixed template in the B40 design
-    (checklist-and-backlog.md, "Cloud tenants"), never from Cloud's input.
-    """
-    return []
+TENANT_NAME_RE = re.compile(r"^p_[a-z0-9_]{1,120}$")
+TENANT_PART_RE = re.compile(r"^[a-z0-9-]{1,63}$")
+TENANT_PREFIX_RE = re.compile(r"^p:([a-z0-9-]{1,63}):([a-z0-9-]{1,63}):$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+TENANT_RULES = (
+    "-@all +@read +@write +@keyspace +@hash +@list +@set +@sortedset +@stream +@string +@pubsub "
+    "+@transaction +@scripting +@connection -@dangerous -select -scan -randomkey -function -script|flush"
+)
+# Over its Size: read and delete only. No scripts and no PUBLISH, which
+# would write or cost memory; MULTI/EXEC/WATCH stay so a client's
+# transaction of reads and deletes still runs.
+TENANT_FULL_RULES = (
+    "-@all +@read +@connection +del +unlink +multi +exec +discard +watch +unwatch "
+    "-@dangerous -select -scan -randomkey"
+)
+TENANT_LINE_RE = re.compile(
+    r"^user (p_[a-z0-9_]+) on sanitize-payload #([0-9a-f]{64}) "
+    r"~(p:[a-z0-9-]+:[a-z0-9-]+:)\* resetchannels &(p:[a-z0-9-]+:[a-z0-9-]+:)\* (.+)$"
+)
+TENANT_KEYS_RE = re.compile(r" ~(p:[a-z0-9-]+:[a-z0-9-]+:)\* ")
+MAX_TENANTS = 10000
+MAX_TENANT_BYTES = 1 << 40
+ANSWER_MAX_BYTES = 8 * 1024 * 1024
+
+# Measurement, every MEASURE_EVERY_SECONDS: one SCAN MATCH p:* pass over db
+# 0 (COUNT SCAN_COUNT a call; SCAN visits every key of db 0 whatever the
+# MATCH, 5,828 keys on 2026-11-21), MEMORY USAGE for at most
+# MEMORY_SAMPLE_PER_TENANT keys of each tenant, pipelined PIPELINE_BATCH at
+# a time, and an extrapolation for a bigger tenant (SCAN's order follows the
+# hash table, so the first keys are a fair sample). The key count is exact.
+# Cost at 10,000 tenant keys: SCAN of db 0 at about 16,000 keys is 16 calls,
+# plus 10 pipelined batches of 1,000 MEMORY USAGE, about 10 ms of Redis CPU
+# for small strings and well under a second of wall time.
+MEASURE_EVERY_SECONDS = 300
+SCAN_COUNT = 1000
+PIPELINE_BATCH = 1000
+MEMORY_SAMPLE_PER_TENANT = 10000
 
 
-def render(users_rules: dict[str, str], passwords: dict[str, str]) -> dict[str, User]:
+@dataclass(frozen=True)
+class Tenant:
+    """One Key Value. max_bytes is None for a tenant kept from ACL LIST
+    while Cloud's route is down: its mode then stays as it is."""
+
+    name: str
+    password_sha256: str
+    prefix: str
+    project: str
+    service: str
+    max_bytes: int | None = None
+
+
+@dataclass
+class TenantAnswer:
+    tenants: list[Tenant]
+    purge: list[str]
+    warnings: list[str] = field(default_factory=list)
+
+
+def _tenant_prefix(entry: dict[str, object], what: str) -> tuple[str, str, str]:
+    prefix, project, service = entry.get("prefix"), entry.get("project"), entry.get("service")
+    if not isinstance(prefix, str) or not TENANT_PREFIX_RE.match(prefix):
+        raise SyncError(f"{what}: bad prefix {str(prefix)[:80]!r}")
+    if not isinstance(project, str) or not isinstance(service, str) or prefix != f"p:{project}:{service}:":
+        raise SyncError(f"{what}: prefix {prefix!r} does not match its project and service")
+    return prefix, project, service
+
+
+def parse_tenant_answer(doc: object) -> TenantAnswer:
+    """Check Cloud's answer field by field. Any bad tenant rejects the whole
+    answer, so the run keeps the last good set instead of dropping one."""
+    if not isinstance(doc, dict) or doc.get("version") != 1:
+        raise SyncError("Cloud tenants answer is not version 1")
+    raw_tenants, raw_purge = doc.get("tenants"), doc.get("purge", [])
+    if not isinstance(raw_tenants, list) or len(raw_tenants) > MAX_TENANTS:
+        raise SyncError("Cloud tenants answer: tenants is not a list of at most 10000")
+    if not isinstance(raw_purge, list) or len(raw_purge) > MAX_TENANTS:
+        raise SyncError("Cloud tenants answer: purge is not a list of at most 10000")
+    tenants: list[Tenant] = []
+    names: set[str] = set()
+    prefixes: set[str] = set()
+    for entry in raw_tenants:
+        if not isinstance(entry, dict):
+            raise SyncError("Cloud tenants answer: a tenant is not an object")
+        name, digest, max_bytes = entry.get("user"), entry.get("passwordSha256"), entry.get("maxBytes")
+        if not isinstance(name, str) or not TENANT_NAME_RE.match(name):
+            raise SyncError(f"Cloud tenants answer: bad tenant user {str(name)[:80]!r}")
+        if not isinstance(digest, str) or not SHA256_RE.match(digest):
+            raise SyncError(f"tenant {name}: bad password hash")
+        if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or not 0 < max_bytes <= MAX_TENANT_BYTES:
+            raise SyncError(f"tenant {name}: bad maxBytes")
+        prefix, project, service = _tenant_prefix(entry, f"tenant {name}")
+        if name in names or prefix in prefixes:
+            raise SyncError(f"Cloud tenants answer names {name} or {prefix} twice")
+        names.add(name)
+        prefixes.add(prefix)
+        tenants.append(Tenant(name, digest, prefix, project, service, max_bytes))
+    purge: list[str] = []
+    warnings: list[str] = []
+    for entry in raw_purge:
+        if not isinstance(entry, dict):
+            raise SyncError("Cloud tenants answer: a purge entry is not an object")
+        prefix, _, _ = _tenant_prefix(entry, "purge entry")
+        if prefix in prefixes:
+            # Cloud should never ask this; deleting nothing is the safe side.
+            warnings.append(f"ignored purge of {prefix}: a live tenant has that prefix")
+            continue
+        if prefix not in purge:
+            purge.append(prefix)
+    return TenantAnswer(tenants, purge, warnings)
+
+
+def tenant_user(tenant: Tenant, full: bool) -> User:
+    rules = TENANT_FULL_RULES if full else TENANT_RULES
+    p = tenant.prefix
+    return User(
+        name=tenant.name,
+        setuser_args=["reset", "on", f"#{tenant.password_sha256}", "resetkeys", f"~{p}*", "resetchannels", f"&{p}*", *rules.split()],
+        line=f"user {tenant.name} on sanitize-payload #{tenant.password_sha256} ~{p}* resetchannels &{p}* {rules}",
+    )
+
+
+def parse_tenant_line(line: str) -> tuple[Tenant, bool] | None:
+    """A tenant and whether it is full, when an ACL LIST line is exactly the
+    template (normal or full); else None."""
+    m = TENANT_LINE_RE.match(line)
+    if m is None or m.group(3) != m.group(4) or not TENANT_NAME_RE.match(m.group(1)):
+        return None
+    if m.group(5) not in (TENANT_RULES, TENANT_FULL_RULES):
+        return None
+    prefix_match = TENANT_PREFIX_RE.match(m.group(3))
+    if prefix_match is None:
+        return None
+    tenant = Tenant(m.group(1), m.group(2), m.group(3), prefix_match.group(1), prefix_match.group(2))
+    return tenant, m.group(5) == TENANT_FULL_RULES
+
+
+def tenants_from_acl(current: dict[str, str]) -> list[Tenant]:
+    """The tenants Redis holds now: the last good set while the route is down."""
+    found = [parse_tenant_line(line) for line in current.values()]
+    return [t for t, _ in (f for f in found if f is not None)]
+
+
+def full_users(current: dict[str, str]) -> set[str]:
+    found = [parse_tenant_line(line) for line in current.values()]
+    return {t.name for t, full in (f for f in found if f is not None) if full}
+
+
+def foreign_users(current: dict[str, str], infra_names: set[str], tenant_names: set[str]) -> list[str]:
+    """Users that are not default, not infra, not a tenant Cloud asked for
+    and not shaped like the tenant template (RedisForeignUser)."""
+    known = {"default", ADMIN_USER, *infra_names, *tenant_names}
+    return sorted(n for n, line in current.items() if n not in known and parse_tenant_line(line) is None)
+
+
+def key_prefix(key: str) -> str | None:
+    parts = key.split(":", 3)
+    if len(parts) < 4 or parts[0] != "p" or not TENANT_PART_RE.match(parts[1]) or not TENANT_PART_RE.match(parts[2]):
+        return None
+    return f"p:{parts[1]}:{parts[2]}:"
+
+
+def measure_due(now: float) -> bool:
+    return int(now) // 60 % (MEASURE_EVERY_SECONDS // 60) == 0
+
+
+def fetch_tenant_answer(url: str, token: str, timeout: float = 10.0) -> object:
+    if not token:
+        raise SyncError("no token for the Cloud tenants route (Vault secret/redis/cloud-tenants)")
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read(ANSWER_MAX_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        raise SyncError(f"Cloud tenants route answered {exc.code}") from None
+    except (OSError, urllib.error.URLError) as exc:
+        raise SyncError(f"Cloud tenants route unreachable: {type(exc).__name__}: {exc}") from None
+    if len(body) > ANSWER_MAX_BYTES:
+        raise SyncError("Cloud tenants answer is larger than 8 MiB")
+    try:
+        return json.loads(body)
+    except ValueError:
+        raise SyncError("Cloud tenants answer is not JSON") from None
+
+
+@dataclass
+class Usage:
+    keys: dict[str, int]
+    bytes: dict[str, float]
+    purged: int = 0
+    memory_usage_calls: int = 0
+
+
+def render(users_rules: dict[str, str], passwords: dict[str, str], tenants: list[User] | None = None) -> dict[str, User]:
     """The desired users by name. Raises SyncError on any broken input."""
     validate_rules(users_rules)
     if not isinstance(passwords, dict):
@@ -153,7 +348,7 @@ def render(users_rules: dict[str, str], passwords: dict[str, str]) -> dict[str, 
     desired: dict[str, User] = {"default": default_user()}
     for name in sorted(users_rules):
         desired[name] = infra_user(name, users_rules[name], passwords[name])
-    for tenant in render_tenant_users():
+    for tenant in tenants or []:
         if tenant.name in desired:
             raise SyncError(f"tenant user {tenant.name} collides with an infra user")
         desired[tenant.name] = tenant
@@ -308,7 +503,9 @@ class Redis:
     def send(self, *args: str) -> None:
         out = [f"*{len(args)}\r\n".encode()]
         for arg in args:
-            data = arg.encode()
+            # Tenants choose their key names: surrogateescape carries any
+            # byte through a decode and back.
+            data = arg.encode(errors="surrogateescape")
             out.append(b"$%d\r\n%s\r\n" % (len(data), data))
         self.sock.sendall(b"".join(out))
 
@@ -328,7 +525,7 @@ class Redis:
             if size < 0:
                 return None
             data = self.file.read(size + 2)
-            return data[:-2].decode()
+            return data[:-2].decode(errors="surrogateescape")
         if kind == b"*":
             size = int(rest)
             if size < 0:
@@ -343,6 +540,13 @@ class Redis:
             raise reply
         return reply
 
+    def pipeline(self, commands: list[list[str]]) -> list[object]:
+        """Send every command, then read every reply; errors come back as
+        RedisError values, not raised."""
+        for command in commands:
+            self.send(*command)
+        return [self.read() for _ in commands]
+
     def transaction(self, commands: list[list[str]]) -> list[object]:
         self.call("MULTI")
         for command in commands:
@@ -354,6 +558,48 @@ class Redis:
 
 
 RedisFactory = Callable[[], Redis]
+
+
+def measure(admin: Redis, prefixes: set[str], purge: set[str]) -> Usage:
+    """One SCAN pass: count and size each tenant prefix, and UNLINK the keys
+    of the prefixes in `purge` (the caller checked that no user has them)."""
+    keys = {p: 0 for p in prefixes}
+    sampled = {p: 0 for p in prefixes}
+    sample_bytes = {p: 0 for p in prefixes}
+    usage = Usage(keys=keys, bytes={})
+    cursor = "0"
+    while True:
+        reply = admin.call("SCAN", cursor, "MATCH", "p:*", "COUNT", str(SCAN_COUNT))
+        if not isinstance(reply, list) or len(reply) != 2 or not isinstance(reply[1], list):
+            raise SyncError("unexpected SCAN reply")
+        cursor = str(reply[0])
+        to_size: list[tuple[str, str]] = []
+        to_unlink: list[str] = []
+        for key in reply[1]:
+            prefix = key_prefix(str(key))
+            if prefix in keys:
+                keys[prefix] += 1
+                if sampled[prefix] < MEMORY_SAMPLE_PER_TENANT:
+                    sampled[prefix] += 1
+                    to_size.append((prefix, str(key)))
+            elif prefix in purge:
+                to_unlink.append(str(key))
+        for i in range(0, len(to_size), PIPELINE_BATCH):
+            batch = to_size[i : i + PIPELINE_BATCH]
+            replies = admin.pipeline([["MEMORY", "USAGE", k] for _, k in batch])
+            usage.memory_usage_calls += len(batch)
+            for (prefix, _), size in zip(batch, replies):
+                if isinstance(size, RedisError):
+                    raise SyncError(f"MEMORY USAGE refused: {size}")
+                if isinstance(size, int):  # None: the key went away meanwhile
+                    sample_bytes[prefix] += size
+        for i in range(0, len(to_unlink), PIPELINE_BATCH):
+            removed = admin.call("UNLINK", *to_unlink[i : i + PIPELINE_BATCH])
+            usage.purged += removed if isinstance(removed, int) else 0
+        if cursor == "0":
+            break
+    usage.bytes = {p: (sample_bytes[p] * keys[p] / sampled[p]) if sampled[p] else 0.0 for p in prefixes}
+    return usage
 
 
 def auth_ok(connect: RedisFactory, user: User) -> bool:
@@ -373,7 +619,7 @@ def auth_ok(connect: RedisFactory, user: User) -> bool:
 # --- Vault ---------------------------------------------------------------------
 
 
-def vault_passwords(addr: str, role: str, path: str, jwt_file: str, timeout: float = 10.0) -> dict[str, str]:
+def vault_login(addr: str, role: str, jwt_file: str, timeout: float = 10.0) -> str:
     try:
         with open(jwt_file) as fh:
             jwt = fh.read().strip()
@@ -384,6 +630,15 @@ def vault_passwords(addr: str, role: str, path: str, jwt_file: str, timeout: flo
         )
         with urllib.request.urlopen(login, timeout=timeout) as resp:
             token = json.load(resp)["auth"]["client_token"]
+    except (OSError, urllib.error.URLError, KeyError, TypeError, ValueError) as exc:
+        raise SyncError(f"Vault unreachable or refused: {type(exc).__name__}: {exc}") from None
+    if not isinstance(token, str):
+        raise SyncError("Vault login gave no token")
+    return token
+
+
+def vault_read(addr: str, token: str, path: str, timeout: float = 10.0) -> dict[str, object]:
+    try:
         read = urllib.request.Request(f"{addr}/v1/{path}", headers={"X-Vault-Token": token})
         with urllib.request.urlopen(read, timeout=timeout) as resp:
             data = json.load(resp)["data"]["data"]
@@ -394,11 +649,32 @@ def vault_passwords(addr: str, role: str, path: str, jwt_file: str, timeout: flo
     return data
 
 
+def vault_passwords(addr: str, role: str, path: str, jwt_file: str, timeout: float = 10.0) -> dict[str, str]:
+    data = vault_read(addr, vault_login(addr, role, jwt_file, timeout), path, timeout)
+    # A value that is not a string becomes "", which render() refuses as
+    # malformed, as before.
+    return {k: v if isinstance(v, str) else "" for k, v in data.items()}
+
+
 # --- metrics -------------------------------------------------------------------
 
 
 def escape_label(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def kv_metrics_text(gauges: dict[str, float], labelled: dict[str, dict[tuple[str, str], float]]) -> str:
+    """Key Value series, labelled with Cloud's own project and service names."""
+    out: list[str] = []
+    for name, value in gauges.items():
+        out += [f"# TYPE {name} gauge", f"{name} {value}"]
+    for name, series in labelled.items():
+        out.append(f"# TYPE {name} gauge")
+        out += [
+            f'{name}{{project="{escape_label(p)}",service="{escape_label(svc)}"}} {value}'
+            for (p, svc), value in sorted(series.items())
+        ]
+    return "\n".join(out) + "\n"
 
 
 def metrics_text(gauges: dict[str, float], labelled: dict[str, dict[str, float]]) -> str:
@@ -411,10 +687,11 @@ def metrics_text(gauges: dict[str, float], labelled: dict[str, dict[str, float]]
     return "\n".join(out) + "\n"
 
 
-def push_metrics(url: str, body: str, timeout: float = 10.0) -> None:
+def push_metrics(url: str, body: str, timeout: float = 10.0, method: str = "POST") -> None:
     # POST replaces only the metric names sent, so a failed run that sends
-    # no last_success keeps the previous one.
-    req = urllib.request.Request(url, data=body.encode(), method="POST", headers={"Content-Type": "text/plain"})
+    # no last_success keeps the previous one. PUT replaces the whole group:
+    # the Key Value groups use it, so a vanished tenant's series go.
+    req = urllib.request.Request(url, data=body.encode(), method=method, headers={"Content-Type": "text/plain"})
     with urllib.request.urlopen(req, timeout=timeout):
         pass
 
@@ -433,6 +710,80 @@ class Result:
     default_lookup_error: str = ""
     auth: dict[str, float] = field(default_factory=dict)
     error: str = ""
+    # Key Value tenants (B27). tenants_fetch_ok is None when the run had no
+    # tenant route to ask.
+    tenants_fetch_ok: bool | None = None
+    tenants_error: str = ""
+    tenants_warnings: list[str] = field(default_factory=list)
+    foreign_users: list[str] | None = None
+    kv_ready: dict[tuple[str, str], float] = field(default_factory=dict)
+    kv_full: dict[tuple[str, str], float] = field(default_factory=dict)
+    # Each tenant's clients from this run's CLIENT LIST, 0 for none.
+    kv_connections: dict[tuple[str, str], float] = field(default_factory=dict)
+    measured: bool = False
+    measure_error: str = ""
+    kv_bytes: dict[tuple[str, str], float] = field(default_factory=dict)
+    kv_keys: dict[tuple[str, str], float] = field(default_factory=dict)
+    purged: int = 0
+    memory_usage_calls: int = 0
+
+
+def sync_tenants(
+    result: "Result",
+    admin: Redis,
+    current: dict[str, str],
+    users_rules: dict[str, str],
+    fetch_tenants: Callable[[], object] | None,
+    measure_now: bool,
+) -> list[User]:
+    """The tenant users this run wants, and the Key Value numbers on result.
+
+    The route's answer when it is good; otherwise the tenants Redis already
+    holds, unchanged, so a Cloud outage drops nobody. Full or normal comes
+    from the measurement on a measuring run, else from ACL LIST: the ACL is
+    the only state kept between runs."""
+    answer: TenantAnswer | None = None
+    if fetch_tenants is not None:
+        try:
+            answer = parse_tenant_answer(fetch_tenants())
+            result.tenants_fetch_ok = True
+            result.tenants_warnings = answer.warnings
+        except SyncError as exc:
+            result.tenants_fetch_ok = False
+            result.tenants_error = str(exc)
+    tenants = answer.tenants if answer is not None else tenants_from_acl(current)
+    names = {t.name for t in tenants}
+    result.foreign_users = foreign_users(current, set(users_rules) if isinstance(users_rules, dict) else set(), names)
+    full = full_users(current) & names
+
+    if measure_now:
+        # Purge only on a fresh answer, never a live tenant's prefix, and
+        # only once no tenant user in Redis holds that prefix (the user goes
+        # first, in an earlier run).
+        held = {m.group(1) for line in current.values() for m in [TENANT_KEYS_RE.search(line)] if m}
+        live = {t.prefix for t in tenants}
+        purge = {p for p in (answer.purge if answer is not None else []) if p not in live and p not in held}
+        try:
+            usage = measure(admin, live, purge)
+        except (SyncError, RedisError) as exc:
+            result.measure_error = f"{type(exc).__name__}: {exc}"
+        else:
+            result.measured = True
+            result.purged = usage.purged
+            result.memory_usage_calls = usage.memory_usage_calls
+            for t in tenants:
+                key = (t.project, t.service)
+                result.kv_bytes[key] = float(usage.bytes.get(t.prefix, 0.0))
+                result.kv_keys[key] = float(usage.keys.get(t.prefix, 0))
+                if t.max_bytes is not None:
+                    if result.kv_bytes[key] > t.max_bytes:
+                        full.add(t.name)
+                    else:
+                        full.discard(t.name)
+    for t in tenants:
+        result.kv_full[(t.project, t.service)] = 1.0 if t.name in full else 0.0
+        result.kv_connections[(t.project, t.service)] = float(result.counts.get(t.name, 0))
+    return [tenant_user(t, t.name in full) for t in tenants]
 
 
 def run(
@@ -440,6 +791,8 @@ def run(
     fetch_passwords: Callable[[], dict[str, str]],
     connect: RedisFactory,
     default_ips: Callable[[], set[str]] = set,
+    fetch_tenants: Callable[[], object] | None = None,
+    measure: bool = False,
 ) -> Result:
     result = Result(ok=False)
     try:
@@ -477,10 +830,11 @@ def run(
         for name in known:
             result.counts.setdefault(name, 0)
 
-        desired = render(users_rules, passwords)
-
         acl_list = admin.call("ACL", "LIST")
         current = parse_acl_list(acl_list if isinstance(acl_list, list) else [])
+        tenant_users = sync_tenants(result, admin, current, users_rules, fetch_tenants, measure)
+
+        desired = render(users_rules, passwords, tenant_users)
         commands = plan(current, desired)
         errors: list[str] = []
         if commands:
@@ -505,6 +859,10 @@ def run(
         strays = sorted(n for n in after if n not in desired)
         if drift or strays:
             raise SyncError(f"ACL LIST differs from the render after sync: drift={drift} strays={strays}")
+        tenant_lines = {u.name: u.line for u in tenant_users}
+        for found in (parse_tenant_line(line) for line in tenant_lines.values()):
+            if found is not None:
+                result.kv_ready[(found[0].project, found[0].service)] = 1.0 if after.get(found[0].name) == tenant_lines[found[0].name] else 0.0
 
         for name, user in desired.items():
             if user.password is not None:
@@ -528,14 +886,31 @@ def main() -> int:
     host = env.get("REDIS_HOST", "redis-master.redis.svc.cluster.local")
     port = int(env.get("REDIS_PORT", "6379"))
     kube_api = f"https://{env.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc')}:{env.get('KUBERNETES_SERVICE_PORT', '443')}"
+    vault_addr = env.get("VAULT_ADDR", "http://vault-active.vault.svc.cluster.local:8200")
+    sa_token_file = env.get("SA_TOKEN_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/token")
+    vault_tokens: list[str] = []
+
+    def vault_token() -> str:
+        # One login a run, shared by the passwords and the tenants token.
+        if not vault_tokens:
+            vault_tokens.append(vault_login(vault_addr, env.get("VAULT_ROLE", "redis-acl-sync"), sa_token_file))
+        return vault_tokens[0]
+
+    def fetch_passwords() -> dict[str, str]:
+        data = vault_read(vault_addr, vault_token(), env.get("VAULT_SECRET_PATH", "secret/data/redis/users"))
+        return {k: v if isinstance(v, str) else "" for k, v in data.items()}
+
+    def fetch_tenants() -> object:
+        token = vault_read(vault_addr, vault_token(), env.get("CLOUD_TENANTS_TOKEN_PATH", "secret/data/redis/cloud-tenants")).get("token")
+        return fetch_tenant_answer(
+            env.get("CLOUD_TENANTS_URL", "http://cloud-reconciler.cloud.svc.cluster.local:9091/internal/redis-tenants"),
+            token if isinstance(token, str) else "",
+        )
+
+    started = time.time()
     result = run(
         users_rules,
-        fetch_passwords=lambda: vault_passwords(
-            env.get("VAULT_ADDR", "http://vault-active.vault.svc.cluster.local:8200"),
-            env.get("VAULT_ROLE", "redis-acl-sync"),
-            env.get("VAULT_SECRET_PATH", "secret/data/redis/users"),
-            env.get("SA_TOKEN_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/token"),
-        ),
+        fetch_passwords=fetch_passwords,
         connect=lambda: Redis(host, port),
         default_ips=lambda: namespace_pod_ips(
             [n for n in env.get("DEFAULT_USER_NAMESPACES", "").split(",") if n],
@@ -543,6 +918,8 @@ def main() -> int:
             env.get("SA_TOKEN_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/token"),
             env.get("SA_CA_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"),
         ),
+        fetch_tenants=fetch_tenants,
+        measure=measure_due(started),
     )
     now = time.time()
     gauges: dict[str, float] = {
@@ -560,6 +937,18 @@ def main() -> int:
         print(f"warning: counting every default client as unexpected: {result.default_lookup_error}", file=sys.stderr)
     for client in result.default_unexpected_clients:
         print(describe_unexpected(client), file=sys.stderr)
+    if result.tenants_fetch_ok is not None:
+        gauges["cloud_kv_tenants_fetch_ok"] = 1.0 if result.tenants_fetch_ok else 0.0
+    if result.tenants_error:
+        print(f"warning: kept the tenants Redis holds: {result.tenants_error}", file=sys.stderr)
+    for warning in result.tenants_warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    if result.foreign_users is not None:
+        gauges["redis_acl_foreign_users"] = float(len(result.foreign_users))
+        for name in result.foreign_users:
+            print(f"foreign ACL user (removed this run): {name}", file=sys.stderr)
+    if result.measure_error:
+        print(f"warning: Key Value measurement failed: {result.measure_error}", file=sys.stderr)
     if result.ok:
         gauges["redis_acl_sync_last_success_timestamp_seconds"] = now
         gauges["redis_acl_sync_changes"] = float(result.changes)
@@ -569,11 +958,33 @@ def main() -> int:
         print(f"ok: {result.changes} change(s), {len(result.auth)} users AUTH and PING, clients by user {result.counts}")
     else:
         print(f"FAILED, nothing more changed: {result.error}", file=sys.stderr)
-    try:
-        push_metrics(env.get("PUSHGATEWAY_URL", "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/redis-acl-sync"), metrics_text(gauges, labelled))
-    except (OSError, urllib.error.URLError) as exc:
-        print(f"pushgateway push failed: {exc}", file=sys.stderr)
-        return 1
+    pushes = [(env.get("PUSHGATEWAY_URL", "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/redis-acl-sync"), metrics_text(gauges, labelled), "POST")]
+    # Key Value series in their own groups, replaced whole (PUT), so a
+    # tenant that went away loses its series. State after every good run;
+    # usage after every good measurement, so between measurements the last
+    # numbers stay.
+    if result.ok:
+        state = kv_metrics_text(
+            {"cloud_kv_tenants": float(len(result.kv_full))},
+            {"cloud_kv_ready": result.kv_ready, "cloud_kv_full": result.kv_full, "cloud_kv_connections": result.kv_connections},
+        )
+        pushes.append((env.get("PUSHGATEWAY_KV_URL", "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/redis-acl-sync-kv"), state, "PUT"))
+    if result.ok and result.measured:
+        usage = kv_metrics_text(
+            {
+                "cloud_kv_measured_timestamp_seconds": started,
+                "cloud_kv_purged_keys": float(result.purged),
+                "cloud_kv_memory_usage_calls": float(result.memory_usage_calls),
+            },
+            {"cloud_kv_bytes": result.kv_bytes, "cloud_kv_keys": result.kv_keys},
+        )
+        pushes.append((env.get("PUSHGATEWAY_KV_USAGE_URL", "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/redis-acl-sync-kv-usage"), usage, "PUT"))
+    for url, body, method in pushes:
+        try:
+            push_metrics(url, body, method=method)
+        except (OSError, urllib.error.URLError) as exc:
+            print(f"pushgateway push failed: {exc}", file=sys.stderr)
+            return 1
     return 0 if result.ok else 1
 
 

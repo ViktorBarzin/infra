@@ -5149,6 +5149,52 @@ serverFiles:
               severity: warning
             annotations:
               summary: "redis-acl-sync has never pushed a success to the pushgateway; check the CronJob in namespace redis (docs/runbooks/redis-acl.md)"
+          - alert: RedisMemoryHigh
+            # An earlier warning than RedisMemoryPressure (80%): Cloud Key
+            # Value (B27) put Project data on this Redis with no cap on the
+            # sum of their Sizes (Viktor's decision R1), so leave time to
+            # raise maxmemory before volatile-lru starts evicting.
+            expr: redis_memory_used_bytes{namespace="redis"} / redis_memory_max_bytes{namespace="redis"} > 0.70
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Redis pod {{ $labels.pod }} has used {{ $value | humanizePercentage }} of maxmemory for 15 min"
+              description: "Find the biggest users: sum(cloud_kv_bytes) for Cloud Key Values, and the infra consumers by database (redis_db_keys). Raise maxmemory in stacks/redis before 80%. Runbook: docs/runbooks/redis-acl.md, Cloud Key Value tenants."
+          - alert: CloudKeyValueTotalHigh
+            # The sum of what Cloud Key Values hold, measured by
+            # redis-acl-sync every 5 min. 128 MiB is the figure the B27
+            # backlog's R1 table used; there is no cap, only this alert.
+            expr: sum(cloud_kv_bytes{job="redis-acl-sync-kv-usage"}) > 128 * 1024 * 1024
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Cloud Key Values hold {{ $value | humanize1024 }}B on the shared Redis, over 128 MiB"
+              description: "topk(5, cloud_kv_bytes) names the biggest Key Values. No cap applies (decision R1); check Redis headroom against maxmemory. Runbook: docs/runbooks/redis-acl.md, Cloud Key Value tenants."
+          - alert: RedisForeignUser
+            # redis-acl-sync counts ACL users that are neither infra users,
+            # nor Cloud tenants from the route, nor shaped like the tenant
+            # template, then deletes them in the same run. Any such user was
+            # made outside the sync: someone holds acl-admin or a +@all user.
+            expr: max_over_time(redis_acl_foreign_users{job="redis-acl-sync"}[15m]) > 0
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "redis-acl-sync found and removed {{ $value }} ACL user(s) it did not make"
+              description: "The CronJob log names each one (foreign ACL user ...). Treat it as a credential leak until shown otherwise. Runbook: docs/runbooks/redis-acl.md, Foreign users."
+          - alert: CloudKeyValueTenantsFetchFailing
+            # The sync keeps the tenants Redis already holds while Cloud's
+            # route fails, so no Key Value breaks; new, resized or deleted
+            # ones wait until the route answers again.
+            expr: cloud_kv_tenants_fetch_ok{job="redis-acl-sync"} == 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "redis-acl-sync cannot read Cloud's Key Value tenant route; Key Value changes are not reaching Redis"
+              description: "The CronJob log says why (unreachable, 401, bad answer). Check the cloud-reconciler pod and its tenants port 9091. Runbook: docs/runbooks/redis-acl.md, Cloud Key Value tenants."
           - alert: HeadscaleReplicasMismatch
             expr: (kube_deployment_status_replicas_available{namespace="headscale"} or on() vector(0)) < 1
             for: 5m

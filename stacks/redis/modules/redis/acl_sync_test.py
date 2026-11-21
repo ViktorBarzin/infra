@@ -605,3 +605,372 @@ def test_counts_report_zero_even_when_the_render_fails():
     assert not result.ok
     assert result.counts["default"] == 1
     assert result.counts["tv"] == 0
+
+
+# --- Cloud Key Value tenants (B27) ----------------------------------------------
+
+
+def tenant_entry(project: str = "shop", service: str = "cache", password: str = "t" * 32, max_bytes: int = 16 * 1048576) -> dict[str, object]:
+    readable = f"{project}_{service}".replace("-", "_")
+    digest = hashlib.sha256(f"{project}/{service}".encode()).hexdigest()[:10]
+    return {
+        "user": f"p_{readable}_{digest}",
+        "passwordSha256": hashlib.sha256(password.encode()).hexdigest(),
+        "prefix": f"p:{project}:{service}:",
+        "maxBytes": max_bytes,
+        "project": project,
+        "service": service,
+    }
+
+
+def answer(*tenants: dict[str, object], purge: list[dict[str, str]] | None = None) -> dict[str, object]:
+    return {"version": 1, "tenants": list(tenants), "purge": purge or []}
+
+
+def test_parse_tenant_answer_accepts_the_contract_shape():
+    t = tenant_entry()
+    parsed = acl_sync.parse_tenant_answer(answer(t, purge=[{"prefix": "p:old:cache:", "project": "old", "service": "cache"}]))
+    (tenant,) = parsed.tenants
+    assert tenant.name == t["user"] and tenant.prefix == "p:shop:cache:" and tenant.max_bytes == 16 * 1048576
+    assert (tenant.project, tenant.service) == ("shop", "cache")
+    assert parsed.purge == ["p:old:cache:"]
+
+
+@pytest.mark.parametrize(
+    "mutate, message",
+    [
+        (lambda a, t: t.update({"user": "P_shop"}), "bad tenant user"),
+        (lambda a, t: t.update({"user": "p_shop cache"}), "bad tenant user"),
+        (lambda a, t: t.update({"user": "immich"}), "bad tenant user"),
+        (lambda a, t: t.update({"passwordSha256": "x" * 64}), "bad password hash"),
+        (lambda a, t: t.update({"prefix": "p:shop:*"}), "bad prefix"),
+        (lambda a, t: t.update({"prefix": "p:other:cache:"}), "does not match its project and service"),
+        (lambda a, t: t.update({"maxBytes": True}), "bad maxBytes"),
+        (lambda a, t: t.update({"maxBytes": 0}), "bad maxBytes"),
+        (lambda a, t: t.update({"maxBytes": "16"}), "bad maxBytes"),
+        (lambda a, t: a.update({"version": 2}), "version"),
+        (lambda a, t: a.update({"tenants": "x"}), "tenants"),
+        (lambda a, t: a["tenants"].append(dict(t)), "twice"),
+        (lambda a, t: a["tenants"].append({**tenant_entry("shop", "other"), "prefix": t["prefix"], "service": "cache"}), "twice"),
+    ],
+)
+def test_parse_tenant_answer_rejects_a_bad_answer(mutate, message):
+    a = answer(tenant_entry())
+    mutate(a, a["tenants"][0])
+    with pytest.raises(SyncError, match=message):
+        acl_sync.parse_tenant_answer(a)
+
+
+def test_parse_tenant_answer_drops_a_purge_entry_for_a_live_prefix():
+    t = tenant_entry()
+    parsed = acl_sync.parse_tenant_answer(answer(t, purge=[{"prefix": "p:shop:cache:", "project": "shop", "service": "cache"}]))
+    assert parsed.purge == []
+    assert parsed.warnings and "live tenant" in parsed.warnings[0]
+
+
+def test_tenant_lines_follow_the_template_and_redis_normal_form():
+    tenant = acl_sync.parse_tenant_answer(answer(tenant_entry())).tenants[0]
+    normal = acl_sync.tenant_user(tenant, full=False)
+    digest = tenant.password_sha256
+    assert normal.line == (
+        f"user {tenant.name} on sanitize-payload #{digest} ~p:shop:cache:* resetchannels &p:shop:cache:* "
+        "-@all +@read +@write +@keyspace +@hash +@list +@set +@sortedset +@stream +@string +@pubsub "
+        "+@transaction +@scripting +@connection -@dangerous -select -scan -randomkey -function -script|flush"
+    )
+    assert normal.setuser_args[:7] == ["reset", "on", f"#{digest}", "resetkeys", "~p:shop:cache:*", "resetchannels", "&p:shop:cache:*"]
+    full = acl_sync.tenant_user(tenant, full=True)
+    assert "+@write" not in full.line and "+del" in full.line and "+unlink" in full.line
+    assert normal.password is None and full.password is None
+
+
+def test_tenants_from_acl_keeps_template_users_and_their_mode():
+    t = acl_sync.parse_tenant_answer(answer(tenant_entry())).tenants[0]
+    other = acl_sync.parse_tenant_answer(answer(tenant_entry("b", "kv"))).tenants[0]
+    current = {
+        t.name: acl_sync.tenant_user(t, full=False).line,
+        other.name: acl_sync.tenant_user(other, full=True).line,
+        "p_rogue": "user p_rogue on sanitize-payload #" + "0" * 64 + " ~* &* +@all",
+        "immich": "user immich on sanitize-payload #" + "0" * 64 + " ~* &* +@all",
+    }
+    kept = acl_sync.tenants_from_acl(current)
+    assert {k.name: (k.prefix, k.project, k.service, k.password_sha256) for k in kept} == {
+        t.name: ("p:shop:cache:", "shop", "cache", t.password_sha256),
+        other.name: ("p:b:kv:", "b", "kv", other.password_sha256),
+    }
+    assert acl_sync.full_users(current) == {other.name}
+
+
+def test_foreign_users_are_neither_infra_nor_tenants():
+    t = acl_sync.parse_tenant_answer(answer(tenant_entry())).tenants[0]
+    # A tenant Cloud dropped still matches the template: not foreign; the
+    # run deletes it like any user nobody wants.
+    stale = acl_sync.parse_tenant_answer(answer(tenant_entry("stale", "kv"))).tenants[0]
+    current = {
+        "default": DEFAULT_USER_LINE,
+        "immich": "user immich ...",
+        t.name: acl_sync.tenant_user(t, full=False).line,
+        stale.name: acl_sync.tenant_user(stale, full=False).line,
+        "p_rogue": "user p_rogue on sanitize-payload #" + "0" * 64 + " ~* &* +@all",
+        "mallory": "user mallory on nopass ~* &* +@all",
+    }
+    assert acl_sync.foreign_users(current, set(USERS), {t.name}) == ["mallory", "p_rogue"]
+
+
+def test_key_prefix():
+    assert acl_sync.key_prefix("p:shop:cache:a:b") == "p:shop:cache:"
+    assert acl_sync.key_prefix("p:shop:cache:") == "p:shop:cache:"
+    assert acl_sync.key_prefix("p:shop") is None
+    assert acl_sync.key_prefix("x:shop:cache:a") is None
+
+
+def test_measure_due_every_five_minutes():
+    assert acl_sync.measure_due(1_800_000_000 - 1_800_000_000 % 300)
+    assert not acl_sync.measure_due(1_800_000_000 - 1_800_000_000 % 300 + 60)
+
+
+def test_fetch_tenant_answer_sends_the_bearer_and_fails_closed(tmp_path):
+    import http.server
+    import threading
+
+    seen: list[str] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            seen.append(self.headers.get("Authorization", ""))
+            if self.headers.get("Authorization") != "Bearer good":
+                self.send_response(401)
+                self.end_headers()
+                return
+            body = json.dumps(answer(tenant_entry())).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_port}/internal/redis-tenants"
+    try:
+        assert acl_sync.fetch_tenant_answer(url, "good")["version"] == 1
+        with pytest.raises(SyncError, match="401"):
+            acl_sync.fetch_tenant_answer(url, "bad")
+        with pytest.raises(SyncError, match="no token"):
+            acl_sync.fetch_tenant_answer(url, "")
+    finally:
+        server.shutdown()
+    assert seen == ["Bearer good", "Bearer bad"]
+
+
+def test_kv_metrics_text_labels_project_and_service():
+    body = acl_sync.kv_metrics_text(
+        {"cloud_kv_tenants_fetch_ok": 1.0},
+        {"cloud_kv_ready": {("shop", "cache"): 1.0}},
+    )
+    assert body == (
+        "# TYPE cloud_kv_tenants_fetch_ok gauge\ncloud_kv_tenants_fetch_ok 1.0\n"
+        "# TYPE cloud_kv_ready gauge\n"
+        'cloud_kv_ready{project="shop",service="cache"} 1.0\n'
+    )
+
+
+# --- tenants against a real redis:8.10.3 -----------------------------------------
+
+
+def tenant_sync(box: RedisBox, pw: dict[str, str], fetch, measure: bool = False) -> acl_sync.Result:
+    return acl_sync.run(USERS, lambda: dict(pw), box.connect, set, fetch_tenants=fetch, measure=measure)
+
+
+def tenant_conn(box: RedisBox, entry: dict[str, object], password: str = "t" * 32) -> Redis:
+    c = box.connect()
+    c.call("AUTH", str(entry["user"]), password)
+    return c
+
+
+def refused(conn: Redis, *command: str) -> str:
+    with pytest.raises(acl_sync.RedisError) as info:
+        conn.call(*command)
+    return str(info.value)
+
+
+@pytest.fixture
+def tenant_box(box):
+    pw = fake_passwords()
+    box.init(pw[ADMIN_USER])
+    box.start()
+    return box, pw
+
+
+@needs_docker
+def test_tenant_rules_confine_a_tenant_to_its_prefix(tenant_box):
+    box, pw = tenant_box
+    a, b = tenant_entry("shop", "cache"), tenant_entry("other", "cache", password="u" * 32)
+    result = tenant_sync(box, pw, lambda: answer(a, b))
+    assert result.ok, result.error
+    assert result.kv_ready == {("shop", "cache"): 1.0, ("other", "cache"): 1.0}
+    held = tenant_conn(box, a)
+    counted = tenant_sync(box, pw, lambda: answer(a, b))
+    held.close()
+    assert counted.kv_connections == {("shop", "cache"): 1.0, ("other", "cache"): 0.0}
+    acl = {line.split()[1]: line for line in box.acl_list()}
+    assert acl[str(a["user"])] == acl_sync.tenant_user(acl_sync.parse_tenant_answer(answer(a)).tenants[0], full=False).line
+
+    c = tenant_conn(box, a)
+    try:
+        assert c.call("SET", "p:shop:cache:k", "1") == "OK"
+        assert c.call("GET", "p:shop:cache:k") == "1"
+        assert "NOPERM" in refused(c, "GET", "p:other:cache:k")
+        assert "NOPERM" in refused(c, "SET", "immich-key", "x")
+        for command in (["KEYS", "*"], ["SELECT", "1"], ["FLUSHALL"], ["FLUSHDB"], ["SCAN", "0"], ["RANDOMKEY"],
+                        ["CONFIG", "GET", "maxmemory"], ["SCRIPT", "FLUSH"], ["FUNCTION", "FLUSH"], ["ACL", "LIST"],
+                        ["MONITOR"], ["CLIENT", "KILL", "ID", "1"], ["INFO"]):
+            assert "NOPERM" in refused(c, *command), command
+        # BullMQ's way: SCRIPT LOAD, then EVALSHA on declared keys.
+        sha = c.call("SCRIPT", "LOAD", "return redis.call('INCR', KEYS[1])")
+        assert c.call("EVALSHA", str(sha), "1", "p:shop:cache:bull:n") == 1
+        assert "NOPERM" in refused(c, "EVALSHA", str(sha), "1", "p:other:cache:n")
+        assert c.call("PUBLISH", "p:shop:cache:chan", "hi") == 0
+        assert "NOPERM" in refused(c, "PUBLISH", "p:other:cache:chan", "hi")
+        assert c.call("MULTI") == "OK"
+        c.call("SET", "p:shop:cache:m", "1")
+        assert c.call("EXEC") == ["OK"]
+    finally:
+        c.close()
+    s = tenant_conn(box, a)
+    try:
+        assert s.call("SUBSCRIBE", "p:shop:cache:chan") == ["subscribe", "p:shop:cache:chan", 1]
+    finally:
+        s.close()
+    s = tenant_conn(box, a)
+    try:
+        assert "NOPERM" in refused(s, "SUBSCRIBE", "p:other:cache:chan")
+    finally:
+        s.close()
+
+
+@needs_docker
+def test_full_tenant_reads_and_deletes_but_cannot_write_until_under_again(tenant_box):
+    box, pw = tenant_box
+    a = tenant_entry(max_bytes=64 * 1024)
+    assert tenant_sync(box, pw, lambda: answer(a)).ok
+    c = tenant_conn(box, a)
+    for i in range(20):
+        c.call("SET", f"p:shop:cache:fill{i}", "x" * 8192)
+    c.close()
+
+    measured = tenant_sync(box, pw, lambda: answer(a), measure=True)
+    assert measured.ok, measured.error
+    assert measured.kv_keys[("shop", "cache")] == 20.0
+    assert measured.kv_bytes[("shop", "cache")] > 64 * 1024
+    assert measured.kv_full == {("shop", "cache"): 1.0}
+
+    c = tenant_conn(box, a)
+    try:
+        assert c.call("GET", "p:shop:cache:fill0") == "x" * 8192
+        assert c.call("EXISTS", "p:shop:cache:fill1") == 1
+        assert "NOPERM" in refused(c, "SET", "p:shop:cache:new", "1")
+        assert "NOPERM" in refused(c, "EVAL", "return 1", "0")
+        # A run between measurements keeps the full rule set.
+        between = tenant_sync(box, pw, lambda: answer(a))
+        assert between.ok and between.kv_full == {("shop", "cache"): 1.0}
+        assert "NOPERM" in refused(c, "SET", "p:shop:cache:new", "1")
+        for i in range(20):
+            assert c.call("DEL", f"p:shop:cache:fill{i}") == 1
+    finally:
+        c.close()
+
+    again = tenant_sync(box, pw, lambda: answer(a), measure=True)
+    assert again.ok and again.kv_full == {("shop", "cache"): 0.0}
+    assert again.kv_bytes[("shop", "cache")] == 0.0
+    c = tenant_conn(box, a)
+    try:
+        assert c.call("SET", "p:shop:cache:new", "1") == "OK"
+    finally:
+        c.close()
+
+
+@needs_docker
+def test_a_failed_fetch_keeps_the_tenants_and_a_vanished_tenant_keeps_its_keys(tenant_box):
+    box, pw = tenant_box
+    a, b = tenant_entry("shop", "cache"), tenant_entry("b", "kv")
+    assert tenant_sync(box, pw, lambda: answer(a, b)).ok
+    c = tenant_conn(box, b)
+    c.call("SET", "p:b:kv:k", "1")
+    c.close()
+
+    def down() -> dict[str, object]:
+        raise SyncError("Cloud tenants route unreachable: URLError")
+
+    kept = tenant_sync(box, pw, down, measure=True)
+    assert kept.ok, kept.error
+    assert kept.tenants_fetch_ok is False and "unreachable" in kept.tenants_error
+    assert kept.kv_ready == {("shop", "cache"): 1.0, ("b", "kv"): 1.0}
+    names = {line.split()[1] for line in box.acl_list()}
+    assert {a["user"], b["user"]} <= names
+
+    gone = tenant_sync(box, pw, lambda: answer(a), measure=True)
+    assert gone.ok and gone.tenants_fetch_ok is True
+    assert b["user"] not in {line.split()[1] for line in box.acl_list()}
+    assert box.as_user("verify", pw["verify"], "EXISTS", "p:b:kv:k") == 1
+
+
+@needs_docker
+def test_purge_deletes_only_after_the_user_is_gone_and_never_a_live_prefix(tenant_box):
+    box, pw = tenant_box
+    a, b = tenant_entry("shop", "cache"), tenant_entry("b", "kv")
+    assert tenant_sync(box, pw, lambda: answer(a, b)).ok
+    for entry, key in ((a, "p:shop:cache:k"), (b, "p:b:kv:k")):
+        c = tenant_conn(box, entry)
+        c.call("SET", key, "1")
+        c.close()
+    purge_b = [{"prefix": "p:b:kv:", "project": "b", "service": "kv"}]
+    purge_a = [{"prefix": "p:shop:cache:", "project": "shop", "service": "cache"}]
+
+    # b still has its user in Redis at the start of this run: its keys stay,
+    # the user goes.
+    first = tenant_sync(box, pw, lambda: answer(a, purge=purge_b), measure=True)
+    assert first.ok, first.error
+    assert first.purged == 0
+    assert box.as_user("verify", pw["verify"], "EXISTS", "p:b:kv:k") == 1
+    # A purge entry for a's live prefix is ignored.
+    second = tenant_sync(box, pw, lambda: answer(a, purge=purge_b + purge_a), measure=True)
+    assert second.ok, second.error
+    assert second.purged == 1
+    assert box.as_user("verify", pw["verify"], "EXISTS", "p:b:kv:k") == 0
+    assert box.as_user("verify", pw["verify"], "EXISTS", "p:shop:cache:k") == 1
+    # A purge between measurements does nothing.
+    c = tenant_conn(box, a)
+    c.call("SET", "p:shop:cache:j", "1")
+    c.close()
+
+
+@needs_docker
+def test_foreign_user_is_counted_and_removed(tenant_box):
+    box, pw = tenant_box
+    assert tenant_sync(box, pw, lambda: answer()).ok
+    box.as_user(ADMIN_USER, pw[ADMIN_USER], "ACL", "SETUSER", "mallory", "on", "nopass", "~*", "+@all")
+    result = tenant_sync(box, pw, lambda: answer())
+    assert result.ok, result.error
+    assert result.foreign_users == ["mallory"]
+    assert "mallory" not in {line.split()[1] for line in box.acl_list()}
+    assert tenant_sync(box, pw, lambda: answer()).foreign_users == []
+
+
+@needs_docker
+def test_measurement_cost_stays_bounded_per_tenant(tenant_box, monkeypatch):
+    box, pw = tenant_box
+    monkeypatch.setattr(acl_sync, "MEMORY_SAMPLE_PER_TENANT", 50)
+    a = tenant_entry(max_bytes=1 << 30)
+    assert tenant_sync(box, pw, lambda: answer(a)).ok
+    c = tenant_conn(box, a)
+    for i in range(0, 400, 100):
+        c.call("MSET", *[x for j in range(i, i + 100) for x in (f"p:shop:cache:{j}", "v" * 100)])
+    c.close()
+    result = tenant_sync(box, pw, lambda: answer(a), measure=True)
+    assert result.ok, result.error
+    assert result.kv_keys[("shop", "cache")] == 400.0
+    assert result.memory_usage_calls == 50
+    # Extrapolated from 50 equal keys: within 10% of 8 x the sample.
+    assert 300 * 100 < result.kv_bytes[("shop", "cache")] < 400 * 400

@@ -13,8 +13,10 @@ The shared Redis (`redis-v2-0` in namespace `redis`, service `redis-master.redis
 | Seed | Secret `redis-acl-seed`, init container `acl-seed` (`acl_init.sh`) | Redis does not start when its aclfile is missing. The init container writes the seed (`default` unchanged, `acl-admin`) if the file is missing, and otherwise replaces only the `acl-admin` line. |
 | Sync | CronJob `redis-acl-sync`, every minute (`acl_sync.py`) | Reads Vault, renders every user, and sends the difference as `acl-admin` in one `MULTI` (`ACL SETUSER`, `ACL DELUSER` for users nobody wants). `EXEC` does not roll back: if Redis refuses one command, the others stay applied, the run fails as a partial change, and the next run retries. Every run ends with `ACL SAVE`, so a lost save is on disk a minute later. Then it checks `ACL LIST` against the render and checks that every user can `AUTH` and `PING`. |
 | Counter (R3) | the same job, every minute | `CLIENT LIST` counted by `user=`, pushed as `redis_clients_by_user{user}`, with a 0 for `default` and every user that has no client. It also pushes `redis_default_clients_unexpected`: the `default` clients whose address is not a pod of `local.redis_default_user_namespaces` (`rybbit`, see "Rybbit stays on default"). The pod IPs come from the Kubernetes API through the Role `redis-acl-sync-pods` (list pods) in each of those namespaces. When that lookup fails, every `default` client counts as unexpected, so the gate stays red. For each unexpected client the job prints one stderr line, `unexpected default client: addr=... name=... age=... idle=... cmd=... lib-name=... lib-ver=...`, so the latest `redis-acl-sync` Job's log names it; find the pod that held the address at that time in the Kubernetes audit log. `cmd` is the command name only; CLIENT LIST never prints arguments. |
-| Vault access | `stacks/vault/main.tf`: role and policy `redis-acl-sync` (read `secret/data/redis/users`); policy `ci` writes that path | |
-| Alerts | `stacks/monitoring` group "Critical Services": `RedisAclSyncStale` (no success for 10 min), `RedisAclSyncNeverSucceeded` (15 min) | warning |
+| Vault access | `stacks/vault/main.tf`: role and policy `redis-acl-sync` (read `secret/data/redis/users` and `secret/data/redis/cloud-tenants`); policy `ci` writes those paths and `secret/cloud/redis-tenants` | |
+| Cloud Key Value tenants (B27) | the same job; Cloud's reconciler serves the list | See "Cloud Key Value tenants" below. |
+| Alerts | `stacks/monitoring` group "Critical Services": `RedisAclSyncStale` (no success for 10 min), `RedisAclSyncNeverSucceeded` (15 min), `RedisMemoryHigh` (over 70% of maxmemory for 15 min), `CloudKeyValueTotalHigh` (Key Values hold over 128 MiB for 15 min), `CloudKeyValueTenantsFetchFailing` (15 min) | warning |
+| | the same group: `RedisForeignUser` (a user the sync did not make, seen in the last 15 min) | critical |
 | Tests | `tests/redis-acl.test.sh` | pytest against a real `redis:8.10.3-alpine`, and promtool for the alerts |
 
 **Why the sync works over the network.** The data PVC is ReadWriteOnce. A second pod could mount it only on redis-v2-0's node, tied to it by pod affinity, with write access to the AOF and RDB files. `ACL SAVE` makes Redis write the aclfile itself, through a temporary file and a rename. `ACL SETUSER` and `ACL LOAD` do not disconnect the clients of a user that still exists; `ACL DELUSER` does (measured on 8.10.3).
@@ -33,6 +35,27 @@ Pushgateway job `redis-acl-sync`:
 | `redis_acl_user_auth_ok{user}` | 1 when that user's `AUTH` and `PING` worked in the last run |
 | `redis_clients_by_user{user}` | connected clients per user, 0 for `default` and every user without a client. `default` stays above 0 while rybbit is connected |
 | `redis_default_clients_unexpected` | `default` clients outside the namespaces allowed on `default` (rybbit); the R3 gate is this at 0 for 7 days. Start the 7 days only after the `redis` stack's own move has landed ("redis: probes, exporter and backup log in as their own ACL users"): until then the kubelet probes and the exporter connect as `default` from Redis's own pod |
+
+Also in job `redis-acl-sync`: `redis_acl_foreign_users` (users found that are neither infra users, nor tenants from Cloud's route, nor shaped like the tenant template; the run deletes them) and `cloud_kv_tenants_fetch_ok` (1 when Cloud's route gave a good answer this run).
+
+Pushgateway job `redis-acl-sync-kv`, replaced whole after every successful run, so a deleted Key Value loses its series:
+
+| Metric | Meaning |
+|---|---|
+| `cloud_kv_ready{project,service}` | 1 when the tenant user is in Redis with the line the sync wants (normal or full) |
+| `cloud_kv_full{project,service}` | 1 while the read-and-delete rule set is on |
+| `cloud_kv_connections{project,service}` | the tenant user's clients in this run's `CLIENT LIST`, 0 for none |
+| `cloud_kv_tenants` | tenants this run rendered |
+
+Pushgateway job `redis-acl-sync-kv-usage`, replaced whole after every measurement (every 5 min):
+
+| Metric | Meaning |
+|---|---|
+| `cloud_kv_bytes{project,service}`, `cloud_kv_keys{project,service}` | what the Key Value holds: `MEMORY USAGE` summed (extrapolated past 10,000 keys) and the exact key count |
+| `cloud_kv_measured_timestamp_seconds` | when the measurement ran |
+| `cloud_kv_purged_keys`, `cloud_kv_memory_usage_calls` | keys the measurement deleted under purge prefixes, and the `MEMORY USAGE` calls it made |
+
+The same counts are in `redis_clients_by_user{user="p_..."}` above. The `project` and `service` labels are Cloud's own names; the pushgateway scrape keeps them (`honor_labels: true`).
 
 Redis's own `redis_acl_access_denied_auth_total` (and its key, channel and command siblings) comes from redis_exporter.
 
@@ -72,6 +95,32 @@ Read the last failed Job's log; it names the reason on one line (`FAILED, nothin
 | `WRONGPASS` on acl-admin | acl-admin's password changed and Redis still has the old hash. See "Rotate a password". |
 | `NOPERM` | `acl-admin` lost a command it needs (`+acl +client|list +multi +exec +ping`). Fix `acl_users.json`; `tests/redis-acl.test.sh` catches this. |
 | `ACL LIST differs from the render` | Redis normalised a rule differently from `acl_users.json`. Write the rule the way `ACL LIST` prints it (for example `resetchannels` when a user has no channels). |
+
+## Cloud Key Value tenants
+
+Cloud's Key Value kind (cloud repo, B27) puts each Project's data on this Redis under its own ACL user. Cloud has no Redis right. Its reconciler publishes the Key Values it wants at a read-only route, `GET http://cloud-reconciler.cloud.svc.cluster.local:9091/internal/redis-tenants`, with a bearer token. The token is one `random_password` in `acl.tf`, kept at Vault `secret/redis/cloud-tenants` (the sync reads it) and `secret/cloud/redis-tenants` (Cloud's copy, through ExternalSecret `cloud-reconciler-redis-tenants` in `stacks/cloud`). Only pods labelled `app=redis-acl-sync` in namespace `redis` reach port 9091 (NetworkPolicy `cloud-reconciler-ingress`). The answer lists each tenant's user name, password hash, prefix `p:<project>:<service>:` and Size in bytes, and a `purge` list.
+
+Each run of the sync:
+
+1. reads the route and checks every field: user `^p_[a-z0-9_]+$`, a 64-hex hash, prefix `^p:[a-z0-9-]+:[a-z0-9-]+:$` equal to `p:<project>:<service>:`, a positive Size, no name or prefix twice. One bad field rejects the whole answer;
+2. when the route fails or the answer is bad, keeps the tenant users Redis already holds, unchanged, and pushes `cloud_kv_tenants_fetch_ok 0`. A Cloud outage drops no tenant, and new, resized or deleted Key Values wait;
+3. writes each tenant from the fixed template (cloud repo, `checklist-and-backlog.md`, "Cloud tenants"), never from Cloud's input: `~<prefix>* &<prefix>* -@all +@read +@write +@keyspace +@hash +@list +@set +@sortedset +@stream +@string +@pubsub +@transaction +@scripting +@connection -@dangerous -select -scan -randomkey -function -script|flush`. `KEYS`, `SELECT`, `FLUSHALL`, `SCAN`, `CONFIG`, `INFO` and every key or channel outside the prefix answer `NOPERM` (tested against `redis:8.10.3-alpine`);
+4. on a measuring run (every 5 min, when the UTC minute divides by 5) makes one `SCAN MATCH p:* COUNT 1000` pass over db 0 and sends `MEMORY USAGE` for at most 10,000 keys of each tenant, 1,000 per pipelined batch; past 10,000 keys it extrapolates from that sample. SCAN visits every key of db 0 whatever the pattern (5,828 keys on 2026-11-21). Cost at 10,000 tenant keys: about 16 SCAN calls and 10 batches, about 10 ms of Redis CPU for small strings;
+5. a tenant over its Size gets the read-and-delete rule set `-@all +@read +@connection +del +unlink +multi +exec +discard +watch +unwatch -@dangerous -select -scan -randomkey` on the same prefix: GET and DEL work, writes, scripts and PUBLISH answer `NOPERM`. It goes back to the full template at the first measurement under its Size. Between measurements the mode stays as ACL LIST shows it; the ACL is the only state kept between runs.
+
+`acl-admin` holds `~p:* +scan +memory|usage +unlink` for steps 4 and 6, and nothing else on keys.
+
+### Purge
+
+A Key Value's keys go only when Cloud lists its prefix under `purge` (the Key Value was removed from a Project File, or its Project was purged, in the last 30 days). On a measuring run the sync `UNLINK`s the keys under a purge prefix only when the answer was good this run, no tenant in the answer has that prefix, and no tenant user in Redis holds it at the start of the run: the user goes first, the keys at a later measurement. A tenant that vanishes from the answer without a purge entry loses its user and keeps its keys, so a Cloud bug or a bad answer never deletes data. To delete such leftover keys by hand, as `verify`: `redis-cli --user verify --scan --pattern 'p:<project>:<service>:*' | xargs redis-cli --user verify unlink`.
+
+### Foreign users
+
+`RedisForeignUser` fires when a run found a user that is neither in `acl_users.json`, nor a tenant from the route, nor shaped exactly like the tenant template. The run deleted it (`ACL DELUSER`), and the CronJob log names it (`foreign ACL user (removed this run): <name>`). Only `acl-admin` and the `+@all` consumer users can make users, so treat it as a leaked password: find which client ran `ACL SETUSER` (`ACL LOG` as `verify`, and the clients by user), rotate that user's password ("Rotate a password") and `acl-admin`'s.
+
+### When Cloud's route fails
+
+`CloudKeyValueTenantsFetchFailing`: the log says why. `unreachable` means the reconciler pod is down or its port 9091 is not served (the reconciler serves it only when its `REDIS_TENANTS_TOKEN_FILE` holds a token). `answered 401` means the two token copies differ: ESO refreshes Cloud's copy every 2 minutes and Reloader restarts the reconciler; `kubectl -n cloud get externalsecret cloud-reconciler-redis-tenants`. `bad answer` names the field; that is a Cloud bug, file it on the cloud repo.
 
 ## Add a user
 

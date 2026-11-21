@@ -7,8 +7,10 @@
 #      every user of acl_users.json as a #<sha256> hash, every user can AUTH
 #      and PING, the restricted users get only their commands, a client on
 #      `default` stays connected, a broken input changes nothing.
-#   2. The RedisAclSync* alerts in stacks/monitoring pass `promtool check
-#      rules` and the unit tests in tests/redis-acl/alerts.test.yml.
+#   2. The RedisAclSync* alerts, and B27's RedisMemoryHigh,
+#      CloudKeyValueTotalHigh, RedisForeignUser and
+#      CloudKeyValueTenantsFetchFailing, pass `promtool check rules` and the
+#      unit tests in tests/redis-acl/alerts.test.yml.
 #
 # Needs python3 with pytest, PyYAML, and docker with the redis:8.10.3-alpine
 # and prom/prometheus images.
@@ -25,15 +27,16 @@ if ! (cd "$HERE/stacks/redis/modules/redis" && python3 -m pytest acl_sync_test.p
   echo "FAIL: acl_sync_test.py"; FAILS=$((FAILS + 1))
 fi
 
-# 2. promtool. The rules sit in a larger group; cut out every RedisAclSync*
-# rule into a group of its own.
+# 2. promtool. The rules sit in a larger group; cut them out into a group of
+# their own.
 mkdir -p "$TMP/t"
 python3 - "$TPL" "$TMP/redis-acl.rules.yml" "$TMP/t/redis-acl.rules.yml" <<'PY' || { echo "FAIL: cannot cut the RedisAclSync rules out"; exit 1; }
 import re, sys, yaml
 text = open(sys.argv[1]).read()
-blocks = re.findall(r"^( {10}- alert: RedisAclSync\w+\n(?: {12}.*\n|\s*\n)+)", text, re.M)
-if len(blocks) != 2:
-    sys.exit(f"expected 2 RedisAclSync rules, found {len(blocks)}")
+NAMES = "RedisAclSync\\w+|RedisMemoryHigh|CloudKeyValueTotalHigh|RedisForeignUser|CloudKeyValueTenantsFetchFailing"
+blocks = re.findall(r"^( {10}- alert: (?:" + NAMES + r")\n(?: {12}.*\n|\s*\n)+)", text, re.M)
+if len(blocks) != 6:
+    sys.exit(f"expected 6 redis-acl rules (2 RedisAclSync, B27's 4), found {len(blocks)}")
 rules = [yaml.safe_load(re.sub(r"^ {10}", "", b, flags=re.M))[0] for b in blocks]
 yaml.safe_dump({"groups": [{"name": "redis-acl", "rules": rules}]}, open(sys.argv[2], "w"), sort_keys=False)
 # The unit tests compare labels; `check rules` parses the annotations, so
