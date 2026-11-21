@@ -50,6 +50,9 @@ resource "kubernetes_manifest" "restricted_external_secret" {
         { secretKey = "API_BEARER_TOKEN", remoteRef = { key = "claude-agent-service", property = "api_bearer_token" } },
         { secretKey = "CLAUDE_CODE_OAUTH_TOKEN", remoteRef = { key = "claude-agent-service", property = "claude_oauth_token" } },
         { secretKey = "REELS_TRENDING_TOKEN", remoteRef = { key = "claude-agent-service", property = "reels_trending_token" } },
+        # POST /v1/datenight/scout, the Date Night app's Sunday scout run
+        # (app/datenight_scout.py); the app's copy is secret/datenight scout_token.
+        { secretKey = "DATENIGHT_SCOUT_TOKEN", remoteRef = { key = "claude-agent-service", property = "datenight_scout_token" } },
       ]
     }
   }

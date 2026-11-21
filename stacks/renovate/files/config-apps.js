@@ -34,6 +34,10 @@ module.exports = {
       baseBranchPatterns: ['master'],
     },
     {
+      repository: 'viktor/datenight',
+      baseBranchPatterns: ['master'],
+    },
+    {
       repository: 'viktor/trip-reel',
       baseBranchPatterns: ['master'],
     },
