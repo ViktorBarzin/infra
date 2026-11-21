@@ -28,6 +28,10 @@ HERE = Path(__file__).parent
 USERS = json.loads((HERE / "acl_users.json").read_text())
 IMAGE = "docker.io/library/redis:8.10.3-alpine"
 MODULES = ("redisbloom", "redisearch", "redistimeseries", "rejson")
+# The production redis.conf's value (main.tf), so the box runs with it.
+PROTO_MAX_BULK_LEN = next(
+    line.strip() for line in (HERE / "main.tf").read_text().splitlines() if line.strip().startswith("proto-max-bulk-len ")
+)
 
 
 def fake_passwords(users: dict[str, str] = USERS, salt: str = "a") -> dict[str, str]:
@@ -269,7 +273,9 @@ class RedisBox:
         self.data = tmp / "data"
         self.data.mkdir()
         (tmp / "seed").mkdir()
-        (tmp / "redis.conf").write_text("port 6379\ndir /data\naclfile /data/acl/users.acl\nappendonly no\nsave \"\"\n")
+        (tmp / "redis.conf").write_text(
+            "port 6379\ndir /data\naclfile /data/acl/users.acl\nappendonly no\nsave \"\"\n" + PROTO_MAX_BULK_LEN + "\n"
+        )
         self.name = f"b40-acl-test-{uuid.uuid4().hex[:8]}"
         self.port = 0
 
@@ -279,11 +285,19 @@ class RedisBox:
     def user(self) -> str:
         return f"{os.getuid()}:{os.getgid()}"
 
+    def server_args(self) -> list[str]:
+        """redis-server's command line, as main.tf passes it to both
+        containers (REDIS_ARGS for the init step)."""
+        mods = [a for m in (MODULES if self.modules else []) for a in ("--loadmodule", f"/usr/local/lib/redis/modules/{m}.so")]
+        return ["redis-server", "/etc/redis/redis.conf", *mods]
+
     def init(self, admin_password: str) -> str:
         (self.tmp / "seed" / "users.acl").write_text(seed_text(admin_password))
         out = self.docker(
             "run", "--rm", "--user", self.user(), "--entrypoint", "sh",
+            "-e", "REDIS_ARGS=" + " ".join(self.server_args()),
             "-v", f"{self.data}:/data", "-v", f"{self.tmp / 'seed'}:/seed:ro",
+            "-v", f"{self.tmp / 'redis.conf'}:/etc/redis/redis.conf:ro",
             "-v", f"{HERE / 'acl_init.sh'}:/init.sh:ro", IMAGE, "/init.sh",
         )
         return out.stdout
@@ -292,8 +306,7 @@ class RedisBox:
         self.docker(
             "run", "-d", "--name", self.name, "--user", self.user(), "--entrypoint", "redis-server",
             "-v", f"{self.data}:/data", "-v", f"{self.tmp / 'redis.conf'}:/etc/redis/redis.conf:ro",
-            "-p", "127.0.0.1::6379", IMAGE, "/etc/redis/redis.conf",
-            *[a for m in (MODULES if self.modules else []) for a in ("--loadmodule", f"/usr/local/lib/redis/modules/{m}.so")],
+            "-p", "127.0.0.1::6379", IMAGE, *self.server_args()[1:],
         )
         mapping = self.docker("port", self.name, "6379/tcp").stdout.split()[0]
         self.port = int(mapping.rsplit(":", 1)[1])
@@ -1038,23 +1051,25 @@ def test_measurement_rotates_across_runs_and_stays_conservative(tenant_box, monk
     c.call("SET", "p:shop:cache:big", "x" * 65536)  # one big value among small ones
     c.close()
     exact = true_bytes(box, pw, "p:shop:cache:")
-    seen: list[float] = []
-    for _ in range(12):
+    completed = 0
+    for _ in range(30):
         r = tenant_sync(box, pw, lambda: answer(a), measure=True)
         assert r.ok, r.error
         assert r.kv_keys[("shop", "cache")] == 81.0
         # Per run: the cap, plus at most the rest of one SCAN page.
         assert r.memory_usage_calls <= 25 + 20
-        if ("shop", "cache") in r.kv_bytes:
-            seen.append(r.kv_bytes[("shop", "cache")])
-            # Never below what the keys hold: unsampled keys count at the
-            # largest size seen.
-            assert r.kv_bytes[("shop", "cache")] >= exact
+        got = r.kv_bytes.get(("shop", "cache"))
+        if completed:
+            # Once a cycle has sized every key, unsized keys count at the
+            # largest size it saw: never below what the keys hold.
+            assert got is not None and got >= exact
         if r.measure_cycle_complete:
-            assert r.kv_bytes[("shop", "cache")] == exact
-            break
+            assert got == exact
+            completed += 1
+            if completed == 2:
+                break
     else:
-        pytest.fail(f"no measurement cycle completed in 12 runs: {seen}")
+        pytest.fail(f"two measurement cycles did not complete in 30 runs ({completed})")
     # The cursor lives in Redis between runs, under acl-admin's own key.
     assert box.as_user("verify", pw["verify"], "EXISTS", acl_sync.STATE_KEY) == 1
 
@@ -1295,3 +1310,100 @@ def test_a_tenant_cannot_drop_another_users_search_index(modules_box):
         c.close()
     assert box.as_user("verify", pw["verify"], "EXISTS", "doc:1") == 1
     assert "idx" in cast(list, box.as_user("verify", pw["verify"], "FT._LIST"))
+
+
+MODULE_PART = " -@search -ts.mget -ts.mrange -ts.mrevrange -ts.queryindex -ts.querylabels"
+
+
+def tenant_line_in(box: RedisBox, entry: dict[str, object]) -> str:
+    return next(line for line in box.acl_list() if line.startswith(f"user {entry['user']} "))
+
+
+@needs_docker
+def test_a_restart_without_modules_drops_the_module_rules_and_starts(modules_box):
+    # A users.acl saved while the modules were loaded names -@search; a
+    # redis-server without them would refuse that file and not start, so the
+    # init step rewrites the tenant lines first.
+    box, pw = modules_box
+    a = tenant_entry()
+    assert tenant_sync(box, pw, lambda: answer(a)).ok
+    assert tenant_line_in(box, a).endswith(MODULE_PART)
+    assert MODULE_PART in (box.data / "acl" / "users.acl").read_text()
+    box.stop()
+    box.modules = False
+    box.init(pw[ADMIN_USER])
+    box.start()
+    line = tenant_line_in(box, a)
+    assert not line.endswith(MODULE_PART)
+    assert line == acl_sync.tenant_user(acl_sync.parse_tenant_answer(answer(a)).tenants[0], False).line
+    c = tenant_conn(box, a)
+    try:
+        assert c.call("SET", "p:shop:cache:k", "1") == "OK"
+    finally:
+        c.close()
+    # Infra users are untouched, and the next sync has nothing to change.
+    assert box.as_user("tv", pw["tv"], "PING") == "PONG"
+    assert tenant_sync(box, pw, lambda: answer(a)).changes == 0
+
+
+@needs_docker
+def test_a_restart_with_modules_has_the_module_rules_before_any_sync(tenant_box):
+    box, pw = tenant_box
+    a = tenant_entry()
+    assert tenant_sync(box, pw, lambda: answer(a)).ok
+    box.stop()
+    box.modules = True
+    box.init(pw[ADMIN_USER])
+    box.start()
+    # No sync has run: the init step put the module rules in place.
+    assert tenant_line_in(box, a).endswith(MODULE_PART)
+    c = tenant_conn(box, a)
+    try:
+        assert "NOPERM" in refused(c, "FT._DROPIFX", "idx")
+        assert "NOPERM" in refused(c, "TS.QUERYINDEX", "a=b")
+    finally:
+        c.close()
+    assert tenant_sync(box, pw, lambda: answer(a)).changes == 0
+
+
+def test_an_acl_cat_reply_that_is_not_a_list_fails_the_run_and_writes_nothing():
+    sent: list[tuple[str, ...]] = []
+
+    class OddCat:
+        def call(self, *args: str) -> object:
+            sent.append(args)
+            if args[:2] == ("CLIENT", "LIST"):
+                return ""
+            if args[:2] == ("ACL", "LIST"):
+                return [DEFAULT_USER_LINE]
+            if args[:2] == ("ACL", "CAT"):
+                return "search"
+            return "OK"
+
+        def transaction(self, commands: list[list[str]]) -> list[object]:
+            sent.append(("MULTI",))
+            return []
+
+        def close(self) -> None:
+            pass
+
+    result = acl_sync.run(USERS, fake_passwords, lambda: cast(Redis, OddCat()), set, fetch_tenants=lambda: answer())
+    assert not result.ok
+    assert "ACL CAT" in result.error
+    assert not any(a[:2] in (("ACL", "SAVE"), ("ACL", "SETUSER")) or a == ("MULTI",) for a in sent)
+
+
+@needs_docker
+def test_one_write_is_bounded_by_proto_max_bulk_len(tenant_box):
+    # The largest Size, 128 MiB: one SETRANGE or APPEND cannot grow a value
+    # past it, so a write between two measurements adds at most that much.
+    box, pw = tenant_box
+    assert PROTO_MAX_BULK_LEN == "proto-max-bulk-len 128mb"
+    a = tenant_entry()
+    assert tenant_sync(box, pw, lambda: answer(a)).ok
+    c = tenant_conn(box, a)
+    try:
+        assert "maximum allowed size" in refused(c, "SETRANGE", "p:shop:cache:big", str(128 * 1024 * 1024), "x")
+        assert c.call("SETRANGE", "p:shop:cache:ok", "10", "x") == 11
+    finally:
+        c.close()

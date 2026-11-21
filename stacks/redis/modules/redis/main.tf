@@ -73,6 +73,15 @@ resource "kubernetes_config_map" "redis_v2_conf" {
       # silently evicted queue jobs.
       maxmemory-policy volatile-lru
 
+      # The largest value one command may write (default 512mb). Cloud Key
+      # Value (B27) is measured every few minutes, so a single SET, APPEND or
+      # SETRANGE of up to this size can land before a tenant is turned
+      # read-and-delete. 128mb is the largest Key Value Size. The biggest
+      # string on this Redis was 4,529,656 bytes (db 0) and the next
+      # 523,888 (db 11), read with --bigkeys on 2026-11-21. A change here
+      # restarts Redis (checksum/conf): plan it (docs/runbooks/redis-acl.md).
+      proto-max-bulk-len 128mb
+
       # RDB auto-snapshots cut to ONE lazy save point (2026-08-16, code-oflt).
       # Was `save 900 1 / 300 100 / 60 10000`. With `appendonly yes` Redis
       # recovers from appendonlydir/ and never reads dump.rdb, so the old
@@ -240,9 +249,21 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
           name    = "acl-seed"
           image   = "docker.io/library/redis:8.10.3-alpine"
           command = ["/bin/sh", "-c", file("${path.module}/acl_init.sh")]
+          # The init step matches the Key Value tenants' module rules to the
+          # modules this redis-server loads: its config file and its
+          # command line (acl_init.sh).
+          env {
+            name  = "REDIS_ARGS"
+            value = join(" ", local.redis_server_command)
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
+          }
+          volume_mount {
+            name       = "conf"
+            mount_path = "/etc/redis"
+            read_only  = true
           }
           volume_mount {
             name       = "acl-seed"
@@ -277,7 +298,7 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
           # downwards) through the CI rails; check the release notes of a
           # major before it lands.
           image   = "docker.io/library/redis:8.10.3-alpine"
-          command = ["redis-server", "/etc/redis/redis.conf"]
+          command = local.redis_server_command
 
           port {
             container_port = 6379
@@ -591,6 +612,8 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
 #
 # Ingress-only: egress is deliberately left unpoliced, and no pod restarts.
 locals {
+  # redis-server's command line, shared with the acl-seed init step.
+  redis_server_command = ["redis-server", "/etc/redis/redis.conf"]
   redis_client_namespaces = [
     "affine",
     "authentik",

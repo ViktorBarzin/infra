@@ -805,7 +805,10 @@ after B40 R4 has locked Redis's `default` user. Apply in this order:
 
 1. `stacks/vault`: policy `ci` may write `secret/redis/cloud-tenants` and
    `secret/cloud/redis-tenants`; policy `redis-acl-sync` may read the first.
-2. `stacks/redis`: the token in both Vault paths, `acl-admin`'s new rule
+2. `stacks/redis`, in a nightly window after `presence claim redis:redis-v2`:
+   this apply restarts Redis once (seconds), because `redis.conf` gains
+   `proto-max-bulk-len 128mb` and the `acl-seed` init step changes
+   ([redis-acl.md](redis-acl.md), "Restarts and modules"). It writes the token in both Vault paths, `acl-admin`'s new rule
    (`~p:* +scan +memory|usage +unlink`), the sync's tenant section, the
    Redis NetworkPolicy's namespaceSelector
    `cloud.viktorbarzin.me/managed=true`. Until Cloud serves its route the
