@@ -52,14 +52,14 @@ flowchart TB
 | Screen capture | App-op `PROJECT_MEDIA` set to allow for `com.carriez.flutter_hbb`, so no "Share screen" prompt |
 | Battery | RustDesk and Automate exempt from battery optimisation |
 | Notifications | `POST_NOTIFICATIONS` revoked for `com.carriez.flutter_hbb` and `com.llamalab.automate`. Both keep running; their ongoing notifications are not shown |
-| Wireless debugging | Paired with the devvm's ADB key (wizard's, copied to emo as `~/.android/milka-adbkey`). The connect port changes after every restart; `milka-adb` tries port 5555 and then scans 30000-50000 |
+| Wireless debugging | Paired with the devvm's ADB key (wizard's, copied to emo as `~/.android/milka-adbkey`). The connect port changes after every restart; `android-adb milka` tries port 5555 and then scans 30000-50000 |
 | Keeping ADB on | Automate flow "Keep wireless ADB on": set Global `adb_wifi_enabled` to 1, wait 1 minute (inexact, does not wake the phone), repeat. Automate has `WRITE_SECURE_SETTINGS` and "Run on system startup" |
 
 Restart test, 2026-10-10: after `adb reboot`, RustDesk registered again and accepted a password session showing the lock screen with nobody touching the phone. ADB came back once the phone had been unlocked and the flow ran; that took about 10 minutes with the original 15-minute wait, which is why the wait is now 1 minute. Apps such as Automate only start after the first unlock following a restart.
 
 ## Quiet by default (2026-10-10)
 
-Viktor asked for as few notifications as possible and for RustDesk to run only when needed, to save battery. The helper scripts `milka-help` and `milka-adb` do this over ADB. The devvm playbook installs both in `/usr/local/bin` for every user. They run their own adb server on port 5039 with the key her phone trusts at `~/.android/milka-adbkey`; Viktor and emo both have it (one shared key, Viktor's choice), and emo's own adb key for other devices is untouched.
+Viktor asked for as few notifications as possible and for RustDesk to run only when needed, to save battery. The helper scripts `milka-help` and `android-adb` do this over ADB (`android-adb` replaced `milka-adb` on 2026-11-22 and also reaches the London tablet, `docs/plans/2026-11-22-london-tablet-design.md`). The devvm playbook installs both in `/usr/local/bin` for every user. They run their own adb server on port 5039 with the key her phone trusts at `~/.android/milka-adbkey`; Viktor and emo both have it (one shared key, Viktor's choice), and emo's own adb key for other devices is untouched.
 
 | Command | What it does on her phone |
 |---|---|

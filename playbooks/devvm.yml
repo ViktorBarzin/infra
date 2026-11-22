@@ -1814,14 +1814,16 @@
         - { src: devvm-cleanup, dest: /usr/local/bin/devvm-cleanup }
         - { src: networkd-dhcp-watchdog.sh, dest: /usr/local/sbin/networkd-dhcp-watchdog.sh }
 
-    # Remote help for Milka's phone: milka-help starts RustDesk on her phone over
-    # adb for a session and stops it afterwards; milka-adb finds and connects the
-    # phone. Viktor and emo both use them. Each user needs the key her phone
-    # trusts at ~/.android/milka-adbkey (a copy of wizard's adbkey), which is a
+    # Family Android devices over adb: android-adb <device> finds and connects
+    # Milka's phone or the London tablet over the site tunnels; milka-help
+    # starts RustDesk on Milka's phone for a session and stops it afterwards.
+    # Viktor and emo both use them. Each user needs the key the devices trust
+    # at ~/.android/milka-adbkey (a copy of wizard's adbkey), which is a
     # secret: it is stored in Vault and restored by t3-provision-users
     # (docs/runbooks/devvm-credentials.md), not managed here.
-    # Design: docs/plans/2026-10-09-milka-remote-phone-help-design.md
-    - name: Install the Milka phone helpers
+    # Design: docs/plans/2026-10-09-milka-remote-phone-help-design.md and
+    # docs/plans/2026-11-22-london-tablet-design.md
+    - name: Install the family Android helpers
       ansible.builtin.copy:
         src: "files/devvm/{{ item }}"
         dest: "/usr/local/bin/{{ item }}"
@@ -1829,8 +1831,14 @@
         owner: root
         group: root
       loop:
-        - milka-adb
+        - android-adb
         - milka-help
+
+    # android-adb replaced milka-adb on 2026-11-22.
+    - name: Remove the old milka-adb helper
+      ansible.builtin.file:
+        path: /usr/local/bin/milka-adb
+        state: absent
 
     # The CLAUDE_CODE_SHELL_PREFIX that managed-settings.json sets for every
     # user: each Bash command Claude runs gets its own systemd scope and 6G cap,

@@ -5,13 +5,13 @@
 # service headless; PROJECT_MEDIA is allowed, so capture starts with no prompt, even on the lock screen.
 # Connect with RustDesk ID 1060440055 and the password in Vaultwarden "RustDesk - Milka phone"
 # (Milka organization) or Vault secret/rustdesk-milka.
-# Needs milka-adb and ~/.android/milka-adbkey (see milka-adb).
+# Needs android-adb and ~/.android/milka-adbkey (see android-adb).
 # Background: infra docs/plans/2026-10-09-milka-remote-phone-help-design.md
 set -u
 export ADB_SERVER_SOCKET=tcp:localhost:5039 ADB_VENDOR_KEYS=$HOME/.android/milka-adbkey
 PKG=com.carriez.flutter_hbb
 A11Y=$PKG/$PKG.InputService
-D=$(milka-adb "${2:-}") || exit 1
+D=$(android-adb milka "${2:-}") || exit 1
 sh() { adb -s "$D" shell "$@"; }
 running() { sh dumpsys activity services $PKG | grep -q "ServiceRecord.*/.MainService"; }
 

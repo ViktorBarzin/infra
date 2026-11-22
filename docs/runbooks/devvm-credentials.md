@@ -26,9 +26,9 @@ live set):
 Notes on single entries:
 
 - emo's `~/.android/milka-adbkey` and wizard's `~/.android/adbkey` are the
-  same key, the one Milka's phone trusts (the Milka phone helpers in
-  `playbooks/devvm.yml`). Without it the phone has to be paired again in
-  person. It is stored as two entries, one per home.
+  same key, the one Milka's phone and the London tablet trust (the family
+  Android helpers in `playbooks/devvm.yml`). Without it each device has to
+  be paired again in person. It is stored as two entries, one per home.
 - The isideload state is what Apple trusts after one 2FA code
   (`docs/runbooks/ios-test-rig.md`); without it the next signing asks for a
   code again.
