@@ -24,7 +24,7 @@ flowchart LR
 | Database | `bambuddy` on the shared CNPG cluster (`stacks/dbaas` `app_databases`). Password from the Vault static role `pg-bambuddy`, rotated Tuesdays at 10:25 UTC. Pool of 3 plus 4 overflow connections |
 | Files | NFS `/srv/nfs/bambuddy` at `/app/data`: library files, the print archive, plate-detection references. The nightly NFS mirror and offsite sync carry it |
 | Secrets | Vault `secret/bambuddy`: `jwt_secret_key`, `mfa_encryption_key`, `oidc_client_secret`, and `admin_password` for the local `admin` account. Vault `secret/bambuddy-agent`: `api_key` of the local `agent` account |
-| Ingress | `auth = "app"`, proxied. Bambuddy's own login gates the UI and the API |
+| Ingress | `auth = "app"`, proxied. Bambuddy's own login gates the UI and the API. Its own per-client rate limit (50 average, 300 burst, after real-ip): the default 10/50 limiter answered 429 to the login page's first load |
 
 ## Sign-in and access
 
@@ -35,7 +35,18 @@ Two local accounts exist:
 | Account | Use |
 |---|---|
 | `admin` | Break-glass login and settings. Password in Vault `secret/bambuddy` `admin_password` |
-| `agent` | Owns the API key that `homelab print` uses. The key has the library and projects scopes only. It cannot queue, start or stop a print |
+| `agent` | In the Operators group. Owns the API key that `homelab print` uses. The key has the library and projects scopes only. It cannot queue, start or stop a print. Its password is in Vault `secret/bambuddy-agent` `password` |
+
+## State outside Terraform
+
+Bambuddy keeps its users, settings and printers in its database. These were set through its API on 2026-11-22, and a rebuild from an empty database repeats them:
+
+1. `POST /api/v1/auth/setup` with `auth_enabled: true`, user `admin` and the Vault password. Until this runs, the app is open, so run it through `kubectl port-forward` before the hostname resolves. The password needs a special character.
+2. Create the user `agent` in Operators. Operators lack `api_keys:create`, so move `agent` to Administrators, sign in as `agent`, create the key (`can_queue` and `can_control_printer` false, `can_manage_library` and `can_manage_projects` true), move it back to Operators, and write the key to `secret/bambuddy-agent` `api_key`.
+3. Settings (`PATCH /api/v1/settings/`): `use_slicer_api` true, `bambu_studio_api_url` `http://localhost:3001`, `preferred_slicer` and `open_in_slicer` `bambu_studio`, `external_url`, currency EUR. Without `use_slicer_api` the Slice button stays off.
+4. Add the printer (`POST /api/v1/printers/`: name `P2S`, serial and access code from `secret/emo/bambu-p2s`, IP 192.168.1.110, model `P2S`). Bambuddy tests the connection first and refuses the printer while it is off. On 2026-11-22 the Shelly plug was off, so this step is still open.
+
+The files are on NFS and the database in the nightly per-database dump, so a restore of both brings all of this back.
 
 ## Agents
 
