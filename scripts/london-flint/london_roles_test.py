@@ -100,7 +100,13 @@ def env(tmp_path: Path) -> Env:
     _stub(bin_dir, "ip", f'cat "{neigh}"\n')
     uci_hosts = tmp_path / "uci"
     uci_hosts.write_text(UCI_HOSTS)
-    _stub(bin_dir, "uci", f'cat "{uci_hosts}"\n')
+    # uci: `-q show dhcp` prints the file; every other call is recorded.
+    _stub(
+        bin_dir,
+        "uci",
+        f'if [ "$*" = "-q show dhcp" ]; then cat "{uci_hosts}"; else echo "uci $*" >> "{log}"; fi\n',
+    )
+    _stub(bin_dir, "dnsmasq-init", f'echo "dnsmasq $*" >> "{log}"\n')
     # iptables: -C (check) finds nothing, so the hooks get inserted.
     _stub(bin_dir, "iptables", f'echo "iptables $*" >> "{log}"\n[ "$1" = -C ] && exit 1\nexit 0\n')
     # curl: record the call; answer from $CURL_REPLY (body) with $CURL_CODE.
@@ -112,7 +118,7 @@ def env(tmp_path: Path) -> Env:
         '[ -n "$CURL_REPLY" ] && cat "$CURL_REPLY"\n'
         'printf "\\n%s" "${CURL_CODE:-200}"\n',
     )
-    for tool in ("sha256sum", "sort", "awk", "cat", "mv", "mkdir", "rm", "cut", "date", "tr", "grep", "sed", "printf", "cmp", "sleep"):
+    for tool in ("sha256sum", "sort", "awk", "cat", "mv", "mkdir", "rm", "cut", "date", "tr", "grep", "sed", "printf", "cmp", "sleep", "head", "tail"):
         target = bin_dir / tool
         if not target.exists():
             target.symlink_to(BUSYBOX)
@@ -134,6 +140,7 @@ def env(tmp_path: Path) -> Env:
         "CURL_SENT": str(tmp_path / "sent"),
         "LR_IP": str(bin_dir / "ip"),
         "LR_UCI": str(bin_dir / "uci"),
+        "LR_DNSMASQ": str(bin_dir / "dnsmasq-init"),
     }
     return Env(root=tmp_path, log=log, list_file=list_file, env=e)
 
@@ -164,12 +171,12 @@ def test_new_version_is_saved_and_swapped_into_the_ipsets(env: Env) -> None:
 
 
 def test_poll_sends_version_and_lease_hash(env: Env) -> None:
-    env.list_file.write_text("version 3\naa:aa:aa:aa:aa:01 admin\n")
+    env.list_file.write_text("version 3\naa:aa:aa:aa:aa:01 admin - -\n")
     reply(env, "unchanged 3\nleases ok\n")
     env.run("once")
     (call,) = [c for c in env.calls("curl") if "/api/router/roles" in c]
     digest = hashlib.sha256(LEASE_BODY.encode()).hexdigest()
-    assert f"https://wifi.example/api/router/roles?since=3&leases={digest}" in call
+    assert f"https://wifi.example/api/router/roles?since=3&leases={digest}&format=2" in call
     assert "Authorization: Bearer secret-token" in call
 
 
@@ -258,3 +265,127 @@ def test_firewall_hooks_lan_and_guest_traffic_to_the_tunnel(env: Env) -> None:
     calls = env.calls("iptables")
     assert "-I forwarding_lan_rule -o wgclient1 -j london_roles" in calls
     assert "-I forwarding_guest_rule -o wgclient1 -j london_roles" in calls
+
+
+# The format 2 list: "mac role|guest name|- address|-" for every device with
+# a role or a name. Names become uci dhcp host sections lr_<mac hex>, which
+# dnsmasq serves and the DNS import (stacks/phpipam) publishes.
+NAMED = (
+    "version 8\nleases ok\n"
+    "aa:aa:aa:aa:aa:01 admin mbp-london -\n"
+    "aa:aa:aa:aa:aa:02 iot plug-thor 192.168.8.207\n"
+    "aa:aa:aa:aa:aa:03 guest projector-london 192.168.8.100\n"
+    "aa:aa:aa:aa:aa:04 storage - -\n"
+)
+
+
+def uci_calls(env: Env) -> list[str]:
+    return env.calls("uci")
+
+
+def test_format_2_roles_go_to_the_ipsets_and_names_to_dhcp_hosts(env: Env) -> None:
+    reply(env, NAMED)
+    env.run("once")
+    ipset = env.calls("ipset")
+    assert "add lr_admin_new aa:aa:aa:aa:aa:01 -exist" in ipset
+    assert "add lr_storage_new aa:aa:aa:aa:aa:04 -exist" in ipset
+    assert not any("aa:aa:aa:aa:aa:03" in c for c in ipset)
+    uci = uci_calls(env)
+    assert "set dhcp.lr_aaaaaaaaaa02=host" in uci
+    assert "set dhcp.lr_aaaaaaaaaa02.name=plug-thor" in uci
+    assert "set dhcp.lr_aaaaaaaaaa02.mac=aa:aa:aa:aa:aa:02" in uci
+    assert "set dhcp.lr_aaaaaaaaaa02.ip=192.168.8.207" in uci
+    assert "set dhcp.lr_aaaaaaaaaa01.name=mbp-london" in uci
+    assert not any(c.startswith("set dhcp.lr_aaaaaaaaaa01.ip") for c in uci)
+    assert "set dhcp.lr_aaaaaaaaaa03.ip=192.168.8.100" in uci
+    assert not any("aaaaaaaaaa04" in c for c in uci)
+    assert uci[-1] == "commit dhcp"
+    assert env.calls("dnsmasq") == ["reload"]
+
+
+def test_names_already_in_place_change_nothing(env: Env) -> None:
+    (env.root / "uci").write_text(
+        UCI_HOSTS
+        + "dhcp.lr_aaaaaaaaaa01=host\n"
+        "dhcp.lr_aaaaaaaaaa01.name='mbp-london'\n"
+        "dhcp.lr_aaaaaaaaaa01.mac='aa:aa:aa:aa:aa:01'\n"
+        "dhcp.lr_aaaaaaaaaa02=host\n"
+        "dhcp.lr_aaaaaaaaaa02.name='plug-thor'\n"
+        "dhcp.lr_aaaaaaaaaa02.mac='aa:aa:aa:aa:aa:02'\n"
+        "dhcp.lr_aaaaaaaaaa02.ip='192.168.8.207'\n"
+        "dhcp.lr_aaaaaaaaaa03=host\n"
+        "dhcp.lr_aaaaaaaaaa03.name='projector-london'\n"
+        "dhcp.lr_aaaaaaaaaa03.mac='aa:aa:aa:aa:aa:03'\n"
+        "dhcp.lr_aaaaaaaaaa03.ip='192.168.8.100'\n"
+    )
+    reply(env, NAMED)
+    env.run("once")
+    assert uci_calls(env) == []
+    assert env.calls("dnsmasq") == []
+
+
+def test_a_removed_name_deletes_its_host_and_leaves_other_hosts_alone(env: Env) -> None:
+    (env.root / "uci").write_text(
+        UCI_HOSTS
+        + "dhcp.lr_aaaaaaaaaa09=host\n"
+        "dhcp.lr_aaaaaaaaaa09.name='old-name'\n"
+        "dhcp.lr_aaaaaaaaaa09.mac='aa:aa:aa:aa:aa:09'\n"
+    )
+    reply(env, "version 9\nleases ok\naa:aa:aa:aa:aa:01 admin - -\n")
+    env.run("once")
+    uci = uci_calls(env)
+    assert "-q delete dhcp.lr_aaaaaaaaaa09" in uci
+    assert not any("dell_worker" in c or "plug_thor" in c for c in uci)
+    assert uci[-1] == "commit dhcp"
+    assert env.calls("dnsmasq") == ["reload"]
+
+
+def test_a_named_guest_is_not_a_role_change(env: Env) -> None:
+    env.list_file.write_text("version 3\naa:aa:aa:aa:aa:01 admin\n")
+    reply(env, "version 4\nleases ok\naa:aa:aa:aa:aa:01 admin - -\naa:aa:aa:aa:aa:02 guest plug-thor -\n")
+    env.run("once")
+    assert env.calls("conntrack") == []
+
+
+def test_two_field_lines_are_still_accepted(env: Env) -> None:
+    reply(env, "version 5\nleases ok\naa:aa:aa:aa:aa:01 admin\n")
+    env.run("once")
+    assert "add lr_admin_new aa:aa:aa:aa:aa:01 -exist" in env.calls("ipset")
+    assert env.list_file.read_text().startswith("version 5\n")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "aa:aa:aa:aa:aa:01 guest Bad_Name -",
+        "aa:aa:aa:aa:aa:01 guest ok-name 192.168.9.5",
+        "aa:aa:aa:aa:aa:01 guest ok-name 192.168.8.1",
+        "aa:aa:aa:aa:aa:01 visitor ok-name -",
+        "aa:aa:aa:aa:aa:01 guest ok-name",
+    ],
+)
+def test_a_malformed_name_line_is_refused(env: Env, line: str) -> None:
+    reply(env, f"version 4\nleases ok\n{line}\n")
+    assert env.run("once", check=False).returncode != 0
+    assert uci_calls(env) == []
+    assert not env.list_file.exists()
+
+
+def test_an_address_another_host_section_reserves_is_left_out(env: Env) -> None:
+    # dell_worker (UCI_HOSTS) reserves 192.168.8.20; dnsmasq refuses to start
+    # on two reservations of one address, so the name goes in without it.
+    reply(env, "version 6\nleases ok\naa:aa:aa:aa:aa:05 guest clash 192.168.8.20\n")
+    env.run("once")
+    uci = uci_calls(env)
+    assert "set dhcp.lr_aaaaaaaaaa05.name=clash" in uci
+    assert not any(c.startswith("set dhcp.lr_aaaaaaaaaa05.ip") for c in uci)
+
+
+def test_a_saved_list_in_format_1_is_fetched_again_in_full(env: Env) -> None:
+    # After the upgrade the saved list has the app's current version but no
+    # names; asking from version 0 brings the format 2 list once.
+    env.list_file.write_text("version 3\naa:aa:aa:aa:aa:01 admin\n")
+    reply(env, "unchanged 0\nleases ok\n")
+    env.run("once")
+    (call,) = [c for c in env.calls("curl") if "/api/router/roles" in c]
+    assert "roles?since=0&" in call

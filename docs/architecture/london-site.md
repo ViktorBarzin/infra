@@ -60,7 +60,7 @@ hardcoded in `/usr/share/gl-ngx/oui-access.lua`). A browser on the LAN using
 | Scheduled reboot | off | GL → System → Scheduled Tasks | Memory and conntrack were healthy after 6.7 days; the reboot wiped the kernel log used for diagnosis. |
 | DNS cache | 10000 entries, "All servers" on | LuCI → Network → DHCP and DNS | The 150-entry default evicted 3,038 live entries in 6.8 days. Upstreams stay AdGuard public DNS (94.140.14.14, 94.140.15.15). |
 | DNS upstreams | AdGuard public DNS over IPv4 (94.140.14.14, 94.140.15.15) and IPv6 (2a10:50c0::ad1:ff, 2a10:50c0::ad2:ff) | LuCI → Network → DHCP and DNS; IPv6 pair set by `provision.sh` | IPv6 added 2026-10-06. Over IPv4 the flat leaves through the ISP's CGNAT (WAN 100.67.94.6), and AdGuard stopped answering it for 52 to 283 s at a time (six `LondonDnsFailure` drops 2026-10-02 to 10-06) while ping to it stayed at 0% loss and 1.1.1.1, 9.9.9.9 and AdGuard over IPv6 answered every lookup. Follow-up tests the same day narrowed it to UDP: over IPv4, UDP to 94.140.14.14 timed out on 7 of 15 lookups (silent drops, never REFUSED), while TCP to the same address answered 15 of 15 and DNS over HTTPS 20 of 20; all three AdGuard IPv4 addresses (14.14, 15.15, 14.140) lost about a third over UDP. The likely cause is AdGuard limiting UDP per source address on the shared CGNAT address (137.220.71.46); AdGuard publishes no limit for its public resolver, so this is not confirmed, and loss on the IPv4 path to AdGuard is not ruled out. If IPv4 itself needs to be reliable, sending the IPv4 upstreams over TCP (DoT through the stubby package already on the router) avoids it. With "All servers" on, dnsmasq takes the first answer from any of the four. |
-| Device names | Curated static leases (`ensure_host` in `provision.sh`): plug-livia, plug-jinx, plug-pikkachu, plug-michelle, plug-thor, plug-tapo, mbp-london, anca-mba-london, portal-london, projector-london, plus iphone-london with its pinned address | set by `provision.sh` | Every leased device is named in `viktorbarzin.lan` from these or from the hostname it announces (`docs/architecture/dns.md`, "London devices"). The five Kasa plugs all announce `KP115` and are named after their nickname in the Kasa app. No address is pinned, so a name follows its device between SSIDs. Previous config backed up on the router at `/etc/config/dhcp.bak.20261013-london-dns`. |
+| Device names and fixed addresses | Host sections `lr_<mac hex>`, written by the role agent from the wifi app's manager page ("Device names" below) | `wifi.viktorbarzin.me/admin` | Every leased device is named in `viktorbarzin.lan` from these or from the hostname it announces (`docs/architecture/dns.md`, "London devices"). Until 2026-11-22 `provision.sh` kept the names (`ensure_host`); it now removes those sections. Three reservations made in the GL.iNet UI remain as anonymous host sections (.103, .184, .105). Previous config backed up on the router at `/etc/config/dhcp.bak.20261013-london-dns`. |
 | `viktorbarzin.lan` forwarding | `server` entries `/viktorbarzin.lan/10.0.20.201`, `/1.168.192.in-addr.arpa/10.0.20.201`, `/10.in-addr.arpa/10.0.20.201` | set by `provision.sh`, which checks afterwards that `openwrt-london.viktorbarzin.lan` resolves | London clients get Technitium's answers for internal names, the same as Sofia. The GL DNS page and the Tailscale toggle rewrite dnsmasq settings; re-run `provision.sh` after using either. |
 | DNS query log | on: `logqueries '1'` (`--log-queries=extra`) | LuCI → Network → DHCP and DNS → Log queries; set by `provision.sh` | Every lookup (serial, client, name, answer) goes to Loki for the daily DNS digest (`docs/plans/2026-10-02-london-dns-block-monitoring.md`). About 575k lookups a day. Sent over the TCP syslog; nothing is written to flash. |
 | DNS concurrent queries | `dnsforwardmax '1000'` (default 150) | set by `provision.sh` | `Maximum number of concurrent DNS queries reached (max: 150)` appeared four times on 2026-10-02 next to a 283 s DNS drop; "All servers" sends each miss to both upstreams, which doubles the in-flight count. |
@@ -72,7 +72,7 @@ hardcoded in `/usr/share/gl-ngx/oui-access.lua`). A browser on the LAN using
 | DPI / per-app stats | on | GL → Network | Viktor uses them. |
 | Wi-Fi networks | `5G-Tower` (rax0, 5 GHz) and `2.4G-Tower` (ra0), both on br-lan; the guest SSIDs (`guest5g`, `guest2g`) are off and `5G-Tower Admin` is gone | set by `provision.sh` | Since 2026-11-22 (Viktor): one network, so casting works between any two devices. The main 5 GHz SSID took the guest SSID's name and password, so the guest devices stayed connected; devices on `5G-Tower Admin` joined `5G-Tower` once. The guest interface (br-guest, 192.168.9.0/24) still exists with no SSID on it. Backup of the earlier config: `/etc/config/wireless.bak.20261122-roles`. Roles, not SSIDs, decide what reaches Sofia ("Device roles" below). |
 | No masquerade on the tunnel | `firewall.wgclient1.masq '0'` and `wireguard.peer_855.masq '0'` (GL's "IP Masquerading" option of the VPN client) | set by `provision.sh` | Since 2026-11-22 (Viktor): London traffic reaches Sofia under each device's own address, which also covers the Kubernetes node's need (ADR-0045). Sofia routes 192.168.8.0/24 and 192.168.9.0/24 back through the tunnel. One NAT stays, on OPNsense: traffic to the Sofia home LAN (192.168.1.0/24) arrives as 192.168.1.2 (alias `wg_site_lans`), because the TP-Link's stateful firewall drops the home hosts' replies that it routes back to OPNsense without having seen the opening packet (tested 2026-11-22). The TP-Link already holds the static route 192.168.8.0/24 via 192.168.1.2. |
-| Dell worker lease | `dell-worker` 48:89:e7:18:0e:66 → 192.168.8.20 | set by `provision.sh` | The Ubuntu worker on the Dell Precision registers this address as its node IP (ADR-0045). Fedora and Windows on the same laptop use private Wi-Fi addresses and get ordinary leases. |
+| Dell worker lease | `dell-worker` 48:89:e7:18:0e:66 → 192.168.8.20 | the wifi app (fixed address) | The Ubuntu worker on the Dell Precision registers this address as its node IP (ADR-0045). Fedora and Windows on the same laptop use private Wi-Fi addresses and get ordinary leases. |
 | SSH and admin page on WAN | open to every source; SSH takes keys only (`PasswordAuth` and `RootPasswordAuth` off) | set by `provision.sh` | Open by Viktor's call (2026-09-27) so the router stays reachable over IPv6 when the tunnel is down. Over IPv4 the WAN is behind the ISP's CGNAT, but over IPv6 the whole internet reaches both ports: in the 30 days to 2026-11-22 scanners from DigitalOcean, IONOS and China Telecom connected to SSH, and none got past authentication. Password login went off on 2026-11-22 (Viktor). The key list replaces the router's on every run. |
 | WAN brute-force bans | A source that opens 5 new SSH connections within 60 s is dropped on SSH for 24 h; 20 new admin-page connections within 10 s drop it on 443 for 1 h. Each new attempt during a ban restarts the timer. Sofia's IPv6 ranges (`2001:470:5a7f::/48`, `2001:470:6f:43d::/64`) are exempt | firewall include `/etc/firewall.bruteforce` from `scripts/london-flint/wan-bruteforce.sh`, kept across upgrades via `/etc/sysupgrade.conf`; set by `provision.sh` | Kernel `recent` lists, IPv4 and IPv6, WAN (`eth1`) only, so the tunnel and the LAN are never counted. The exemption keeps `provision.sh` working over IPv6, which opens about ten connections in a row. Chosen over fail2ban and CrowdSec, which would need Python or a Go agent on a router with about 480 MB free, and which a firmware upgrade removes. A ban logs `wan-bruteforce ban ssh` or `ban admin` (kernel, `{job="syslog", host="flint-london"} |= "wan-bruteforce"`). Lift one with `echo -<address> > /proc/net/xt_recent/bf_ssh_ban` (or `bf_admin_ban`). Tested 2026-11-22 with the exemption removed: the 5th SSH connection and the 20th admin request from the devvm timed out. |
 | IPv6 | Native with the delegated /56 (set 2026-10-02) | GL → Network → IPv6 | Real addresses skip NAT and the ISP's IPv4 CGNAT. |
@@ -92,6 +92,8 @@ flowchart TD
   agent -->|"lease table on change"| app
   agent --> sets["ipsets lr_admin, lr_storage,<br/>lr_iot, lr_infra_ha, lr_infra_k8s"]
   sets --> chain["chain london_roles<br/>(lan to wgclient1)"]
+  agent --> hosts["dhcp host sections lr_&lt;mac&gt;<br/>(names, fixed addresses)"]
+  hosts --> dns["phpipam-import:<br/>name.viktorbarzin.lan"]
 ```
 
 | role | reaches in Sofia | given by |
@@ -139,9 +141,29 @@ as dell-worker can get a role before it rejoins. When the app or the tunnel is d
 list and retries every 5 to 60 seconds. `LondonRoleSyncStale` fires after 10
 minutes without a poll.
 
+**Device names.** The manager page also gives a device a name and, if
+needed, a fixed address (Viktor, 2026-11-22). The role list the agent fetches
+(`format=2`) carries both. The agent writes each named device as a `uci` dhcp
+host section `lr_<mac hex>` with `name`, `mac` and an optional `ip`. It
+commits and reloads dnsmasq only when a section changed. phpipam-import
+then publishes `<name>.viktorbarzin.lan` within 5 minutes. A new fixed
+address takes effect when the device next renews its lease. Fixed addresses
+are for devices that something else reaches by address: the plugs (Home
+Assistant), the projector, dell-worker (its Kubernetes node address) and the
+iOS rig phone (`iphone-london`, 192.168.8.205). The app refuses a name or an
+address another device has, and an address another device leased in the last
+24 hours. The router's reservations count as leases there, so the GL.iNet
+UI's three reservations are refused too. The agent also leaves out an address
+that another host section reserves, because dnsmasq does not start with two
+reservations of one address.
+
+Names and roles are keyed by MAC. Set "Private Wi-Fi Address" to Fixed for
+`5G-Tower` on iPhones and Macs: on Rotating, the device changes its MAC and
+loses both. Anca's MacBook did this before 2026-11-22.
+
 **Checks.** On the router: `logread -e london-roles | tail`,
 `cat /etc/london-roles.list`, `ipset list lr_admin`,
-`iptables -S london_roles`. In the app: `/` shows the device you are on, and
+`iptables -S london_roles`, `uci show dhcp | grep lr_`. In the app: `/` shows the device you are on, and
 `/admin` lists every device.
 
 ## Monitoring

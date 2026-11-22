@@ -75,8 +75,9 @@ nothing in Settings or other Apple apps.
 every developer service, and the service reports "the phone is locked"
 (measured 2026-10-12, when the phone locked after coming off the cable). On
 the guest SSID
-`5G-Tower` with Private Wi-Fi Address set to Fixed, so the static lease
-(`scripts/london-flint/provision.sh`) keeps matching; for Safari, Settings >
+`5G-Tower` with Private Wi-Fi Address set to Fixed, so its name and fixed
+address (`iphone-london`, 192.168.8.205, on the wifi app's manager page
+`wifi.viktorbarzin.me/admin`) keep matching; for Safari, Settings >
 Apps > Safari > Advanced > Web Inspector and Remote Automation switched on.
 
 **Python.** The tunnel's TLS-PSK needs Python 3.13 or later (3.12 fails with
@@ -559,9 +560,9 @@ a blurred frame means the poll was skipped or timed out. It prints
 
 The Mac is addressed as `mbp-london.viktorbarzin.lan`. Since 2026-10-13 the
 name follows whatever address the Mac currently leases, as long as the MAC it
-presents is listed in the `mbp-london` entry in
-`scripts/london-flint/provision.sh` (`docs/architecture/dns.md`, "London
-devices"); no address is pinned any more. If the name is stale, point the rig
+presents carries the name `mbp-london` on the wifi app's manager page
+(`wifi.viktorbarzin.me/admin`; `docs/architecture/london-site.md`, "Device
+names"); no address is pinned. If the name is stale, point the rig
 somewhere else without touching code:
 
 ```sh
@@ -624,8 +625,9 @@ The service cannot complete RemotePairing with the phone. Check, in order:
    `ssh root@10.3.2.6 'grep -i 6e:b1:68:39:7b:22 /tmp/dhcp.leases'` shows the
    phone holding that lease. If the MAC is missing, the phone changed its
    private Wi-Fi address or joined another SSID; set it back to Fixed on
-   `5G-Tower`, or update the MAC in `scripts/london-flint/provision.sh` and
-   re-run it.
+   `5G-Tower`, or give the new MAC the name `iphone-london` and the address
+   192.168.8.205 on `wifi.viktorbarzin.me/admin` (clear them from the old
+   MAC first).
 2. `journalctl --user -u ios-rig-wifi -n 50`. `PairVerify ... kNotFoundErr` on
    the phone side, or a reset right after the handshake, means the pairing
    record is wrong: check `host_identifier` in

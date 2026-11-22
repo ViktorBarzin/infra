@@ -159,39 +159,6 @@ else
 	echo "dnsmasq settings present"
 fi
 
-# Static lease for the iOS test rig phone ("Empress Anca"), so the devvm can
-# reach it over Wi-Fi at a known address (docs/runbooks/ios-test-rig.md). It
-# joins "5G-Tower" with a fixed private Wi-Fi address; if that address changes
-# on the phone, update the MAC here. On br-lan since the guest SSID went away
-# (2026-11-22); it was 192.168.9.205.
-if [ "$(uci -q get dhcp.iphone_london.ip)" != 192.168.8.205 ] || [ "$(uci -q get dhcp.iphone_london.mac)" != 6e:b1:68:39:7b:22 ]; then
-	uci set dhcp.iphone_london=host
-	uci set dhcp.iphone_london.name='iphone-london'
-	uci set dhcp.iphone_london.mac='6e:b1:68:39:7b:22'
-	uci set dhcp.iphone_london.ip='192.168.8.205'
-	uci commit dhcp
-	/etc/init.d/dnsmasq reload
-	echo "dhcp: iphone-london -> 192.168.8.205"
-else
-	echo "dhcp: iphone-london lease present"
-fi
-
-# Static lease for the Dell Precision's Ubuntu worker, a Kubernetes node
-# (ADR-0045). The node registers this address with the cluster, so it must not
-# change. The MAC is the Wi-Fi card's permanent address; Fedora and Windows on
-# the same laptop use private addresses and get ordinary leases.
-if [ "$(uci -q get dhcp.dell_worker.ip)" != 192.168.8.20 ] || [ "$(uci -q get dhcp.dell_worker.mac)" != 48:89:e7:18:0e:66 ]; then
-	uci set dhcp.dell_worker=host
-	uci set dhcp.dell_worker.name='dell-worker'
-	uci set dhcp.dell_worker.mac='48:89:e7:18:0e:66'
-	uci set dhcp.dell_worker.ip='192.168.8.20'
-	uci commit dhcp
-	/etc/init.d/dnsmasq reload
-	echo "dhcp: dell-worker -> 192.168.8.20"
-else
-	echo "dhcp: dell-worker lease present"
-fi
-
 # London traffic to Sofia keeps its own source address: no masquerade on the
 # tunnel (Viktor, 2026-11-22, docs/plans/2026-11-22-london-network-roles-design.md).
 # Sofia routes 192.168.8.0/24 back through the tunnel. The one NAT left is
@@ -231,56 +198,19 @@ if iptables -t nat -S zone_wgclient1_postrouting | grep -q MASQUERADE; then
 fi
 echo "firewall: no masquerade on the tunnel"
 
-# Device names (docs/architecture/dns.md, "London devices"). Every leased
-# device is named in viktorbarzin.lan by phpipam-import, from the
-# hostname it announces. These entries give a chosen name to devices whose own
-# name is missing or shared (five Kasa plugs all say "KP115"). No IP is pinned,
-# so a name follows its device from one SSID to another. Kasa plugs are named
-# after their nickname in the Kasa app.
-# Each argument after the name is a MAC; a Mac on a private Wi-Fi address can
-# present one per SSID, so mbp-london lists all of them.
+# Device names and fixed addresses live in the wifi app's manager page
+# (wifi.viktorbarzin.me/admin) since 2026-11-22. The role agent writes each
+# named device as a host section lr_<mac hex> (london-roles.sh, apply_names),
+# which phpipam-import publishes as <name>.viktorbarzin.lan. The sections this
+# script kept before then are removed; the app holds their names now.
 dhcp_changed=0
-ensure_host() {
-	sec=$1 name=$2
-	shift 2
-	macs=$*
-	# Drop any other host section that claims this name or one of these MACs,
-	# such as the anonymous entries made in the GL UI before this existed.
-	for other in $(uci -X show dhcp | sed -n "s/^dhcp\.\([^.=]*\)=host$/\1/p"); do
-		[ "$other" = "$sec" ] && continue
-		o_name=$(uci -q get "dhcp.$other.name" || true)
-		o_macs=$(uci -q get "dhcp.$other.mac" | tr 'A-F' 'a-f' || true)
-		hit=0
-		[ "$o_name" = "$name" ] && hit=1
-		for m in $macs; do
-			case " $o_macs " in *" $m "*) hit=1 ;; esac
-		done
-		if [ "$hit" = 1 ]; then
-			uci delete "dhcp.$other"
-			dhcp_changed=1
-			echo "dhcp: removed $other ($o_name $o_macs), replaced by $sec"
-		fi
-	done
-	if [ "$(uci -q get "dhcp.$sec")" != host ] || [ "$(uci -q get "dhcp.$sec.name")" != "$name" ] ||
-		[ "$(uci -q get "dhcp.$sec.mac")" != "$macs" ] || uci -q get "dhcp.$sec.ip" >/dev/null; then
-		uci set "dhcp.$sec=host"
-		uci set "dhcp.$sec.name=$name"
-		uci set "dhcp.$sec.mac=$macs"
-		uci -q delete "dhcp.$sec.ip" || true
+for sec in iphone_london dell_worker plug_livia plug_jinx plug_pikkachu plug_michelle plug_thor plug_tapo mbp_london anca_mba_london portal_london projector_london; do
+	if uci -q get "dhcp.$sec" >/dev/null; then
+		uci delete "dhcp.$sec"
 		dhcp_changed=1
-		echo "dhcp: $name -> $macs"
+		echo "dhcp: $sec removed (named in the wifi app)"
 	fi
-}
-ensure_host plug_livia plug-livia 78:8c:b5:74:30:11
-ensure_host plug_jinx plug-jinx 78:8c:b5:74:38:23
-ensure_host plug_pikkachu plug-pikkachu 78:8c:b5:74:39:ce
-ensure_host plug_michelle plug-michelle 9c:53:22:2b:59:4b
-ensure_host plug_thor plug-thor 78:8c:b5:74:31:39
-ensure_host plug_tapo plug-tapo 78:8c:b5:fe:ae:c1
-ensure_host mbp_london mbp-london 84:2f:57:39:9a:d9 16:a8:3e:53:fe:6b 52:9f:c2:9a:64:ab
-ensure_host anca_mba_london anca-mba-london aa:1c:ce:36:58:a8
-ensure_host portal_london portal-london a4:0e:2b:0e:48:a3
-ensure_host projector_london projector-london f4:9d:8a:26:0b:18
+done
 
 # The router's own traffic to 10.0.0.0/8 goes through the tunnel (table 1001),
 # ahead of GL's fwmark rules at 6000. dnsmasq copies each client query's mark
@@ -316,7 +246,7 @@ if [ "$dhcp_changed" = 1 ]; then
 	uci commit dhcp
 	/etc/init.d/dnsmasq restart
 else
-	echo "dhcp: device names and Technitium forwarding present"
+	echo "dhcp: Technitium forwarding present"
 fi
 # Canary: a name only Technitium knows. The GL DNS page and the Tailscale
 # toggle both rewrite dnsmasq settings, so a run that finds this failing after
