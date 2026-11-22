@@ -1840,6 +1840,76 @@
         path: /usr/local/bin/milka-adb
         state: absent
 
+    # Stremio's "Downloaded" row (stacks/servarr/aiostreams, sidecar
+    # download-row): every hour tablet-downloads-sync lists the video files in
+    # the London tablet's Downloads folder over adb and sends their names and
+    # sizes to the addon. It runs as wizard for the adb key. The addon URL
+    # carries the addon's token, read here from its Kubernetes Secret; systemd
+    # reads the root-only env file before it drops to wizard.
+    - name: Install tablet-downloads-sync
+      ansible.builtin.copy:
+        src: files/devvm/tablet-downloads-sync
+        dest: /usr/local/bin/tablet-downloads-sync
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Install the tablet-downloads-sync units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - tablet-downloads-sync.service
+        - tablet-downloads-sync.timer
+      notify: reload systemd
+
+    - name: Read the download-row addon token
+      ansible.builtin.command: kubectl -n aiostreams get secret download-row -o jsonpath={.data.DOWNLOAD_ROW_TOKEN}
+      delegate_to: localhost
+      become: false
+      register: devvm_download_row_token
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Refuse to write an empty download-row token
+      ansible.builtin.assert:
+        that: "(devvm_download_row_token.stdout | b64decode | length) >= 32"
+        quiet: true
+      no_log: true
+
+    - name: Create /etc/tablet-downloads
+      ansible.builtin.file:
+        path: /etc/tablet-downloads
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Write the tablet-downloads-sync env file
+      ansible.builtin.copy:
+        dest: /etc/tablet-downloads/env
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # Managed by playbooks/devvm.yml from the aiostreams/download-row Secret.
+          DOWNLOAD_ROW_INVENTORY_URL=https://aiostreams-download.viktorbarzin.me/{{ devvm_download_row_token.stdout | b64decode }}/inventory
+      no_log: true
+
+    # Skipped in check mode: on a box without the unit yet, the copy above only
+    # pretends to write it, so there is nothing for systemd to find.
+    - name: Enable the tablet-downloads-sync timer
+      ansible.builtin.systemd_service:
+        name: tablet-downloads-sync.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+
     # The CLAUDE_CODE_SHELL_PREFIX that managed-settings.json sets for every
     # user: each Bash command Claude runs gets its own systemd scope and 6G cap,
     # so a test run that fills memory loses its own processes, not the

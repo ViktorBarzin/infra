@@ -1,0 +1,17 @@
+[Unit]
+Description=Tell the Stremio download-row addon which films are on the London tablet
+Documentation=file:///home/wizard/code/infra/docs/plans/2026-11-22-london-tablet-design.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# wizard, whose ~/.android/milka-adbkey the tablet trusts.
+User=wizard
+# Only the box at 10.0.10.10 runs it, as for the other devvm timers: a drill VM
+# would report the same tablet a second time. A failed condition is a skip.
+ExecCondition=/bin/sh -c 'ip -4 -o addr show scope global | grep -qF " 10.0.10.10/"'
+ExecStart=/usr/local/bin/tablet-downloads-sync
+EnvironmentFile=/etc/tablet-downloads/env
+Nice=10
+TimeoutStartSec=10min

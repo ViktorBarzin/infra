@@ -2,6 +2,8 @@
 
 Run with: cd infra/stacks/servarr/aiostreams/files && python3 -m unittest test_download_row
 """
+import json
+import tempfile
 import unittest
 import urllib.error
 
@@ -232,7 +234,8 @@ class FakeUpstream:
             self.meta_calls.append(url)
             if self.error:
                 raise self.error
-            return {"meta": {"name": self.title}} if self.title else {}
+            meta = {"name": self.title, "year": getattr(self, "year", None)}
+            return {"meta": meta} if self.title else {}
         if url.endswith("/api/v1/user"):
             self.password_fetches += 1
             return {"data": {"encryptedPassword": f"enc/{self.password_fetches}"}}
@@ -259,7 +262,8 @@ class StreamsTests(unittest.TestCase):
     def test_drops_files_of_other_titles(self):
         own = stream("🕵️ [RD⚡] Torrentio 720p", "720p", GB, url="https://x/own", filename="Inception.2010.720p.mkv")
         up = FakeUpstream([SMALL_1080, own], title="Inception")  # SMALL_1080 is a Paddington file
-        self.assertEqual(urls(self.make(up).streams("movie", "tt1375666")["streams"]), ["https://x/own"])
+        # Only the Inception file, saved under its clean name.
+        self.assertEqual(urls(self.make(up).streams("movie", "tt1375666")["streams"]), ["https://x/Inception%20720p.mkv"])
 
     def test_asks_the_named_variant(self):
         up = FakeUpstream([SMALL_1080])
@@ -300,3 +304,130 @@ class StreamsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CleanNameTests(unittest.TestCase):
+    def test_movie(self):
+        self.assertEqual(dr.clean_name("Inception", "2010", "tt1375666", 720, "Inception.2010.720p.x265.mkv"), "Inception (2010) 720p.mkv")
+
+    def test_episode(self):
+        self.assertEqual(
+            dr.clean_name("Breaking Bad", "2008", "tt0903747:1:1", 1080, "Breaking.Bad.S01E01.mp4"),
+            "Breaking Bad S01E01 1080p.mp4",
+        )
+
+    def test_4k_and_unsafe_characters(self):
+        self.assertEqual(
+            dr.clean_name("Mission: Impossible / Fallout?", "2018", "tt4912910", 2160, "x.mkv"),
+            "Mission - Impossible - Fallout (2018) 4K.mkv",
+        )
+
+    def test_unknown_extension_and_year(self):
+        self.assertEqual(dr.clean_name("Inception", None, "tt1375666", None, "file"), "Inception.mkv")
+
+    def test_named_link_replaces_the_last_segment(self):
+        self.assertEqual(
+            dr.named_link("https://x/api/v1/proxy/abc/Release.Name.mkv", "Inception (2010) 720p.mkv"),
+            "https://x/api/v1/proxy/abc/Inception%20%282010%29%20720p.mkv",
+        )
+
+    def test_rows_use_the_clean_name(self):
+        rows = dr.options([SMALL_1080], name_for=lambda s: "Paddington 2 (2017) 1080p.mkv")
+        self.assertTrue(rows[0]["externalUrl"].endswith("/Paddington%202%20%282017%29%201080p.mkv"))
+        self.assertIn("Paddington 2 BONE.mkv", rows[0]["description"])  # where it comes from
+
+
+INVENTORY = {
+    "dir": "/sdcard/Download",
+    "files": [
+        {"name": "Inception (2010) 720p.mkv", "size": 1_039_639_206, "mtime": 200},
+        {"name": "Inception (2010) 720p (1).mkv", "size": 1_039_639_206, "mtime": 300},
+        {"name": "Breaking Bad S01E01 1080p.mkv", "size": 3_800_000_000, "mtime": 100},
+        {"name": "holiday.mp4", "size": 5_000_000, "mtime": 400},
+    ],
+}
+
+
+class LibraryTests(unittest.TestCase):
+    def make(self, path=None):
+        lib = dr.Library(path)
+        lib.remember("Inception (2010) 720p.mkv", "movie", "tt1375666", "Inception")
+        lib.remember("Breaking Bad S01E01 1080p.mkv", "series", "tt0903747:1:1", "Breaking Bad")
+        lib.set_inventory(INVENTORY, now=1000)
+        return lib
+
+    def test_catalog_lists_titles_on_the_tablet_newest_first(self):
+        lib = self.make()
+        self.assertEqual(
+            lib.catalog("movie"),
+            [{
+                "id": "tt1375666", "type": "movie", "name": "Inception",
+                "poster": "https://images.metahub.space/poster/medium/tt1375666/img",
+            }],
+        )
+        self.assertEqual([m["id"] for m in lib.catalog("series")], ["tt0903747"])
+
+    def test_files_it_did_not_name_are_ignored(self):
+        self.assertNotIn("holiday", json.dumps(self.make().catalog("movie")))
+
+    def test_play_rows_for_the_title(self):
+        rows = self.make().play_rows("tt1375666")
+        self.assertEqual(len(rows), 2)  # the file and Chrome's " (1)" copy
+        self.assertEqual(rows[0]["name"], "▶ On the tablet")
+        self.assertEqual(rows[0]["externalUrl"], "vlc://file:///sdcard/Download/Inception%20%282010%29%20720p%20%281%29.mkv")
+        self.assertIn("1.0 GB", rows[0]["description"])
+        self.assertEqual(self.make().play_rows("tt0903747:1:2"), [])
+        self.assertEqual(len(self.make().play_rows("tt0903747:1:1")), 1)
+
+    def test_a_deleted_file_drops_out(self):
+        lib = self.make()
+        lib.set_inventory({"dir": "/sdcard/Download", "files": []}, now=2000)
+        self.assertEqual(lib.catalog("movie"), [])
+        self.assertEqual(lib.play_rows("tt1375666"), [])
+
+    def test_survives_a_restart(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.make(d)
+            again = dr.Library(d)
+            self.assertEqual([m["id"] for m in again.catalog("movie")], ["tt1375666"])
+
+    def test_rejects_a_bad_inventory(self):
+        lib = self.make()
+        for bad in ({}, {"dir": "/x", "files": "nope"}, {"dir": "/x", "files": [{"name": 3}]}):
+            with self.assertRaises(ValueError):
+                lib.set_inventory(bad)
+        self.assertEqual(len(lib.catalog("movie")), 1)
+
+
+class MoreRouteTests(unittest.TestCase):
+    def test_catalog(self):
+        self.assertEqual(dr.route("/t0ken/catalog/movie/downloaded.json", "t0ken"), ("catalog", "movie"))
+        self.assertIsNone(dr.route("/t0ken/catalog/movie/other.json", "t0ken"))
+
+    def test_inventory(self):
+        self.assertEqual(dr.route("/t0ken/inventory", "t0ken"), ("inventory",))
+        self.assertIsNone(dr.route("/nope/inventory", "t0ken"))
+
+    def test_manifest_lists_the_catalogs(self):
+        self.assertIn("catalog", dr.MANIFEST["resources"])
+        self.assertEqual({c["id"] for c in dr.MANIFEST["catalogs"]}, {"downloaded"})
+
+
+class StreamsWithLibraryTests(unittest.TestCase):
+    def test_play_row_first_and_names_remembered(self):
+        lib = dr.Library(None)
+        own = stream("🕵️ [RD⚡] Torrentio 720p", "720p", GB, url="https://x/api/v1/proxy/e/Inception.2010.720p.mkv", filename="Inception.2010.720p.mkv")
+        up = FakeUpstream([own], title="Inception")
+        up.year = "2010"
+        addon = dr.Addon(
+            base="http://localhost:3000", uuid="u-1", password="pw", get_json=up.get_json,
+            cinemeta="http://cinemeta", library=lib,
+        )
+        first = addon.streams("movie", "tt1375666")["streams"]
+        self.assertTrue(first[0]["externalUrl"].endswith("/Inception%20%282010%29%20720p.mkv"))
+        # Saved before clean names existed: the release name maps back too.
+        self.assertEqual(lib.names["Inception.2010.720p.mkv"]["id"], "tt1375666")
+        lib.set_inventory({"dir": "/sdcard/Download", "files": [{"name": "Inception (2010) 720p.mkv", "size": GB, "mtime": 1}]})
+        second = addon.streams("movie", "tt1375666")["streams"]
+        self.assertEqual(second[0]["name"], "▶ On the tablet")
+        self.assertEqual(second[1]["name"], "⬇ Recommended")

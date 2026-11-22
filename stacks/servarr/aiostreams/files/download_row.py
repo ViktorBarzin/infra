@@ -8,8 +8,18 @@ it offline (the London tablet, for flights). Stremio rows do one thing each
 It asks AIOStreams on localhost for Viktor's streams and returns externalUrl
 rows: a recommended file first, then a short ladder of other sizes per
 resolution, each labelled with its resolution and size. Files whose name lacks
-the film's title (from Cinemeta) are left out. Install URL: https://<host>/<token>/manifest.json.
-The token is the only gate, as for AIOStreams' own install URLs.
+the film's title (from Cinemeta) are left out. Each link ends in a clean file
+name, "Inception (2010) 720p.mkv"; the AIOStreams proxy ignores that segment,
+and the browser saves the file under it.
+
+What is on the tablet: a devvm timer (tablet-downloads-sync) lists the video
+files in its Downloads folder every hour and POSTs them to /<token>/inventory.
+Files this addon named map back to their titles, which give a "Downloaded"
+catalog on the Home board and a "▶ On the tablet" row that opens the file in
+VLC (vlc://file://...). Stremio itself cannot play local files on Android.
+
+Install URL: https://<host>/<token>/manifest.json. The token is the only gate,
+as for AIOStreams' own install URLs.
 
 Standard library only, so nothing is installed at start.
 Tests: cd files && python3 -m unittest test_download_row
@@ -19,6 +29,7 @@ import os
 import re
 import sys
 import threading
+import time
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -48,15 +59,22 @@ AUDIO = re.compile(r"🌎([^📝\n]*)")
 # counts as English, the usual case for English releases.
 AUDIO_LANGUAGE = "English"
 
+VIDEO_EXT = (".mkv", ".mp4", ".avi", ".m4v")
+# Chrome saves a second copy of a name as "<name> (1).<ext>".
+COPY_SUFFIX = re.compile(r" \(\d+\)(?=\.[A-Za-z0-9]+$)")
+UNSAFE = re.compile(r'\s*[\\/:*?"<>|]+\s*')
+POSTER = "https://images.metahub.space/poster/medium/{}/img"
+MAX_BODY = 1_000_000
+
 MANIFEST = {
     "id": "me.viktorbarzin.download",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "name": "Download",
-    "description": "One row per film or episode that saves a file for offline viewing.",
-    "resources": ["stream"],
+    "description": "Saves films for offline viewing and lists what is on the tablet.",
+    "resources": ["catalog", "stream"],
     "types": list(TYPES),
     "idPrefixes": ["tt"],
-    "catalogs": [],
+    "catalogs": [{"type": t, "id": "downloaded", "name": "Downloaded"} for t in TYPES],
 }
 
 
@@ -127,6 +145,27 @@ def label(res: int | None) -> str | None:
     return "4K" if res == 2160 else f"{res}p" if res else None
 
 
+def clean_name(title: str, year: str | None, media_id: str, res: int | None, original: str) -> str:
+    """"Inception (2010) 720p.mkv", "Breaking Bad S01E01 1080p.mkv"."""
+    parts = media_id.split(":")
+    name = UNSAFE.sub(" - ", title).strip(" -")
+    if len(parts) == 3:
+        name += f" S{int(parts[1]):02d}E{int(parts[2]):02d}"
+    elif year:
+        name += f" ({str(year)[:4]})"
+    if res:
+        name += f" {label(res)}"
+    ext = os.path.splitext(original)[1].lower()
+    return name + (ext if ext in VIDEO_EXT else ".mkv")
+
+
+def named_link(url: str, name: str) -> str:
+    """The same link with name as its last segment, which the proxy ignores and
+    the browser uses as the file name."""
+    base = url.rsplit("/", 1)[0]
+    return f"{base}/{urllib.parse.quote(name)}"
+
+
 def ladder(streams: list[dict]) -> list[dict]:
     """Per resolution, lowest first: the smallest file, then the largest up to
     LADDER_MAX_BYTES when it is clearly bigger. English-only audio files fill
@@ -150,29 +189,112 @@ def ladder(streams: list[dict]) -> list[dict]:
     return out
 
 
-def row(stream: dict, recommended: bool = False) -> dict:
+def row(stream: dict, recommended: bool = False, saved_as: str | None = None) -> dict:
     tag = label(resolution_of(stream))
     size = f"{size_of(stream) / 1e9:.1f} GB"
-    filename = (stream.get("behaviorHints") or {}).get("filename") or ""
     details = f"{tag} · {size}" if tag else size
     name = "Recommended" if recommended else tag or "Download"
     return {
         "name": f"⬇ {name}",
-        "description": "\n".join(x for x in (details, filename) if x),
-        "externalUrl": stream["url"],
+        # The release name says where the copy comes from.
+        "description": "\n".join(x for x in (details, filename_of(stream)) if x),
+        "externalUrl": named_link(stream["url"], saved_as) if saved_as else stream["url"],
     }
 
 
-def options(streams: list[dict], title: str | None = None) -> list[dict]:
+def options(streams: list[dict], title: str | None = None, name_for=None) -> list[dict]:
     """The recommended file first, then the ladder without it. With a title,
-    files named after another title are left out."""
+    files named after another title are left out. name_for(stream) gives the
+    file name the browser saves it under."""
     if title:
         streams = [s for s in streams if title_matches(title, filename_of(s))]
     best = choose(streams)
     if best is None:
         return []
     rest = [s for s in ladder(streams) if s.get("url") != best.get("url")]
-    return [row(best, recommended=True)] + [row(s) for s in rest]
+    name = name_for or (lambda s: None)
+    return [row(best, recommended=True, saved_as=name(best))] + [row(s, saved_as=name(s)) for s in rest]
+
+
+class Library:
+    """The names this addon gave its downloads, and the tablet's last file list.
+    Both persist as JSON under path, so a restart keeps them."""
+
+    def __init__(self, path: str | None):
+        self.path = path
+        self.names: dict[str, dict] = {}
+        self.inventory: dict = {"dir": "", "files": [], "updated": 0}
+        self._lock = threading.Lock()
+        if path:
+            os.makedirs(path, exist_ok=True)
+            self.names = self._load("names.json", {})
+            self.inventory = self._load("inventory.json", self.inventory)
+
+    def _load(self, name: str, default):
+        try:
+            with open(os.path.join(self.path, name)) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return default
+
+    def _save(self, name: str, data) -> None:
+        if not self.path:
+            return
+        tmp = os.path.join(self.path, name + ".tmp")
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, os.path.join(self.path, name))
+
+    def remember(self, name: str, kind: str, media_id: str, title: str) -> None:
+        entry = {"type": kind, "id": media_id, "title": title}
+        with self._lock:
+            if self.names.get(name) != entry:
+                self.names[name] = entry
+                self._save("names.json", self.names)
+
+    def set_inventory(self, payload: dict, now: float | None = None) -> None:
+        files = payload.get("files") if isinstance(payload, dict) else None
+        if not isinstance(payload.get("dir") if isinstance(payload, dict) else None, str) or not isinstance(files, list):
+            raise ValueError("expected {dir, files}")
+        clean = []
+        for f in files[:5000]:
+            if not (isinstance(f, dict) and isinstance(f.get("name"), str) and isinstance(f.get("size"), int)):
+                raise ValueError("each file needs a name and a size")
+            clean.append({"name": f["name"][:300], "size": f["size"], "mtime": int(f.get("mtime") or 0)})
+        with self._lock:
+            self.inventory = {"dir": payload["dir"], "files": clean, "updated": int(now or time.time())}
+            self._save("inventory.json", self.inventory)
+
+    def _on_tablet(self):
+        """(file, entry) for files this addon named, newest first."""
+        files = sorted(self.inventory.get("files", []), key=lambda f: f.get("mtime", 0), reverse=True)
+        for f in files:
+            entry = self.names.get(COPY_SUFFIX.sub("", f["name"]))
+            if entry:
+                yield f, entry
+
+    def catalog(self, kind: str) -> list[dict]:
+        metas, seen = [], set()
+        for _, entry in self._on_tablet():
+            show_id = entry["id"].split(":")[0]
+            if entry["type"] != kind or show_id in seen:
+                continue
+            seen.add(show_id)
+            metas.append({"id": show_id, "type": kind, "name": entry["title"], "poster": POSTER.format(show_id)})
+        return metas
+
+    def play_rows(self, media_id: str) -> list[dict]:
+        folder = self.inventory.get("dir", "").rstrip("/")
+        rows = []
+        for f, entry in self._on_tablet():
+            if entry["id"] != media_id:
+                continue
+            rows.append({
+                "name": "▶ On the tablet",
+                "description": f"{f['size'] / 1e9:.1f} GB · plays in VLC\n{f['name']}",
+                "externalUrl": "vlc://file://" + urllib.parse.quote(f"{folder}/{f['name']}"),
+            })
+        return rows
 
 
 def route(path: str, token: str) -> tuple | None:
@@ -184,6 +306,10 @@ def route(path: str, token: str) -> tuple | None:
         return None
     if parts[1:] == ["manifest.json"]:
         return ("manifest",)
+    if parts[1:] == ["inventory"]:
+        return ("inventory",)
+    if len(parts) == 4 and parts[1] == "catalog" and parts[2] in TYPES and parts[3] == "downloaded.json":
+        return ("catalog", parts[2])
     if len(parts) == 4 and parts[1] == "stream" and parts[2] in TYPES and parts[3].endswith(".json"):
         media_id = urllib.parse.unquote(parts[3][: -len(".json")])
         if ID.match(media_id):
@@ -203,7 +329,7 @@ def http_get_json(url: str, auth: tuple[str, str] | None = None) -> dict:
 class Addon:
     def __init__(
         self, base: str, uuid: str, password: str, get_json=http_get_json,
-        variant: str | None = None, cinemeta: str | None = None,
+        variant: str | None = None, cinemeta: str | None = None, library: Library | None = None,
     ):
         self.base, self.uuid, self.password, self.get_json = base, uuid, password, get_json
         # Cinemeta, for the title the filenames must carry. AIOStreams' own title
@@ -212,6 +338,7 @@ class Addon:
         # An AIOStreams variant of Viktor's config. "download" lifts the result
         # limits, which otherwise keep 3 files per resolution, mostly remuxes.
         self.variant = variant
+        self.library = library or Library(None)
         self._encrypted = None
         self._lock = threading.Lock()
 
@@ -229,16 +356,17 @@ class Addon:
         url = f"{self.base}/stremio/{self.uuid}/{enc}{variant}/stream/{kind}/{sid}.json"
         return self.get_json(url).get("streams", [])
 
-    def title(self, kind: str, media_id: str) -> str | None:
-        """The film's or show's name; None (no title check) when Cinemeta fails."""
+    def meta(self, kind: str, media_id: str) -> dict:
+        """The film's or show's Cinemeta entry; {} (no title check, release
+        names kept) when Cinemeta fails."""
         if not self.cinemeta:
-            return None
+            return {}
         try:
             meta = self.get_json(f"{self.cinemeta}/meta/{kind}/{media_id.split(':')[0]}.json")
-            return (meta.get("meta") or {}).get("name") or None
+            return meta.get("meta") or {}
         except (urllib.error.URLError, TimeoutError, ValueError) as e:
             log(f"no title for {kind} {media_id}: {e!r}")
-            return None
+            return {}
 
     def streams(self, kind: str, media_id: str) -> dict:
         try:
@@ -250,8 +378,22 @@ class Addon:
                 upstream = self._upstream(kind, media_id, refresh=True)
         except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as e:
             log(f"no row for {kind} {media_id}: {e!r}")
-            return {"streams": []}
-        return {"streams": options(upstream, self.title(kind, media_id))}
+            return {"streams": self.library.play_rows(media_id)}
+        meta = self.meta(kind, media_id)
+        title = meta.get("name")
+        year = meta.get("year") or (meta.get("releaseInfo") or "")[:4] or None
+
+        def name_for(stream: dict) -> str | None:
+            if not title:
+                return None
+            name = clean_name(title, year, media_id, resolution_of(stream), filename_of(stream))
+            self.library.remember(name, kind, media_id, title)
+            # Files saved before links carried clean names keep the release name.
+            if filename_of(stream):
+                self.library.remember(filename_of(stream), kind, media_id, title)
+            return name
+
+        return {"streams": self.library.play_rows(media_id) + options(upstream, title, name_for)}
 
 
 def log(message: str) -> None:
@@ -268,8 +410,27 @@ def make_handler(addon: Addon, token: str):
                 self._send(200, {"ok": True})
             elif target[0] == "manifest":
                 self._send(200, MANIFEST)
-            else:
+            elif target[0] == "catalog":
+                self._send(200, {"metas": addon.library.catalog(target[1])})
+            elif target[0] == "stream":
                 self._send(200, addon.streams(target[1], target[2]))
+            else:
+                self._send(405, {"error": "use POST"})
+
+        def do_POST(self):
+            if route(self.path, token) != ("inventory",):
+                self._send(404, {"error": "not found"})
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > MAX_BODY:
+                self._send(413, {"error": "too large"})
+                return
+            try:
+                addon.library.set_inventory(json.loads(self.rfile.read(length)))
+            except ValueError as e:
+                self._send(400, {"error": str(e)})
+                return
+            self._send(200, {"ok": True, "files": len(addon.library.inventory["files"])})
 
         def _send(self, code: int, body: dict):
             data = json.dumps(body).encode()
@@ -293,6 +454,7 @@ def main() -> None:
         password=os.environ["AIOSTREAMS_PASSWORD"],
         variant=os.environ.get("AIOSTREAMS_VARIANT") or None,
         cinemeta=os.environ.get("CINEMETA_BASE") or None,
+        library=Library(os.environ.get("DATA_DIR") or None),
     )
     ThreadingHTTPServer(("", PORT), make_handler(addon, os.environ["DOWNLOAD_ROW_TOKEN"])).serve_forever()
 

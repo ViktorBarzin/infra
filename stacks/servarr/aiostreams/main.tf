@@ -260,9 +260,11 @@ resource "kubernetes_deployment" "aiostreams" {
           # it asks AIOStreams on localhost for Viktor's streams and returns a
           # recommended file (1080p first, up to 6 GB, English-only audio first)
           # plus the smallest and a larger file per resolution, as externalUrl
-          # rows with the proxied links. The browser saves the file and VLC
-          # plays it offline on the London tablet. Its own tab instead of
-          # AIOStreams' externalDownloads, which adds a row under every stream.
+          # rows with the proxied links, ending in a clean file name. The
+          # browser saves the file and VLC plays it offline on the London
+          # tablet. Its own tab instead of AIOStreams' externalDownloads, which
+          # adds a row under every stream. It also serves a "Downloaded"
+          # catalog and "On the tablet" rows from the file list the devvm sends.
           # Standard library only, so nothing is installed at start.
           # Tests: cd files && python3 -m unittest test_download_row
           name    = "download-row"
@@ -288,6 +290,12 @@ resource "kubernetes_deployment" "aiostreams" {
             name  = "CINEMETA_BASE"
             value = "http://cinemeta-proxy.stremio.svc.cluster.local"
           }
+          env {
+            # The names it gave downloads and the tablet's last file list, sent
+            # hourly by the devvm's tablet-downloads-sync (playbooks/devvm.yml).
+            name  = "DATA_DIR"
+            value = "/app/data/download-row"
+          }
           env_from {
             # AIOSTREAMS_UUID and AIOSTREAMS_PASSWORD.
             secret_ref { name = "aiostreams-probe-secrets" }
@@ -306,6 +314,10 @@ resource "kubernetes_deployment" "aiostreams" {
             name       = "download-row-script"
             mount_path = "/scripts"
             read_only  = true
+          }
+          volume_mount {
+            name       = "data"
+            mount_path = "/app/data"
           }
           resources {
             requests = {
