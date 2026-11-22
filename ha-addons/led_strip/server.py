@@ -24,7 +24,7 @@ import patterns
 PATTERNS = tuple(patterns.PATTERNS)
 COLOUR_PATTERNS = tuple(p.name for p in patterns.PATTERNS.values() if p.colour)
 DEFAULT_COUNT = 150
-DEFAULT_MUSIC_DELAY_MS = 200  # Bluetooth delay to the speaker; tuned by ear
+DEFAULT_MUSIC_DELAY_MS = 0  # tuned by ear on 2026-11-22: 0 is in sync
 STATE_FILE = Path("/data/state.json")
 OPTIONS_FILE = Path("/data/options.json")
 SCRIPT = Path(__file__).with_name("play.py")

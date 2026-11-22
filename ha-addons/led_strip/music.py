@@ -5,9 +5,8 @@ The radio plays on the VLC add-on, which sends it to the Pi's sound system
 Bluetooth. This add-on has `audio: true`, so `parec` can record the monitor of
 the default output: the same sound, just before it leaves the Pi.
 
-The speaker plays that sound later than the Pi sends it, because Bluetooth
-buffers it. `Delayed` holds the Levels back by the add-on option
-music_delay_ms, so the lights land on the beat the room hears.
+`Delayed` can hold the Levels back by the add-on option music_delay_ms, to
+match the Bluetooth speaker. Tuned by ear on 2026-11-22, 0 ms is in sync.
 """
 
 import subprocess

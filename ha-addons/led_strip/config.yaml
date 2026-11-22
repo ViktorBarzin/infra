@@ -19,7 +19,7 @@ devices:
 watchdog: tcp://[HOST]:[PORT:8099]
 options:
   led_count: 150
-  music_delay_ms: 200
+  music_delay_ms: 0
 schema:
   led_count: "int(1,1000)"
   music_delay_ms: "int(0,2000)"

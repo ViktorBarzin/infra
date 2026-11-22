@@ -407,6 +407,20 @@ once, so it stays paired with the projector for films.
 | Station directory | Radio Browser integration | Browse opens `/media-browser/media_player.vlc_telnet/app%2Cmedia-source%3A%2F%2Fradio_browser`, which selects VLC as the player. A new browser tab takes up to a minute to load this page on the Pi. |
 | Bluetooth link | `switch.radio_speaker_bluetooth` (command_line) | On means the Pi is connected to the Z537 (`40:EF:4C:C3:B2:1E`). The Z537 rejoins the device it used last, so `radio_play` turns this switch on first. |
 
+**Follow music** couples the radio with the Livia LED strip. With
+`input_boolean.radio_follow_music` on, a station starting on VLC switches the
+strip to the Music pattern picked in `input_select.radio_music_pattern`
+(spectrum bars, level meter or beat pulse). It turns the strip and its plug
+on if they were off. When the radio has stopped for 10 seconds the strip goes
+back to its earlier Pattern, or off again. A Pattern picked by hand while the
+radio plays stays until the next station starts. Both switches are on the
+Radio dashboard; the automations are `radio_lights_follow` and
+`radio_lights_release` in `packages/radio.yaml`. The LED strip add-on records
+the Pi's sound output and draws it. Its option `music_delay_ms` can hold the
+lights back to match the Bluetooth speaker; tuned by ear on 2026-11-22, 0 ms is
+in sync (`ha-addons/led_strip/README.md`, "Music patterns"). It hears only what the Pi plays, not a film or a phone
+playing to the speaker directly.
+
 HAOS has no screen for pairing a Bluetooth speaker. The Pi was paired on
 2026-11-22 with `bluetoothctl` from the SSH add-on: hold the Z537 Bluetooth
 button until it blinks fast, set the scan transport to `bredr` (`menu scan`,

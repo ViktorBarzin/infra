@@ -132,7 +132,7 @@ phone that plays to the speaker directly.
 |---|---|
 | record | The add-on has `audio: true`. `parec` records `@DEFAULT_MONITOR@`, the sound the Pi sends to its default output, as 16 kHz mono. |
 | analyse | `music.Analyser` takes 533 new samples 30 times a second and finds the power of 10 bands from 40 Hz to 7.6 kHz in the last 1024 samples. Each band is shown against its own recent peak, so quiet and loud stations both fill the bars. A bass jump of 1.8 times its recent average is a beat. Below -60 dB is silence. |
-| wait | Bluetooth makes the speaker play about 0.2 s after the Pi sends the sound. `music.Delayed` holds the levels back by the add-on option `music_delay_ms` (default 200), so the lights land on the beat the room hears. Change the option in the add-on's Configuration tab, then restart the add-on: `server.py` reads it at start. |
+| wait | `music.Delayed` can hold the levels back by the add-on option `music_delay_ms`, so the lights land on the beat the room hears. The default is 0: on 2026-11-22 Viktor judged the beat pulse in sync at 0 ms on NRJ, and ahead of the kick at 200 ms. Change the option in the add-on's Configuration tab, then restart the add-on: `server.py` reads it at start. |
 | draw | `listen` in `patterns.py` gives each frame its levels. Without `music.py` (tests, previews) it is a made-up demo signal. |
 
 Home Assistant starts them from the radio: `packages/radio.yaml` in the

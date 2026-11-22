@@ -88,7 +88,7 @@ def main() -> None:
     parser.add_argument("--rgb", type=parse_rgb, default=(176, 143, 18))
     parser.add_argument("--brightness", type=int, default=102, help="1 to 255")
     parser.add_argument("--count", type=int, default=150, help="LEDs on the strip")
-    parser.add_argument("--music-delay-ms", type=int, default=200,
+    parser.add_argument("--music-delay-ms", type=int, default=0,
                         help="how long music patterns wait for the Bluetooth speaker")
     args = parser.parse_args()
 
