@@ -445,6 +445,8 @@ func capabilities() []capability {
 				"        renders and test-fit photos. A file with the same name replaces the",
 				"        previous revision. People slice and press Print in the web app;",
 				"        agents never start a print. List: homelab print projects.",
+				"        Lead with a picture: --cover <render or photo, under 400 KB> shows",
+				"        above the notes. Keep README.md short (why, measure first, model).",
 				"key:    BAMBUDDY_API_KEY, else Vault secret/bambuddy-agent (admins, emo).",
 			},
 		},

@@ -53,7 +53,7 @@ The files are on NFS and the database in the nightly per-database dump, so a res
 
 ## Agents
 
-`homelab print publish --project "<name>" <file|dir>...` finds or creates the project and a top-level library folder of the same name linked to it, then uploads the files. A file with the same name as one already in the folder replaces it, which is how a new revision goes in. A `README.md` among the files also becomes the project notes on the project page, rendered to HTML. `--description`, `--url` and `--cover <image>` fill in a new project. `homelab print projects` lists the projects with their page URLs. The key comes from `BAMBUDDY_API_KEY` or Vault `secret/bambuddy-agent`, which admins and emo (policy `projects-emo`) can read.
+`homelab print publish --project "<name>" <file|dir>...` finds or creates the project and a top-level library folder of the same name linked to it, then uploads the files. A file with the same name as one already in the folder replaces it, which is how a new revision goes in. A `README.md` among the files also becomes the project notes on the project page, rendered to HTML. With `--cover`, the picture goes above the notes as a data URI (the app's CSP allows only same-origin and `data:` images), up to 400 KB; resize a large photo first. `--description`, `--url` and `--cover <image>` fill in a new project. `homelab print projects` lists the projects with their page URLs. The key comes from `BAMBUDDY_API_KEY` or Vault `secret/bambuddy-agent`, which admins and emo (policy `projects-emo`) can read.
 
 A project folder holds the model files (`.stl`, `.3mf`), the design source (`.py`, `.scad`), a `README.md` that Bambuddy shows with the folder, renders and test-fit photos.
 

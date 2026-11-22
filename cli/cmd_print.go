@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"html"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -17,6 +19,30 @@ import (
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 )
+
+// printNotesImageMax caps the cover picture copied into the project notes.
+// The notes are one database text field that every project page load sends.
+const printNotesImageMax = 400 << 10
+
+// coverNotesImage returns the cover as an <img> for the top of the project
+// notes. Bambuddy's Content-Security-Policy allows only same-origin and
+// data: images, and its cover endpoint needs a bearer token an <img> cannot
+// send, so the picture goes in as a data URI. A cover over the cap is left
+// out, with the reason as the second value.
+func coverNotesImage(path string) (string, string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", err
+	}
+	if len(b) > printNotesImageMax {
+		return "", fmt.Sprintf("cover too large for the notes (%d KB, max %d KB): shrink it to show it above the notes", len(b)>>10, printNotesImageMax>>10), nil
+	}
+	mime := map[string]string{".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}[strings.ToLower(filepath.Ext(path))]
+	if mime == "" {
+		return "", "cover is not a jpg, png, webp or gif: not shown above the notes", nil
+	}
+	return fmt.Sprintf(`<p><img src="data:%s;base64,%s" alt="%s" width="480"></p>`, mime, base64.StdEncoding.EncodeToString(b), html.EscapeString(filepath.Base(path))), "", nil
+}
 
 // readmeNotesHTML renders a project README as the HTML that Bambuddy's
 // project notes hold (its notes editor stores HTML and sanitises it on
@@ -318,6 +344,16 @@ func printPublish(args []string) error {
 		html, err := readmeNotesHTML(md)
 		if err != nil {
 			return err
+		}
+		if *cover != "" {
+			img, why, err := coverNotesImage(*cover)
+			if err != nil {
+				return err
+			}
+			if why != "" {
+				fmt.Println(why)
+			}
+			html = img + html
 		}
 		if err := c.json("PATCH", fmt.Sprintf("/api/v1/projects/%d", proj.ID), map[string]any{"notes": html}, nil); err != nil {
 			return err

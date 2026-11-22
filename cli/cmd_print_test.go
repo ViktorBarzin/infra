@@ -323,3 +323,43 @@ func TestPrintPublishWithoutREADMEKeepsNotes(t *testing.T) {
 		t.Fatalf("notes changed without a README: %v", f.projects[0]["notes"])
 	}
 }
+
+func TestPrintPublishCoverLeadsTheNotes(t *testing.T) {
+	f, _ := newFakeBambuddy(t)
+	dir := t.TempDir()
+	readme := writeFile(t, dir, "README.md", "# Box\n")
+	cover := writeFile(t, t.TempDir(), "photo.jpg", "JPEGDATA")
+	if _, err := captureStdout(t, func() error {
+		return printPublish([]string{"--project", "Box", "--cover", cover, readme})
+	}); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	notes, _ := f.projects[0]["notes"].(string)
+	// The app's CSP allows only same-origin and data: images, so the
+	// picture travels inside the notes as a data URI, before the text.
+	img := strings.Index(notes, `<img src="data:image/jpeg;base64,SlBFR0RBVEE="`)
+	h1 := strings.Index(notes, "<h1")
+	if img < 0 || h1 < 0 || img > h1 {
+		t.Fatalf("notes should start with the cover image, got %q", notes)
+	}
+}
+
+func TestPrintPublishLargeCoverStaysOutOfNotes(t *testing.T) {
+	f, _ := newFakeBambuddy(t)
+	dir := t.TempDir()
+	readme := writeFile(t, dir, "README.md", "# Box\n")
+	cover := writeFile(t, t.TempDir(), "photo.png", strings.Repeat("x", printNotesImageMax+1))
+	out, err := captureStdout(t, func() error {
+		return printPublish([]string{"--project", "Box", "--cover", cover, readme})
+	})
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	notes, _ := f.projects[0]["notes"].(string)
+	if strings.Contains(notes, "<img") {
+		t.Fatalf("an oversized cover must not be inlined: %d bytes of notes", len(notes))
+	}
+	if !strings.Contains(out, "too large") {
+		t.Fatalf("publish should say why the picture is not in the notes, got %q", out)
+	}
+}
