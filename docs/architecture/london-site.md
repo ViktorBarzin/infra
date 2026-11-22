@@ -359,6 +359,13 @@ answer. Put it back to standby with
 `scripts/london-projector/wake_projector_test.py` (pytest, no network). The
 device's measured quirks live in the tv repo, `docs/design/device-facts.md`.
 
+When the set's address changes, its Cast receiver keeps advertising the old
+one and phones and laptops stop listing it. Force-stopping
+`com.google.android.apps.mediashell` does not fix this; `adb reboot` does,
+and the set answers `_googlecast._tcp` about 3 minutes later. The reboot can
+reset adb authorization, so someone at the set must accept the devvm's key
+with "Always allow from this computer".
+
 ## Robot vacuum camera
 
 The robot vacuum Yiko (Ecovacs DEEBOT X8 PRO OMNI, 192.168.8.175) is
