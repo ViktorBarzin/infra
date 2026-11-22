@@ -426,8 +426,8 @@ The top row is the stock TV Apps category, set as the default category. It
 holds every installed app, so a newly installed app appears at its end. The
 order is custom: TV, ImmichFrame, Stremio, Netflix, YouTube, then the rest. To
 move an app, hold OK on it, choose "Reorder", press left or right, then OK.
-Three Stremio rows with show and film posters follow: Continue Watching and the
-Library rows for series and movies. Inputs comes after them. The Favourites
+Three Stremio rows with show and film posters follow, in this order: Continue
+Watching, Library - Series, Library - Movies. Inputs comes after them. The Favourites
 category exists but is hidden. The poster rows need Projectivy settings,
 General, "Enable channels"; each app's rows are switched on under the gear,
 "Edit channels". Show or hide whole rows under the gear, "Edit categories". To
