@@ -122,6 +122,43 @@ else
 	echo "dhcp: iphone-london lease present"
 fi
 
+# Static lease for the Dell Precision's Ubuntu worker, a Kubernetes node
+# (ADR-0045). The node registers this address with the cluster, so it must not
+# change. The MAC is the Wi-Fi card's permanent address; Fedora and Windows on
+# the same laptop use private addresses and get ordinary leases.
+if [ "$(uci -q get dhcp.dell_worker.ip)" != 192.168.8.20 ] || [ "$(uci -q get dhcp.dell_worker.mac)" != 48:89:e7:18:0e:66 ]; then
+	uci set dhcp.dell_worker=host
+	uci set dhcp.dell_worker.name='dell-worker'
+	uci set dhcp.dell_worker.mac='48:89:e7:18:0e:66'
+	uci set dhcp.dell_worker.ip='192.168.8.20'
+	uci commit dhcp
+	/etc/init.d/dnsmasq reload
+	echo "dhcp: dell-worker -> 192.168.8.20"
+else
+	echo "dhcp: dell-worker lease present"
+fi
+
+# London LAN traffic to the Kubernetes VLAN keeps its own source address. The
+# tunnel zone masquerades everything else as 10.3.2.6, but a London Kubernetes
+# node must reach the Sofia nodes from its real address: Calico accepts VXLAN
+# only from known node addresses. postrouting_rule runs before the zone's
+# masquerade, so ACCEPT there skips it. The rule sits at the top of
+# /etc/firewall.user, before GL's policy fix, which ends with "exit 0".
+nat_rule='iptables -t nat -C postrouting_rule -s 192.168.8.0/24 -d 10.0.20.0/24 -j ACCEPT 2>/dev/null || iptables -t nat -I postrouting_rule -s 192.168.8.0/24 -d 10.0.20.0/24 -j ACCEPT'
+if ! grep -q 'london-lan-no-nat' /etc/firewall.user; then
+	{
+		head -n 1 /etc/firewall.user
+		echo '# london-lan-no-nat (scripts/london-flint/provision.sh): London LAN -> 10.0.20.0/24 is not masqueraded'
+		echo "$nat_rule"
+		tail -n +2 /etc/firewall.user
+	} >/tmp/firewall.user.new
+	cat /tmp/firewall.user.new >/etc/firewall.user
+	rm -f /tmp/firewall.user.new
+	echo "firewall.user: london-lan-no-nat added"
+fi
+sh -c "$nat_rule"
+iptables -t nat -C postrouting_rule -s 192.168.8.0/24 -d 10.0.20.0/24 -j ACCEPT && echo "nat: London LAN -> 10.0.20.0/24 not masqueraded"
+
 # Device names (docs/architecture/dns.md, "London devices"). Every leased
 # device is named in viktorbarzin.lan by phpipam-import, from the
 # hostname it announces. These entries give a chosen name to devices whose own

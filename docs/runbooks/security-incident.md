@@ -38,10 +38,10 @@ All source-IP-based alerts (K2, K9, V7, S1) reference this list. It is **inlined
 **Meaning:** A K8s ServiceAccount token authenticated a request whose `sourceIPs[0]` is not in the pod CIDR or trusted LAN. Stolen SA token used externally.
 
 ```logql
-{job="kubernetes-audit"} | json user_username="user.username", sourceIPs_0="sourceIPs[0]" | user_username =~ "system:serviceaccount:.*" | sourceIPs_0 != "" | sourceIPs_0 !~ "10\\.0\\.2[0-3]\\..*|192\\.168\\.1\\..*|10\\.0\\.10\\..*|10\\.10\\..*|10\\.(9[6-9]|1[01][0-9]|111)\\..*|100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\..*"
+{job="kubernetes-audit"} | json user_username="user.username", sourceIPs_0="sourceIPs[0]" | user_username =~ "system:serviceaccount:.*" | sourceIPs_0 != "" | sourceIPs_0 !~ "192\\.168\\.8\\.20$|10\\.0\\.2[0-3]\\..*|192\\.168\\.1\\..*|10\\.0\\.10\\..*|10\\.10\\..*|10\\.(9[6-9]|1[01][0-9]|111)\\..*|100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\..*"
 ```
 
-> **Exempt pair (2026-11-10):** the rule also drops `system:serviceaccount:ecovacs-video-proxy:camera-switch` from `10.3.2.6` (`| user_username != "..." or sourceIPs_0 != "10.3.2.6"`). That is HA London switching the Yiko camera over the London Flint's WireGuard address (`docs/runbooks/london-yiko.md`); it fired 15 times on 2026-11-01..05. The same token from another IP, or another token from 10.3.2.6, still alerts.
+> **Exempt pair (2026-11-10, address changed 2026-11-22):** the rule also drops `system:serviceaccount:ecovacs-video-proxy:camera-switch` from `192.168.8.103` (`| user_username != "..." or sourceIPs_0 != "192.168.8.103"`), ha-london's own address. London LAN traffic reaches the Kubernetes VLAN without NAT since 2026-11-22; before that it arrived as the Flint's WireGuard address 10.3.2.6. `192.168.8.20` is the Dell worker node (ADR-0045), whose pods reach the API from the node IP. That is HA London switching the Yiko camera (`docs/runbooks/london-yiko.md`); it fired 15 times on 2026-11-01..05. The same token from another IP, or another token from 10.3.2.6, still alerts.
 
 > **Note (2026-07-06):** use **explicit** array extraction `| json sourceIPs_0="sourceIPs[0]"` — a bare `| json` does NOT populate `sourceIPs_0` (arrays aren't auto-indexed), so the old query matched every SA event. The `sourceIPs_0 != ""` guard is required.
 

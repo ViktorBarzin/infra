@@ -226,6 +226,7 @@ resource "kubernetes_manifest" "middleware_local_only" {
         sourceRange = [
           "192.168.1.0/24",
           "10.0.0.0/8",
+          "192.168.8.0/24",       # London LAN: reaches 10.0.20.0/24 without NAT since 2026-11-22 (ADR-0045)
           "2001:470:6f:43d::/64", # management VLAN 10 by SLAAC (devvm); pfSense drops it as a WAN source
           "fc00::/7",
           "fe80::/10",

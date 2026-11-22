@@ -71,6 +71,8 @@ hardcoded in `/usr/share/gl-ngx/oui-access.lua`). A browser on the LAN using
 | kmwan (multi-WAN watchdog) | unchanged: failover, pings 8.8.8.8 / 9.9.9.9 / 208.67.222.222 | GL → Network → Multi-WAN | Kept pending data; the probe records its state during each drop. Switch its tracking off if drops line up with it. |
 | DPI / per-app stats | on | GL → Network | Viktor uses them. |
 | Guest network | forwards to the tunnel | unchanged | Viktor's call (2026-09-27). Guest traffic reaches Sofia masqueraded as 10.3.2.6. |
+| No NAT to the Kubernetes VLAN | `iptables -t nat -I postrouting_rule -s 192.168.8.0/24 -d 10.0.20.0/24 -j ACCEPT` at the top of `/etc/firewall.user` | set by `provision.sh` (marker `london-lan-no-nat`) | Since 2026-11-22 (ADR-0045). The tunnel zone masquerades London traffic as 10.3.2.6, but a London Kubernetes node must reach the Sofia nodes from its own address, because Calico accepts VXLAN only from known node addresses. `postrouting_rule` runs before the zone's masquerade. Main-LAN traffic to every other Sofia network is still masqueraded. Traefik `local-only` and the Loki alert K9 admit `192.168.8.0/24`. |
+| Dell worker lease | `dell-worker` 48:89:e7:18:0e:66 → 192.168.8.20 | set by `provision.sh` | The Ubuntu worker on the Dell Precision registers this address as its node IP (ADR-0045). Fedora and Windows on the same laptop use private Wi-Fi addresses and get ordinary leases. |
 | SSH and admin page on WAN | open, password login on | unchanged | Viktor's call (2026-09-27). After the cutover they are reachable from the internet over IPv6. |
 | IPv6 | Native with the delegated /56 (set 2026-10-02) | GL → Network → IPv6 | Real addresses skip NAT and the ISP's IPv4 CGNAT. |
 
@@ -86,8 +88,10 @@ hardcoded in `/usr/share/gl-ngx/oui-access.lua`). A browser on the LAN using
 | DNS digest | CronJob `dns-digest` (monitoring namespace, `stacks/monitoring/modules/monitoring/dns_digest.py`), 08:00 Europe/London; covers Sofia too | Posts to #alerts only when there is something to report: lookups of names on HaGeZi's Threat Intelligence Feeds list (blocked or not, per device), London DNS errors when they point at a real problem (a `config error`, meaning no upstream answered; dnsmasq's concurrent-query limit; or three or more different failing names), names added to `GL_DPI_BLOCK`, and hours in which the query log recorded nothing. Lookups DNS fingerprinting tools send on purpose (`version.bind`, `version.maradns` and similar, from Avast's daily network check on `MGhe`) are left out. Replaced `london-dns-digest` on 2026-11-04, whose "newly blocked by AdGuard" section listed 300 to 760 ad and tracker names a day. It asks Loki for every name London looked up in 24 h (about 2.8k, without the probe's own `probe-<time>` names) and halves the window if Loki's `max_query_series: 5000` is ever exceeded. Details, metrics and alerts: `docs/architecture/dns.md`, "Daily DNS digest". |
 
 The probe and the Mac push to `https://loki.viktorbarzin.lan/loki/api/v1/push`
-pinned to Traefik's `10.0.20.203`. London traffic reaches Sofia masqueraded as
-10.3.2.6, which the Loki ingress's `local-only` allowlist already admits.
+pinned to Traefik's `10.0.20.203`. London LAN traffic to the Kubernetes VLAN
+(10.0.20.0/24) keeps its own `192.168.8.x` source address since 2026-11-22;
+Traefik's `local-only` allowlist admits `192.168.8.0/24`. The probe runs on the
+router itself, so it still leaves as 10.3.2.6.
 
 ### Useful queries
 

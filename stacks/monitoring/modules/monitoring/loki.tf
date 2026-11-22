@@ -1422,13 +1422,15 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             # explicit array expression + a non-empty guard. (fixed 2026-07-06)
             # One exempt pair: HA London switches the Yiko camera with the
             # ecovacs-video-proxy/camera-switch token (get/patch on one
-            # Deployment), and its calls arrive from 10.3.2.6, the London
-            # Flint's WireGuard address (docs/runbooks/london-yiko.md). That
-            # fired 15 times in 2026-11-01..05. The same token from any other
-            # IP, or any other token from 10.3.2.6, still alerts.
+            # Deployment), and its calls arrive from 192.168.8.103, ha-london's
+            # own address (docs/runbooks/london-yiko.md); until 2026-11-22 the
+            # Flint masqueraded them as 10.3.2.6. That fired 15 times in
+            # 2026-11-01..05. The same token from any other IP, or any other
+            # token from 192.168.8.103, still alerts. 192.168.8.20 is the Dell
+            # worker node (ADR-0045): its pods reach the API from the node IP.
             {
               alert  = "K8sSATokenFromUnexpectedIP"
-              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json user_username=\"user.username\", sourceIPs_0=\"sourceIPs[0]\" | user_username=~\"system:serviceaccount:.+\" | sourceIPs_0!=\"\" | sourceIPs_0!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.0\\\\.10\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" | user_username!=\"system:serviceaccount:ecovacs-video-proxy:camera-switch\" or sourceIPs_0!=\"10.3.2.6\" [5m])) > 0"
+              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json user_username=\"user.username\", sourceIPs_0=\"sourceIPs[0]\" | user_username=~\"system:serviceaccount:.+\" | sourceIPs_0!=\"\" | sourceIPs_0!~\"^(192\\\\.168\\\\.8\\\\.20$|10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.0\\\\.10\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" | user_username!=\"system:serviceaccount:ecovacs-video-proxy:camera-switch\" or sourceIPs_0!=\"192.168.8.103\" [5m])) > 0"
               for    = "0m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
@@ -1529,12 +1531,13 @@ resource "kubernetes_config_map" "loki_alert_rules" {
                 runbook = "docs/runbooks/security-incident.md#k8-anonymous-binding"
               }
             },
-            # K9: Viktor's identity from non-allowlist source IP.
+            # K9: Viktor's identity from non-allowlist source IP. 192.168.8.x is
+            # the London LAN, which reaches the API without NAT since 2026-11-22.
             # Same sourceIPs array-extraction fix + VLAN 10 allowlist as K2
             # above (no-arg `| json` never populates `sourceIPs_0`). (fixed 2026-07-06)
             {
               alert  = "K8sViktorFromUnexpectedIP"
-              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json user_username=\"user.username\", sourceIPs_0=\"sourceIPs[0]\" | user_username=\"me@viktorbarzin.me\" | sourceIPs_0!=\"\" | sourceIPs_0!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.0\\\\.10\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
+              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json user_username=\"user.username\", sourceIPs_0=\"sourceIPs[0]\" | user_username=\"me@viktorbarzin.me\" | sourceIPs_0!=\"\" | sourceIPs_0!~\"^(192\\\\.168\\\\.8\\\\.|10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.0\\\\.10\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
               for    = "0m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
