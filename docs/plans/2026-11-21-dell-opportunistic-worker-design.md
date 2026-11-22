@@ -1,11 +1,13 @@
 ---
-status: approved
+status: shelved
 plan: true
 ---
 
 # The London Dell becomes an Opportunistic worker and the model for Physical nodes
 
 The Dell Precision 5530 in London has 12 threads, 48 GB of RAM and a Quadro P2000, and nothing uses them. This plan makes it a tainted cluster node for Spill-over work, and turns its setup into the playbook for every future Physical node.
+
+> **Shelved on 2026-11-22.** Steps 1 to 5 are done, and `dell-worker` joined the cluster. Fedora got its key slot back. The Physical-node playbook, Tang and the runbook stay as the model for the next machine. Step 6 and the GPU Operator toleration are not built. GitHub Actions cannot cost money: $0 budgets block usage. In November, included usage covered all $21.82 of usage, and $0 was charged. `proxy.viktorbarzin.me` already gives a UK exit. The Dell is off and stored, and Fedora is its default boot entry. When it boots the worker entry, it unlocks through Tang and rejoins by itself.
 
 Terms (Opportunistic worker, Physical node, State volume, Tether, Spill-over, Site, Off-site copy) are in `GLOSSARY.md`. The decision record is ADR-0045, with an amendment to ADR-0002.
 
