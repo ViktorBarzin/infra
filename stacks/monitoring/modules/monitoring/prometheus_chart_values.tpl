@@ -8616,27 +8616,31 @@ serverFiles:
             # One picture of User Apps for the Operator (Batch 4 panel): each
             # User hears about their own App, nobody about many at once.
             # signal apps_unavailable: Project namespaces (p-*) where an App,
-            # edge or oauth2-proxy Deployment had an unavailable replica for
-            # all of the last 15 minutes, at least 3 of them and at least half
-            # of the Projects that run an App. Persona and gate runs break up
-            # to 3 Apps on purpose among many; over the 14 days to 2026-11-22
-            # this held once, on 2026-11-17 around 07:00 UTC, when 7 Projects
-            # were down together. signal applies_failing: 4 or more reconcile
+            # edge or oauth2-proxy Deployment had an unavailable replica at
+            # every sample of the last 15 minutes. Both limits must hold: at
+            # least 5 such Projects, and at least half of the Projects that
+            # run an App. Persona and gate runs keep up to 3 Apps broken on
+            # purpose, for 25 minutes or more, on a cluster with few Apps, so
+            # half alone fires on them. Over the 14 days to 2026-11-22 at most
+            # 3 Projects were down at once (max_over_time((count(count by
+            # (namespace) (min_over_time(kube_deployment_status_replicas_unavailable{namespace=~"p-.+", deployment=~"(app|edge|auth)-.+"}[15m]) > 0)) or vector(0))[14d:5m])
+            # = 3), so this would not have fired. min_over_time over a new
+            # series sees only the samples it has: a new Project whose first
+            # sample is unavailable counts at once, which the 10-minute for
+            # absorbs. signal applies_failing: 4 or more reconcile
             # jobs failed after all their attempts in an hour (the 14-day
             # peak was 2; CloudReconcileFailing fires on each single one). A
             # failed Deploy (crashed, health_check) fails its job, so many
-            # Deploys failing at once count here. The 10-minute for keeps a new
-            # Project's first minutes (its series start unavailable) out.
-            # Warning, like every Cloud alert but a down reconciler and a
+            # Deploys failing at once count here. Warning, like every Cloud alert but a down reconciler and a
             # stuck queue.
-            expr: label_replace((count(count by (namespace) (min_over_time(kube_deployment_status_replicas_unavailable{namespace=~"p-.+", deployment=~"(app|edge|auth)-.+"}[15m]) > 0)) >= 3) and on() (count(count by (namespace) (min_over_time(kube_deployment_status_replicas_unavailable{namespace=~"p-.+", deployment=~"(app|edge|auth)-.+"}[15m]) > 0)) / count(count by (namespace) (kube_deployment_spec_replicas{namespace=~"p-.+", deployment=~"app-.+"} > 0)) >= 0.5), "signal", "apps_unavailable", "", "") or label_replace(sum(increase(cloud_reconcile_total{result="failed"}[1h])) >= 4, "signal", "applies_failing", "", "")
+            expr: label_replace((count(count by (namespace) (min_over_time(kube_deployment_status_replicas_unavailable{namespace=~"p-.+", deployment=~"(app|edge|auth)-.+"}[15m]) > 0)) >= 5) and on() (count(count by (namespace) (min_over_time(kube_deployment_status_replicas_unavailable{namespace=~"p-.+", deployment=~"(app|edge|auth)-.+"}[15m]) > 0)) / count(count by (namespace) (kube_deployment_spec_replicas{namespace=~"p-.+", deployment=~"app-.+"} > 0)) >= 0.5), "signal", "apps_unavailable", "", "") or label_replace(sum(increase(cloud_reconcile_total{result="failed"}[1h])) >= 4, "signal", "applies_failing", "", "")
             for: 10m
             labels:
               severity: warning
               subsystem: cloud
             annotations:
               summary: "Many Cloud Apps fail across Projects ({{ $labels.signal }}: {{ $value | humanize }})"
-              description: "apps_unavailable: {{ $value | humanize }} Projects have had an App, edge or oauth2-proxy pod unavailable for 15 minutes, at least half of the Projects with an App. That points at the platform (nodes, Calico, the ghcr cache, Traefik, Authentik), not at each User's code. List them: homelab metrics query 'min_over_time(kube_deployment_status_replicas_unavailable{namespace=~\"p-.+\"}[15m]) > 0', then kubectl -n <namespace> get pods,events (read only). applies_failing: {{ $value | humanize }} reconcile jobs failed in an hour: SELECT project_id, kind, last_error FROM reconcile_jobs WHERE state = 'failed' ORDER BY updated_at DESC LIMIT 20; in the cloud database. Runbook: docs/runbooks/cloud.md, \"Many Apps fail across Projects\"."
+              description: "apps_unavailable: {{ $value | humanize }} Projects (5 or more, and at least half of the Projects with an App) have had an App, edge or oauth2-proxy pod unavailable for 15 minutes. That points at the platform (nodes, Calico, the ghcr cache, Traefik, Authentik), not at each User's code. List them: homelab metrics query 'min_over_time(kube_deployment_status_replicas_unavailable{namespace=~\"p-.+\"}[15m]) > 0', then kubectl -n <namespace> get pods,events (read only). applies_failing: {{ $value | humanize }} reconcile jobs failed in an hour: SELECT project_id, kind, last_error FROM reconcile_jobs WHERE state = 'failed' ORDER BY updated_at DESC LIMIT 20; in the cloud database. Runbook: docs/runbooks/cloud.md, \"Many Apps fail across Projects\"."
       - name: Garage
         rules:
           # Garage, the S3 store behind Cloud Buckets (stacks/garage,

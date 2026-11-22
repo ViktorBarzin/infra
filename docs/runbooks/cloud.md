@@ -1595,9 +1595,11 @@ size pass.
 ### Many Apps fail across Projects
 
 `CloudAppsFailingAcrossProjects{signal}` looks at User Apps across
-Projects, which no User sees. `apps_unavailable`: at least 3 Projects, and
-at least half of those that run an App, had an App, edge or oauth2-proxy
-pod unavailable for 15 minutes, then 10 more. `applies_failing`: 4 or more
+Projects, which no User sees. `apps_unavailable`: both limits hold, at
+least 5 Projects and at least half of the Projects that run an App, with an
+App, edge or oauth2-proxy pod unavailable for 15 minutes, then 10 more.
+Gate runs keep up to 3 Apps broken on purpose, so the floor of 5 keeps
+them out. `applies_failing`: 4 or more
 reconcile jobs failed in an hour; a failed Deploy (`crashed`,
 `health_check`) fails its job too. One User's broken App is not this.
 
