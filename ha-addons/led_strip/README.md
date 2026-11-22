@@ -72,6 +72,14 @@ The patterns, by group as on the dashboard:
 | Setup | `ruler` (still) |
 
 A colour sent while a pattern without a colour runs switches to `color_wipe`.
+
+Colours everywhere are screen colours (the values a web page would use).
+`play.py` gamma-corrects each channel (exponent 2.2, `GAMMA` table) before it
+sends a pixel, because the strip's light is linear in the value and a screen's
+is not. Without it, mid values are too bright: Romania's blue shows light and
+Bulgaria's green shows teal. The previews skip the table, since the screen
+applies its own gamma.
+
 To add a pattern, write its generator in `patterns.py` and add it to
 `PATTERNS`. The tests, the effect list in Home Assistant, the preview and the
 dashboard card follow from that entry when `deploy.sh` runs.

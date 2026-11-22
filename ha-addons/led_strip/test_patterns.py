@@ -191,6 +191,28 @@ class PlayTest(unittest.TestCase):
         self.assertEqual(strip.pixels[0], 0x0000FF)
         self.assertEqual(strip.pixels[9], 0xFF0000)
 
+    def test_full_and_off_channels_go_to_the_strip_unchanged(self):
+        self.assertEqual(play.color((255, 0, 0)), 0xFF0000)
+        self.assertEqual(play.color((0, 255, 0)), 0x00FF00)
+        self.assertEqual(play.color((255, 255, 255)), 0xFFFFFF)
+        self.assertEqual(play.color((0, 0, 0)), 0)
+
+    def test_mid_channels_are_gamma_corrected(self):
+        # The strip's light is linear in the value sent; screens are not.
+        # A screen colour like Romania's blue (0, 43, 127) must lose most of
+        # its green on the strip, or it shows as a light sky blue.
+        c = play.color((0, 43, 127))
+        g, b = (c >> 8) & 0xFF, c & 0xFF
+        self.assertLessEqual(g, 6)
+        self.assertLess(b, 70)
+        # Bulgaria's green (0, 150, 110) must be clearly more green than blue.
+        c = play.color((0, 150, 110))
+        self.assertGreater((c >> 8) & 0xFF, 1.8 * (c & 0xFF))
+
+    def test_gamma_keeps_the_order_of_levels(self):
+        levels = [play.GAMMA[v] for v in range(256)]
+        self.assertEqual(levels, sorted(levels))
+
     def test_rgb_argument(self):
         self.assertEqual(play.parse_rgb("255,0,9"), (255, 0, 9))
         for bad in ("1,2", "0,0,256", "a,b,c"):

@@ -31,9 +31,18 @@ class Strip(Protocol):
     def show(self) -> None: ...
 
 
+# The colours in patterns.py and from Home Assistant are screen colours. A
+# screen darkens mid values along a gamma curve; a WS2812 gives light in
+# direct proportion to the value sent. Without this table, mid values are too
+# bright on the strip: Romania's blue shows light and Bulgaria's green shows
+# teal. 2.2 is the usual screen gamma. 0 and 255 stay the same.
+GAMMA_EXPONENT = 2.2
+GAMMA = [round(255 * (v / 255) ** GAMMA_EXPONENT) for v in range(256)]
+
+
 def color(rgb: patterns.RGB) -> int:
-    """rpi_ws281x's Color(r, g, b), without importing the library."""
-    return (rgb[0] << 16) | (rgb[1] << 8) | rgb[2]
+    """rpi_ws281x's Color(r, g, b) after gamma, without importing the library."""
+    return (GAMMA[rgb[0]] << 16) | (GAMMA[rgb[1]] << 8) | GAMMA[rgb[2]]
 
 
 def draw(strip: Strip, pixels: patterns.Pixels) -> None:
