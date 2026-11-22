@@ -79,7 +79,7 @@ class Config:
             host=env("IOS_RIG_PHONE_HOST", "iphone-london.viktorbarzin.lan"),
             # The Flint's static lease (scripts/london-flint/provision.sh), used
             # when the name does not resolve.
-            fallback_ip=env("IOS_RIG_PHONE_ADDR", "192.168.9.205"),
+            fallback_ip=env("IOS_RIG_PHONE_ADDR", "192.168.8.205"),
             listen=env("IOS_RIG_WIFI_LISTEN", "127.0.0.1:8102"),
             wda_runners=wda_runners(env("IOS_RIG_WDA_RUNNERS"), env("IOS_RIG_WDA_BUNDLE_ID")),
             apple_id=env("IOS_RIG_APPLE_ID", "vbarzin@gmail.com"),

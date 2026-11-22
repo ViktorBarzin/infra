@@ -153,7 +153,7 @@ steps:
   - {when: "1. Test", what: "Try iot isolation (AP isolation plus hairpin) on the 2.4 GHz SSID for 45 s", rollback: "Isolation turns itself off"}
   - {when: "2. No NAT", what: "Remove the Flint masquerade; keep OPNsense's NAT to the home LAN; fix the NFS export", rollback: "Set masq back on the wgclient1 zone"}
   - {when: "3. Sofia", what: "Authentik groups, wifi app with its database and LoadBalancer IP, alerts", rollback: "Destroy the new stack"}
-  - {when: "4. Merge and retire", what: "guest5g joins br-lan; move the 5G-Tower Admin devices to 5G-Tower, then disable 5G-Tower Admin; the role agent starts in log-only mode", ponr: true}
+  - {when: "4. Merge and retire", what: "The main 5 GHz SSID takes the guest name and password; the guest SSID turns off; 5G-Tower Admin devices join 5G-Tower", ponr: true}
   - {when: "5. Sign in", what: "Assign roles after the move, because private Wi-Fi addresses change with the SSID", rollback: "Move the device back to guest"}
   - {when: "6. One week", what: "Read the log-only entries in Loki; add each needed pinhole to the role list", rollback: "-"}
   - {when: "7. Enforce", what: "Remove the blanket lan and guest forwards to the tunnel; the agent enforces roles", rollback: "Add the lan forward back"}
@@ -181,7 +181,8 @@ rows:
 ## Configuration
 
 ```config
-- {key: wireless.guest5g.network, where: Flint uci, old: "guest", new: "lan"}
+- {key: "wireless.wifi5g ssid, key", where: Flint uci, old: "5G-Tower Admin", new: "5G-Tower, with the guest SSID's password"}
+- {key: wireless.guest5g.disabled, where: Flint uci, old: "0", new: "1"}
 - {key: wgclient1 zone masq, where: Flint firewall, old: "1", new: "0"}
 - {key: "WireGuard site LANs NAT to WAN", where: playbooks/files/opnsense/aliases.yml, old: "London to the home LAN as 192.168.1.2", new: "unchanged: kept for the home LAN"}
 - {key: guest -> wgclient1 forward, where: Flint firewall, old: "accept", new: "removed"}
@@ -198,4 +199,4 @@ The agent and the firewall changes go through `scripts/london-flint/provision.sh
 > This plan replaces the 2026-09-27 decision that the guest network keeps its path to Sofia.
 
 > [!IMPORTANT]
-> Status on 2026-11-22: steps 1 to 3 are done, and the role agent runs in log-only mode. Step 4 waits for Viktor: the Portal must be joined to 5G-Tower by hand.
+> Status on 2026-11-22: steps 1 to 4 are done. The main 5 GHz SSID took the guest SSID's name and password. So no new interface had to come up, and the guest devices stayed connected. 5G-Tower Admin is gone. The role agent runs in log-only mode until the week's review.

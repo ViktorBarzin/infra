@@ -31,7 +31,7 @@ xcodebuild -project WebDriverAgent.xcodeproj -scheme WebDriverAgentRunner \
 XCB=$!
 
 # WDA prints its listening address once, as
-#   ServerURLHere->http://192.168.9.205:8100<-ServerURLHere
+#   ServerURLHere->http://192.168.8.205:8100<-ServerURLHere
 # The phone takes a DHCP lease, so this address changes and is never assumed.
 for _ in $(seq 1 90); do
   url="$(sed -n 's/.*ServerURLHere->\(http[^<]*\)<-ServerURLHere.*/\1/p' "$LOG" | head -1)"

@@ -1,7 +1,8 @@
 # London site
 
-The London flat's network: one GL.iNet Flint 2 (GL-MT6000) router, a main LAN
-and a guest network, and a WireGuard tunnel to OPNsense in Sofia. The router is
+The London flat's network: one GL.iNet Flint 2 (GL-MT6000) router, one LAN for
+every device (since 2026-11-22; roles per device decide what reaches Sofia,
+see "Device roles"), and a WireGuard tunnel to OPNsense in Sofia. The router is
 configured through its own web UIs (GL admin UI and LuCI, under
 SYSTEM → Advanced Settings), not from this repo. This page lists the intended
 settings and why, so the live router can be compared against it.
@@ -14,8 +15,7 @@ Cutover day: `docs/runbooks/london-cutover.md`.
 ```mermaid
 flowchart TD
   isp[Hyperoptic wall port] --> flint[Flint 2]
-  flint --> lan["Main LAN 192.168.8.0/24<br/>5G-Tower Admin, 2.4G-Tower"]
-  flint --> guest["Guest 192.168.9.0/24<br/>5G-Tower"]
+  flint --> lan["LAN 192.168.8.0/24<br/>5G-Tower, 2.4G-Tower"]
   flint -->|"WireGuard, 10.3.2.6"| pf[OPNsense, Sofia]
 ```
 
@@ -70,7 +70,7 @@ hardcoded in `/usr/share/gl-ngx/oui-access.lua`). A browser on the LAN using
 | Remote syslog | `10.0.20.208`, TCP 514 | LuCI → System → System → Logging | Kernel Wi-Fi lines and firmware resets land in Loki as `{job="syslog", host="flint-london"}`. TCP, not UDP: over UDP only the first line after a quiet spell arrived (195 of about 3,000 lines on 2026-09-27/28); logread sends everything on one UDP flow and the rest of each burst was lost between the tunnel and the cluster. Over TCP a 5-minute window matched 20 of 20 lines. The receiver (`alloy-syslog`) keeps each line's program as the `app` label and its severity as `level` (since 2026-10-03). The forwarder (`logread -f -r`) sends over TCP, so through a short tunnel outage TCP holds the lines and retransmits them (a 46 s simulated outage on 2026-10-03 lost nothing). Lines are lost only when the connection dies, after about 15 minutes of retransmits (`tcp_retries2` 15): logread reconnects and does not replay what it missed. The drop probe backfills that gap (`source="backfill"`, see the drop probe row). |
 | kmwan (multi-WAN watchdog) | unchanged: failover, pings 8.8.8.8 / 9.9.9.9 / 208.67.222.222 | GL → Network → Multi-WAN | Kept pending data; the probe records its state during each drop. Switch its tracking off if drops line up with it. |
 | DPI / per-app stats | on | GL → Network | Viktor uses them. |
-| Guest network | forwards to the tunnel; roles checked by the `london_roles` chain | `provision.sh` | Viktor's call (2026-09-27), narrowed by the device roles on 2026-11-22 ("Device roles" below). Guest traffic reaches Sofia under its own 192.168.9.x address. |
+| Wi-Fi networks | `5G-Tower` (rax0, 5 GHz) and `2.4G-Tower` (ra0), both on br-lan; the guest SSIDs (`guest5g`, `guest2g`) are off and `5G-Tower Admin` is gone | set by `provision.sh` | Since 2026-11-22 (Viktor): one network, so casting works between any two devices. The main 5 GHz SSID took the guest SSID's name and password, so the guest devices stayed connected; devices on `5G-Tower Admin` joined `5G-Tower` once. The guest interface (br-guest, 192.168.9.0/24) still exists with no SSID on it. Backup of the earlier config: `/etc/config/wireless.bak.20261122-roles`. Roles, not SSIDs, decide what reaches Sofia ("Device roles" below). |
 | No masquerade on the tunnel | `firewall.wgclient1.masq '0'` and `wireguard.peer_855.masq '0'` (GL's "IP Masquerading" option of the VPN client) | set by `provision.sh` | Since 2026-11-22 (Viktor): London traffic reaches Sofia under each device's own address, which also covers the Kubernetes node's need (ADR-0045). Sofia routes 192.168.8.0/24 and 192.168.9.0/24 back through the tunnel. One NAT stays, on OPNsense: traffic to the Sofia home LAN (192.168.1.0/24) arrives as 192.168.1.2 (alias `wg_site_lans`), because the TP-Link's stateful firewall drops the home hosts' replies that it routes back to OPNsense without having seen the opening packet (tested 2026-11-22). The TP-Link already holds the static route 192.168.8.0/24 via 192.168.1.2. |
 | Dell worker lease | `dell-worker` 48:89:e7:18:0e:66 → 192.168.8.20 | set by `provision.sh` | The Ubuntu worker on the Dell Precision registers this address as its node IP (ADR-0045). Fedora and Windows on the same laptop use private Wi-Fi addresses and get ordinary leases. |
 | SSH and admin page on WAN | open to every source; SSH takes keys only (`PasswordAuth` and `RootPasswordAuth` off) | set by `provision.sh` | Open by Viktor's call (2026-09-27) so the router stays reachable over IPv6 when the tunnel is down. Over IPv4 the WAN is behind the ISP's CGNAT, but over IPv6 the whole internet reaches both ports: in the 30 days to 2026-11-22 scanners from DigitalOcean, IONOS and China Telecom connected to SSH, and none got past authentication. Password login went off on 2026-11-22 (Viktor). The key list replaces the router's on every run. |
@@ -91,7 +91,7 @@ flowchart TD
   agent["london-roles on the Flint"] -->|"long poll, 50 s"| app
   agent -->|"lease table on change"| app
   agent --> sets["ipsets lr_admin, lr_storage,<br/>lr_iot, lr_infra_ha, lr_infra_k8s"]
-  sets --> chain["chain london_roles<br/>(lan and guest to wgclient1)"]
+  sets --> chain["chain london_roles<br/>(lan to wgclient1)"]
 ```
 
 | role | reaches in Sofia | given by |
@@ -332,10 +332,10 @@ delete the `command_line` entry and the automation, then the folder.
 
 ## Alexa voice control
 
-The Echo Dot on the guest network ("Milea's Echo Dot", `cc:9e:a2:24:11:e0`)
+The Echo Dot ("Milea's Echo Dot", `cc:9e:a2:24:11:e0`, a guest by role)
 controls ha-london devices through a private Alexa Smart Home skill and an AWS
 Lambda, with no Home Assistant Cloud subscription. Today it exposes one device,
-the air sensor's LED switch ("Air light"). The guest network is fine for this:
+the air sensor's LED switch ("Air light"). The guest role is fine for this:
 the Echo only talks to Amazon, and Amazon reaches ha-london through
 `ha-london.viktorbarzin.me`. How it fits together, how to add a device, and what
 to watch for: `docs/runbooks/london-alexa.md`.

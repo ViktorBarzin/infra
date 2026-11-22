@@ -22,7 +22,7 @@ running while its signature is valid, and serves a small HTTP API on
 ```mermaid
 flowchart TD
   CLI["homelab ios<br/>devvm"] -->|HTTP, loopback| SVC["ios-rig-wifi.service<br/>pymobiledevice3"]
-  SVC -->|RemotePairing, TCP 49152| P["iPhone, iphone-london<br/>192.168.9.205"]
+  SVC -->|RemotePairing, TCP 49152| P["iPhone, iphone-london<br/>192.168.8.205"]
   CLI -->|W3C WebDriver, taps| WDA["WebDriverAgent :8100<br/>on the phone"]
   WDA --- P
   SVC -->|re-signs and installs WDA<br/>every few days| WDA
@@ -609,105 +609,18 @@ This mirrors what `wdaURL` already does for the phone, whose WebDriverAgent
 address moves with its DHCP lease. The two failures have the same shape, and
 now the same answer.
 
-**Check which SSID it is on first.** The Flint's names are near-identical and
-land on different networks, which is how both devices ended up isolated on
-guest until 2026-09-12:
-
-| SSID | network |
-|---|---|
-| `5G-Tower Admin` | lan, `192.168.8.0/24` |
-| `5G-Tower` | guest, `192.168.9.0/24` |
-| `2.4G-Tower` | lan |
-
-The Mac belongs on `5G-Tower Admin`. The phone currently sits on guest, which
-works: the Flint forwards LAN to guest, so Appium on the Mac reaches
-WebDriverAgent on the phone across the two subnets, and so does the devvm.
-Verified 2026-09-12, both returning 200.
-
-**The private Wi-Fi address has now rotated twice, so do not treat it as
-stable.** macOS was expected to keep a per-SSID private address, and the
-`mbp-london` reservation carries both the hardware MAC `84:2f:57:39:9a:d9` and
-the private address recorded for that network. It went stale once before
-2026-09-12, and again by 2026-09-19, when the card was using
-`a6:80:43:81:93:8e` and DHCP handed it `192.168.8.201` out of the pool while
-`.168` stayed dark.
-
-The symptom is the whole rig looking absent: `mbp-london.viktorbarzin.lan`
-does not resolve or points at an old address, and it is easy to read that as
-the laptop being away. Since 2026-10-13 a new private address shows up in DNS
-by itself under the name the Mac announces (`mac-<last four hex>` or similar);
-adding that MAC to the `mbp-london` entry in `provision.sh` and re-running it
-moves the name back within five minutes. `networksetup -getmacaddress en0` reports the **hardware**
-address and `ifconfig en0 | awk '/ether/{print $2}'` reports the one actually
-in use, so comparing the two names the cause in one command.
-
-Setting Private Wi-Fi Address to Off for that SSID, in Settings, Wi-Fi, the
-network's info button, puts the card back on the hardware MAC the reservation
-already carries. The setting takes effect on the next association rather than
-immediately, so the Mac has to rejoin the network before `.168` returns.
-
-To find the Mac when it has moved, `ha-london` sits on the same LAN and can be
-asked from here, which avoids guessing across the tunnel:
-
-```sh
-homelab ha ssh --instance london -- 'ip neigh show dev wlan0 | grep -v FAILED'
-homelab ha ssh --instance london -- 'for i in 1 108 201 228; do nc -z -w2 192.168.8.$i 22 && echo "$i open"; done'
-```
-
-A locally-administered address, meaning the second hex digit of the first
-octet is 2, 6, A or E, is a randomised one, so that plus an open port 22 is
-almost certainly the Mac.
-
-### `ios shot` cannot connect, but `doctor` says Appium is ready
-
-The forward is down. `ios shot` and `ios install` dial `127.0.0.1:4723` on the
-devvm, and only `ios-rig-tunnel.service` puts anything there.
-
-```sh
-systemctl --user status ios-rig-tunnel.service
-homelab ios bootstrap --units-only     # rewrites both units, no Mac needed
-```
-
-`status=203/EXEC` means the unit is pointing at a binary that is not there.
-That happened between 2026-09-12 and 2026-09-19: the units were installed
-naming `scripts/ios-rig/ios-rig`, the commit that folded the rig into the CLI
-deleted that script 84 minutes later, and the units on disk were never
-rewritten. The running `ssh` survived long enough for that commit's own
-verification to pass, so the break only surfaced the next time the laptop
-roamed and systemd tried to restart it.
-
-Two things now catch this rather than leaving it to be noticed by hand. The
-`appium-tunnel` check reports the devvm end separately from the Mac end, and a
-test asserts that every verb an embedded unit names is a verb the CLI
-registers, which is what the original pair of unit files failed.
-
-### Re-running `bootstrap-mac.sh` left nothing loaded
-
-`launchctl bootout` is asynchronous. Bootstrapping before the old job has
-finished unloading fails with `Bootstrap failed: 5: Input/output error` and
-leaves the agent unloaded, which took Appium down once on 2026-09-12. The
-script now waits for the label to disappear and retries, so a plain re-run
-fixes it.
-
-### A value read over SSH is empty when the file clearly has content
-
-The Mac's login shell sources iTerm2 shell integration, which emits OSC escape
-sequences (`ESC ] 1337 ; SetUserVar=...`) into command output. They are
-invisible in a terminal and silently break anchored matches. `ios-rig` strips
-them in `on_mac`; anything new that parses SSH output should do the same.
-
-### iOS updated itself and something broke
-
-The device tracks iOS updates by choice rather than being pinned, so this is
-expected occasionally, and it is the likeliest cause of a sudden break.
-`doctor` reports the current version on every run. Check that the Appium
-`xcuitest` driver supports the new version before debugging anything else.
+**Check which SSID it is on first.** Since 2026-11-22 the flat has one
+network: `5G-Tower` and `2.4G-Tower` both land on lan, `192.168.8.0/24`, and
+`5G-Tower Admin` and the guest network are gone. Join `5G-Tower`. What a
+device may reach in Sofia now depends on its role on wifi.viktorbarzin.me
+(`docs/architecture/london-site.md`, "Device roles"), not on the SSID; the
+devvm reaches every London device either way.
 
 ### `doctor` says `phone-wifi` has no tunnel
 
 The service cannot complete RemotePairing with the phone. Check, in order:
 
-1. `getent hosts iphone-london.viktorbarzin.lan` gives `192.168.9.205`, and
+1. `getent hosts iphone-london.viktorbarzin.lan` gives `192.168.8.205` (192.168.9.205 until 2026-11-22), and
    `ssh root@10.3.2.6 'grep -i 6e:b1:68:39:7b:22 /tmp/dhcp.leases'` shows the
    phone holding that lease. If the MAC is missing, the phone changed its
    private Wi-Fi address or joined another SSID; set it back to Fixed on

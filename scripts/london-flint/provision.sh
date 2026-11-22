@@ -161,16 +161,17 @@ fi
 
 # Static lease for the iOS test rig phone ("Empress Anca"), so the devvm can
 # reach it over Wi-Fi at a known address (docs/runbooks/ios-test-rig.md). It
-# joins the guest SSID "5G-Tower" with a fixed private Wi-Fi address; if that
-# address changes on the phone, update the MAC here.
-if [ "$(uci -q get dhcp.iphone_london.ip)" != 192.168.9.205 ] || [ "$(uci -q get dhcp.iphone_london.mac)" != 6e:b1:68:39:7b:22 ]; then
+# joins "5G-Tower" with a fixed private Wi-Fi address; if that address changes
+# on the phone, update the MAC here. On br-lan since the guest SSID went away
+# (2026-11-22); it was 192.168.9.205.
+if [ "$(uci -q get dhcp.iphone_london.ip)" != 192.168.8.205 ] || [ "$(uci -q get dhcp.iphone_london.mac)" != 6e:b1:68:39:7b:22 ]; then
 	uci set dhcp.iphone_london=host
 	uci set dhcp.iphone_london.name='iphone-london'
 	uci set dhcp.iphone_london.mac='6e:b1:68:39:7b:22'
-	uci set dhcp.iphone_london.ip='192.168.9.205'
+	uci set dhcp.iphone_london.ip='192.168.8.205'
 	uci commit dhcp
 	/etc/init.d/dnsmasq reload
-	echo "dhcp: iphone-london -> 192.168.9.205"
+	echo "dhcp: iphone-london -> 192.168.8.205"
 else
 	echo "dhcp: iphone-london lease present"
 fi
@@ -345,6 +346,37 @@ if [ "$(uci -q get system.@system[0].log_size)" != 8192 ]; then
 	echo "system log: 8 MB ring"
 else
 	echo "system log ring present"
+fi
+EOF
+
+# One Wi-Fi network for the flat (docs/plans/2026-11-22-london-network-roles-design.md,
+# 2026-11-22): the main 5 GHz SSID (rax0, on br-lan) carries the name and
+# password that the guest SSID had, and the guest SSID is off. Devices that were
+# on the guest "5G-Tower" see the same name and password and stay; devices on
+# the old "5G-Tower Admin" join "5G-Tower" once. Roles, not SSIDs, now decide
+# what a device reaches in Sofia. GL's UI applies Wi-Fi changes with
+# "wifi reload <radio>"; if an SSID is set in uci but its raX interface is
+# missing afterwards, only a reboot fixes it (memory #14586).
+# shellcheck disable=SC2086
+ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'sh -s' <<'EOF'
+set -eu
+changed=0
+if [ "$(uci -q get wireless.wifi5g.ssid)" != 5G-Tower ]; then
+	guest_key=$(uci -q get wireless.guest5g.key || true)
+	[ -n "$guest_key" ] || { echo "wifi: guest5g has no key to carry over" >&2; exit 1; }
+	uci set wireless.wifi5g.ssid='5G-Tower'
+	uci set wireless.wifi5g.key="$guest_key"
+	changed=1
+fi
+for s in guest5g guest2g; do
+	[ "$(uci -q get wireless.$s.disabled)" = 1 ] || { uci set "wireless.$s.disabled=1"; changed=1; }
+done
+if [ "$changed" = 1 ]; then
+	uci commit wireless
+	/sbin/wifi reload mt798612
+	echo "wifi: one 5 GHz SSID, 5G-Tower on br-lan; guest SSID off"
+else
+	echo "wifi: one 5 GHz SSID present"
 fi
 EOF
 
