@@ -30,6 +30,10 @@ Exit codes: 0 = every node fully tuned · 1 = drift found · 2 = could not check
 The playbook writes the config and does NOT restart kubelet, so a node reads as
 DRIFTED here between the apply and the node's next reboot. That is expected, and
 it is exactly why this script reads `/configz` rather than the file.
+
+An Opportunistic worker (label node-role.viktorbarzin.me/opportunistic=true,
+ADR-0045) is offline for days by design, so it is skipped while it is not
+Ready and checked like any other node while it is.
 """
 
 import json
@@ -108,12 +112,30 @@ def run(args):
     return subprocess.run(args, capture_output=True, text=True, timeout=60)
 
 
+OPPORTUNISTIC_LABEL = "node-role.viktorbarzin.me/opportunistic"
+
+
+def nodes_to_check(items):
+    """Split Node objects into (names to check, offline Opportunistic names to skip)."""
+    check, skipped = [], []
+    for n in items:
+        name = n["metadata"]["name"]
+        labels = n["metadata"].get("labels") or {}
+        ready = any(c.get("type") == "Ready" and c.get("status") == "True"
+                    for c in (n.get("status") or {}).get("conditions") or [])
+        if labels.get(OPPORTUNISTIC_LABEL) == "true" and not ready:
+            skipped.append(name)
+        else:
+            check.append(name)
+    return check, skipped
+
+
 def node_names():
-    p = run(["kubectl", "get", "nodes", "-o", "jsonpath={range .items[*]}{.metadata.name}{'\\n'}{end}"])
+    p = run(["kubectl", "get", "nodes", "-o", "json"])
     if p.returncode != 0:
         print("cannot list nodes: %s" % p.stderr.strip(), file=sys.stderr)
         sys.exit(2)
-    return [n for n in p.stdout.split() if n]
+    return nodes_to_check(json.loads(p.stdout)["items"])
 
 
 def kubelet_config(node):
@@ -131,7 +153,8 @@ def main():
     as_json = "--json" in sys.argv
     report, drifted, unreachable = {}, [], []
 
-    for node in node_names():
+    nodes, skipped = node_names()
+    for node in nodes:
         cfg = kubelet_config(node)
         if cfg is None:
             unreachable.append(node)
@@ -153,6 +176,8 @@ def main():
                 print("%-12s DRIFTED  missing: %s" % (node, ", ".join(r["missing"])))
             else:
                 print("%-12s ok" % node)
+        for node in skipped:
+            print("%-12s skipped (Opportunistic worker, offline)" % node)
         print()
         if unreachable:
             print("%d node(s) could not be checked: %s" % (len(unreachable), ", ".join(unreachable)))

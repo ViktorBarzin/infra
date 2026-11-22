@@ -4220,7 +4220,11 @@ serverFiles:
             annotations:
               summary: "CoreDNS SERVFAIL rate: {{ $value | printf \"%.1f\" }}/s (threshold: 1/s)"
           - alert: ScrapeTargetDown
-            expr: up{job!~"istiod|envoy-stats|openwrt"} == 0
+            # node_role_viktorbarzin_me_opportunistic is copied from the node
+            # label by the kubernetes-nodes and -cadvisor labelmaps; an
+            # Opportunistic worker is offline by design (see the
+            # "Opportunistic nodes" group).
+            expr: up{job!~"istiod|envoy-stats|openwrt", node_role_viktorbarzin_me_opportunistic!="true"} == 0
             for: 30m
             labels:
               severity: warning
@@ -5761,7 +5765,12 @@ serverFiles:
           # keep_firing_for: folds a pod that flips Pending -> Running -> Pending
           # into one alert (3 fire/resolve pairs in 7 days, measured 2026-08-10).
           - alert: PodStuckPending
-            expr: kube_pod_status_phase{phase="Pending"} == 1 unless on(namespace, pod) kube_pod_status_conditions{condition="PodScheduled", status="false"} == 1
+            # The last clause leaves out pods bound to an Opportunistic worker:
+            # DaemonSet pods stay Pending on it while it is offline by design.
+            expr: |
+              kube_pod_status_phase{phase="Pending"} == 1
+                unless on(namespace, pod) kube_pod_status_conditions{condition="PodScheduled", status="false"} == 1
+                unless on(namespace, pod) (kube_pod_info and on(node) kube_node_labels{label_node_role_viktorbarzin_me_opportunistic="true"})
             for: 20m
             keep_firing_for: 30m
             labels:

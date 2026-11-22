@@ -495,6 +495,12 @@ while logged out banned Viktor's phone. Login guessing on Actual is covered
 separately by the `viktor/actualbudget-login-bf` scenario, which bans after
 more than 5 failed `POST /account/login` (400, or Actual's own 429) draining
 one per minute.
+`viktor/music-assistant-imageproxy-whitelist` drops Music Assistant's album
+covers (`/imageproxy/` on `music-assistant.viktorbarzin.me`) when the backend
+served them (`OriginStatus` 200 or 304). A library view asks for one cover per
+tile; on 2026-11-22 that was 46 requests in 21 s, which tripped
+`http-crawl-non_statics` and banned Viktor's London IPv6 /64. The
+`ha-sofia-rate-limit` middleware still applies.
 `viktor/bouncer-refusals-whitelist` drops the 403s the Traefik bouncer returns
 itself (`OriginStatus` 0 in the access log), so a banned client's retries
 cannot renew its own ban; before it, one false positive stacked 24 decisions

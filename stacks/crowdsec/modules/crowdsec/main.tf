@@ -515,6 +515,27 @@ locals {
            evt.Parsed.request == "/data/default-db.sqlite") &&
           int(evt.Unmarshaled.traefik?.OriginStatus ?? 0) in [200, 304]
     ---
+    name: viktor/music-assistant-imageproxy-whitelist
+    description: "Music Assistant loads one album cover per tile through /imageproxy/"
+    # Opening a library view in Music Assistant (music-assistant.viktorbarzin.me,
+    # proxied to ha-sofia:8095) asks for every visible cover through
+    # /imageproxy/<hash>. On 2026-11-22 at 22:05 UTC that was 46 requests in
+    # 21 s from Viktor's London IPv6, all answered 200, which tripped
+    # http-crawl-non_statics and banned the address and its /64 for 4h.
+    #
+    # Scoped to covers the backend actually served (200, or 304 from cache),
+    # so a request for a path that does not exist still scores. The
+    # ha-sofia-rate-limit middleware still applies. The router name is the one
+    # in the live access log
+    # (reverse-proxy-music-assistant-music-assistant-viktorbarzin-me@kubernetes).
+    whitelist:
+      reason: "Music Assistant's per-tile album covers, served by the app itself"
+      expression:
+        - >
+          evt.Parsed.traefik_router_name startsWith "reverse-proxy-music-assistant-" &&
+          evt.Parsed.request startsWith "/imageproxy/" &&
+          int(evt.Unmarshaled.traefik?.OriginStatus ?? 0) in [200, 304]
+    ---
     name: viktor/bouncer-refusals-whitelist
     description: "Don't score the 403s our own Traefik bouncer returns"
     # A request the bouncer refuses is logged by Traefik like any other 403,
