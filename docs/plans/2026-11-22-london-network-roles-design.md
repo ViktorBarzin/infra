@@ -1,5 +1,5 @@
 ---
-status: draft
+status: executing
 plan: true
 ---
 
@@ -15,7 +15,7 @@ rows:
   - {label: Leased devices that can open connections to Sofia, before: "24 of 24", after: "5"}
   - {label: Devices with all of Sofia, before: "24", after: "2 (work laptop, work phone)"}
   - {label: Wi-Fi subnets in the flat, before: "2", after: "1"}
-  - {label: Address rewrites between London and Sofia, before: "2 (Flint, OPNsense)", after: "0"}
+  - {label: Address rewrites between London and Sofia, before: "2 (Flint, OPNsense)", after: "1 (OPNsense, home LAN only)"}
   - {label: Devices that must re-join the Wi-Fi, before: "-", after: "0"}
   - {label: New services to run in Sofia, before: "0", after: "1 (wifi app)", better: false}
 ```
@@ -32,13 +32,13 @@ groups:
 nodes:
   - {id: psk, label: "5G-Tower / 2.4G-Tower / 5G-Tower Admin", note: "guest SSID joins br-lan; one subnet 192.168.8.0/24", group: flat, state: changed, risk: medium}
   - {id: guestnet, label: "Guest subnet 192.168.9.0/24", group: flat, state: removed, risk: low}
-  - {id: agent, label: Role agent, note: "ipset of MACs per role; iot isolation", group: flint, state: new, risk: high}
+  - {id: agent, label: Role agent, note: "ipset of MACs per role; log-only for one week", group: flint, state: new, risk: high}
   - {id: tunnel, label: WireGuard tunnel, note: "no masquerade; per-role forward rules", group: flint, state: changed, risk: high}
-  - {id: opn, label: OPNsense, note: "no source NAT for London", group: sofia, state: changed, risk: medium}
-  - {id: tplink, label: Sofia TP-Link router, note: "static route 192.168.8.0/24 via 192.168.1.2", group: sofia, state: changed, risk: medium}
+  - {id: opn, label: OPNsense, note: "source NAT for London only to the home LAN", group: sofia, state: same, risk: medium}
+  - {id: tplink, label: Sofia TP-Link router, note: "static route 192.168.8.0/24 already present", group: sofia, state: same}
   - {id: app, label: wifi.viktorbarzin.me, note: "own LoadBalancer IP; device list, sign-in, role moves", group: sofia, state: new, risk: medium}
   - {id: authentik, label: Authentik, note: "groups london-admin, london-storage", group: sofia, state: changed, risk: low}
-  - {id: nfs, label: ha-london NFS export, note: "admits 192.168.8.103", group: sofia, state: changed, risk: low}
+  - {id: nfs, label: ha-london NFS export, note: "admits 192.168.1.2 (home-LAN NAT)", group: sofia, state: changed, risk: low}
   - {id: services, label: Other Sofia services, group: sofia, state: same}
 edges:
   - {from: psk, to: agent, state: changed, label: "role by MAC"}
@@ -51,12 +51,12 @@ edges:
   - {from: opn, to: services}
   - {from: psk, to: app, state: new, label: "every role may reach the sign-in page"}
 checks:
-  - {node: tunnel, text: "A Sofia host sees a London device under its 192.168.8.x address; replies return through the tunnel", status: open}
+  - {node: tunnel, text: "The devvm saw ha-london as 192.168.8.103 (2026-11-22). Sofia home LAN replies failed without NAT, so OPNsense keeps that one NAT", status: passed}
   - {node: agent, text: "A guest device gets no answer from 10.0.20.0/24; the devvm still reaches the projector over adb", status: open}
-  - {node: agent, text: "An iot device cannot reach a laptop in the flat, or iot is recorded as equal to guest", status: open}
-  - {node: app, text: "The app sees the device's own address and the Flint maps it to the right MAC", status: open}
+  - {node: agent, text: "Radio isolation drops client frames before the bridge (tested 2026-11-22), so iot is recorded as equal to guest", status: failed}
+  - {node: app, text: "ha-london opened the page and saw its own MAC and role; admin role changes reached the Flint ipsets in 2 s", status: passed}
   - {node: psk, text: "The work Mac casts to the projector while the projector is a guest", status: open}
-  - {node: nfs, text: "The ha-london backup writes to NFS from 192.168.8.103", status: open}
+  - {node: nfs, text: "ha-london reaches 192.168.1.127:2049 through the home-LAN NAT as 192.168.1.2", status: passed}
 left_out:
   - "Certificates (802.1X, FreeRADIUS, Vault PKI): Viktor accepts that a MAC can be copied"
   - "Tailscale as the identity: Viktor wants no app on the devices"
@@ -74,7 +74,7 @@ left_out:
 - {key: infra-k8s, where: dell-worker, old: "main LAN, the only address not NATed", new: "MAC; Kubernetes ports"}
 - {key: storage, where: "Anca's MacBook", old: "guest, all of Sofia", new: "MAC; 192.168.1.13:445"}
 - {key: guest, where: "everyone else: visitors, phones, projector, Echo", old: "guest or main LAN", new: "default, kept forever; internet and the flat"}
-- {key: iot, where: "6 plugs, air sensor", old: "main LAN", new: "MAC; internet, no flat if the radio allows"}
+- {key: iot, where: "6 plugs, air sensor", old: "main LAN", new: "MAC; same as guest (the radio cannot isolate it)"}
 ```
 
 A person in an Authentik group gets that group's role for a device when they sign in on wifi.viktorbarzin.me from it. Viktor can move any device on the same page. Sofia can open connections to every role. A role limits only connections that start in London.
@@ -100,9 +100,9 @@ A person in an Authentik group gets that group's role for a device when they sig
   why: Every device keeps its own address, so Sofia logs and the wifi app see the real device.
 - question: How do Sofia home LAN hosts (192.168.1.x) answer London without NAT?
   options:
-    - {name: "A static route on the TP-Link, 192.168.8.0/24 via 192.168.1.2", chosen: true}
-    - {name: Keep NAT to the home LAN only, note: "home LAN hosts see 192.168.1.2"}
-  why: The TP-Link already routes 10/8 the same way; one more entry removes the last NAT.
+    - {name: "A static route on the TP-Link, 192.168.8.0/24 via 192.168.1.2", note: "the route exists, but the TP-Link's stateful firewall drops the replies it routes back (tested 2026-11-22)"}
+    - {name: Keep OPNsense's NAT for traffic to the home LAN only, chosen: true}
+  why: Home LAN hosts see 192.168.1.2; everything in 10/8 sees the real London address.
 - question: Does routing replace the role firewall?
   options:
     - {name: "No: routing plus role rules on the Flint", chosen: true}
@@ -150,8 +150,8 @@ A person in an Authentik group gets that group's role for a device when they sig
 ```timeline
 caption: Steps 1 to 3 can be undone with one change; step 4 moves 5 devices to a new SSID
 steps:
-  - {when: "1. Test", what: "Try iot isolation (AP isolation plus hairpin) on a test SSID", rollback: "Delete the test SSID"}
-  - {when: "2. No NAT", what: "Add the TP-Link route; fix the NFS export and the Loki alert; remove the Flint masquerade and the OPNsense source NAT", rollback: "Set masq back on the wgclient1 zone"}
+  - {when: "1. Test", what: "Try iot isolation (AP isolation plus hairpin) on the 2.4 GHz SSID for 45 s", rollback: "Isolation turns itself off"}
+  - {when: "2. No NAT", what: "Remove the Flint masquerade; keep OPNsense's NAT to the home LAN; fix the NFS export", rollback: "Set masq back on the wgclient1 zone"}
   - {when: "3. Sofia", what: "Authentik groups, wifi app with its database and LoadBalancer IP, alerts", rollback: "Destroy the new stack"}
   - {when: "4. Merge and retire", what: "guest5g joins br-lan; move the 5G-Tower Admin devices to 5G-Tower, then disable 5G-Tower Admin; the role agent starts in log-only mode", ponr: true}
   - {when: "5. Sign in", what: "Assign roles after the move, because private Wi-Fi addresses change with the SSID", rollback: "Move the device back to guest"}
@@ -183,12 +183,11 @@ rows:
 ```config
 - {key: wireless.guest5g.network, where: Flint uci, old: "guest", new: "lan"}
 - {key: wgclient1 zone masq, where: Flint firewall, old: "1", new: "0"}
-- {key: "WireGuard site LANs NAT to WAN", where: playbooks/files/opnsense/nat_outbound.yml, old: "London rewritten to 192.168.1.2", new: "a nonat rule for 192.168.8.0/24 above it"}
-- {key: static route, where: "Sofia TP-Link Archer AX6000 web UI (192.168.1.1)", old: "10.0.0.0/8 via 192.168.1.2", new: "plus 192.168.8.0/24 via 192.168.1.2"}
+- {key: "WireGuard site LANs NAT to WAN", where: playbooks/files/opnsense/aliases.yml, old: "London to the home LAN as 192.168.1.2", new: "unchanged: kept for the home LAN"}
 - {key: guest -> wgclient1 forward, where: Flint firewall, old: "accept", new: "removed"}
 - {key: lan -> wgclient1 forward, where: Flint firewall, old: "accept", new: "per-role ipset rules from the agent"}
 - {key: london-lan-no-nat, where: /etc/firewall.user, old: "192.168.8.0/24 to 10.0.20.0/24", new: "removed (no NAT anywhere)"}
-- {key: ha-london-backup export, where: scripts/pve-nfs-exports, old: "192.168.1.2, 10.3.2.6", new: "192.168.8.103"}
+- {key: ha-london-backup export, where: scripts/pve-nfs-exports, old: "192.168.1.2, 10.3.2.6", new: "192.168.1.2"}
 - {key: role list, where: "/etc/london-roles on the Flint, kept in sysupgrade.conf", old: "-", new: "copy of the app's roles; rebuilds the ipsets at boot"}
 - {key: alerts, where: stacks/monitoring, old: "-", new: "role agent sync older than 10 minutes; the 10.3.2.6 Loki alert moves to 192.168.8.0/24"}
 ```
@@ -197,3 +196,6 @@ The agent and the firewall changes go through `scripts/london-flint/provision.sh
 
 > [!NOTE]
 > This plan replaces the 2026-09-27 decision that the guest network keeps its path to Sofia.
+
+> [!IMPORTANT]
+> Status on 2026-11-22: steps 1 to 3 are done, and the role agent runs in log-only mode. Step 4 waits for Viktor: the Portal must be joined to 5G-Tower by hand.

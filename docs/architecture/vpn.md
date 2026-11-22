@@ -371,6 +371,7 @@ dns_config:
 - Allowed IPs: `10.0.0.0/8, 192.168.1.0/24, 192.168.0.0/24`
 - Keepalive: 25 seconds
 - Policy routing: GL-iNet marks traffic via iptables mangle → routing table 1001 (ipset `dst_net10`)
+- No masquerade since 2026-11-22: London devices reach Sofia under their own addresses (`firewall.wgclient1.masq '0'`, `wireguard.peer_855.masq '0'`, set by `scripts/london-flint/provision.sh`). OPNsense still source-NATs London traffic to the Sofia home LAN (alias `wg_site_lans`); see `london-site.md`, "No masquerade on the tunnel". Which London devices may open connections to Sofia is decided per device by the `london_roles` chain (`london-site.md`, "Device roles").
 - Persistence: `/etc/firewall.user` injects LOCAL_POLICY mangle rule (GL-iNet's `gl-tertf` creates TUNNEL10_ROUTE_POLICY but not the LOCAL_POLICY rule for router-originated traffic)
 
 **GL-iNet AllowedIPs format**: UCI `list allowed_ips` entries are concatenated by the `wgclient` protocol handler. Use a **single comma-separated entry** (`'10.0.0.0/8,192.168.1.0/24,192.168.0.0/24'`), NOT multiple list entries. Multiple entries cause a parse error like `10.0.0.0/8192.168.1.0/24` (no separator).

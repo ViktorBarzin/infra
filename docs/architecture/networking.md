@@ -136,7 +136,7 @@ Isolated camera segment for owned cameras at the Sofia site (first: `vermont-gar
 - dCCTV in: pass `udp OPT4-net → 10.0.30.1:123` (NTP) — everything else hits the interface's default deny. Cameras cannot reach LAN, other segments, or the internet.
 - WAN in (home LAN side): pass `192.168.1.8` (ha-sofia) → `10.0.30.70:80` (ISAPI/hikvision_next) and `:554` (RTSP), reply-to disabled on both.
 - dKubernetes is allow-all, so cluster Frigate/go2rtc pulls RTSP with no extra rule (pod egress SNATs to node IPs).
-- Home-LAN clients reach the camera UI through the AX6000's static route `10.0.0.0/8 via 192.168.1.2` (read on the router 2026-11-11), which covers 10.0.30.0/24; no separate camera route exists or is needed.
+- Home-LAN clients reach the camera UI through the AX6000's static route `10.0.0.0/8 via 192.168.1.2` (read on the router 2026-11-11; on 2026-11-22 it also held 192.168.0.0/24, 192.168.8.0/24 and 192.168.10.0/24 via 192.168.1.2), which covers 10.0.30.0/24; no separate camera route exists or is needed.
 
 **Consumers**: cluster Frigate (`/srv/nfs/frigate/config/config.yml` — NOT Terraform) pulls `rtsp://10.0.30.70:554` main+sub as `vermont-garage`; HA integrates via Frigate plus direct hikvision_next for tamper events.
 
@@ -534,7 +534,7 @@ The `websecure` entrypoint sets `respondingTimeouts` in `stacks/traefik/modules/
 
 ### MetalLB & Load Balancing
 
-MetalLB v0.15.3 allocates IPs from `10.0.20.200-10.0.20.220` (21 IPs) in **Layer 2 mode**; **15 are in use** (counted 2026-11-22). Most LoadBalancer services share **10.0.20.200** (`metallb.io/allow-shared-ip: shared`, `externalTrafficPolicy: Cluster`). **Five services hold dedicated IPs with `externalTrafficPolicy: Local`** to preserve the real client source IP (and, for Traefik, to make QUIC/HTTP3 work — a shared IP forbids the mixed ETP the UDP listener needs).
+MetalLB v0.15.3 allocates IPs from `10.0.20.200-10.0.20.220` (21 IPs) in **Layer 2 mode**; **16 are in use** (counted 2026-11-22). Most LoadBalancer services share **10.0.20.200** (`metallb.io/allow-shared-ip: shared`, `externalTrafficPolicy: Cluster`). **Five services hold dedicated IPs with `externalTrafficPolicy: Local`** to preserve the real client source IP (and, for Traefik, to make QUIC/HTTP3 work — a shared IP forbids the mixed ETP the UDP listener needs).
 
 > **Why not consolidate to fewer IPs?** The four dedicated IPs can't be merged. MetalLB L2 only lets `ETP=Local` services share an IP if they have *identical pod selectors* (Traefik/KMS/Technitium/Frigate don't), and a shared `ETP=Local` IP announces from a single node — blackholing any service whose pods aren't on it. Traefik additionally can never leave a dedicated IP (QUIC needs the UDP listener on its own ETP=Local IP). Merging would cost client-IP preservation or HA, so the 5-IP layout is deliberate — not sprawl. Full analysis: `docs/plans/2026-06-03-lb-ip-hygiene-design.md`.
 
@@ -555,6 +555,7 @@ MetalLB v0.15.3 allocates IPs from `10.0.20.200-10.0.20.220` (21 IPs) in **Layer
 | **10.0.20.212** (dedicated) | Local | crowdsec/crowdsec-c2-mirror→41412 TCP (plain-text list of CrowdSec `c2-block` decisions for OPNsense alias `crowdsec_c2`; source ranges 10.0.20.1/32, 10.0.10.1/32; see `network-security-monitoring.md`) |
 | **10.0.20.213** (dedicated) | Cluster | camera-import/sftpgo→22 TCP (SFTP from the Nikon Z5 II; LAN and tunnel only; see `docs/runbooks/camera-import.md`) |
 | **10.0.20.214** (dedicated) | Local | tang/tang-dell-worker→80 TCP (Tang for the Dell worker's State volume, ADR-0045; source ranges 192.168.8.0/24, 10.0.10.0/24) |
+| **10.0.20.215** (dedicated) | Local | wifi/wifi-proxy→443 TCP (the London Wi-Fi sign-in proxy, nginx in front of the wifi app, so the app sees each London device's own address; every London role may reach it, see `london-site.md` "Device roles") |
 | **10.0.20.213** (dedicated) | Cluster | camera-import/camera-import-sftp→22 TCP (SFTP inbox for the Nikon Z5 II, LAN and tunnel only; see `docs/runbooks/camera-import.md`) |
 
 **Mailserver does NOT use a LB IP** — inbound mail enters via OPNsense HAProxy on `10.0.20.1:{25,465,587,993}` → NodePorts `30125-30128` (PROXY-v2; see "Mail Server" below). (Earlier revisions of this table wrongly listed mailserver on `.200` and KMS on `.200` — both corrected 2026-06-03.)

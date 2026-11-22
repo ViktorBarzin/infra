@@ -70,12 +70,78 @@ hardcoded in `/usr/share/gl-ngx/oui-access.lua`). A browser on the LAN using
 | Remote syslog | `10.0.20.208`, TCP 514 | LuCI → System → System → Logging | Kernel Wi-Fi lines and firmware resets land in Loki as `{job="syslog", host="flint-london"}`. TCP, not UDP: over UDP only the first line after a quiet spell arrived (195 of about 3,000 lines on 2026-09-27/28); logread sends everything on one UDP flow and the rest of each burst was lost between the tunnel and the cluster. Over TCP a 5-minute window matched 20 of 20 lines. The receiver (`alloy-syslog`) keeps each line's program as the `app` label and its severity as `level` (since 2026-10-03). The forwarder (`logread -f -r`) sends over TCP, so through a short tunnel outage TCP holds the lines and retransmits them (a 46 s simulated outage on 2026-10-03 lost nothing). Lines are lost only when the connection dies, after about 15 minutes of retransmits (`tcp_retries2` 15): logread reconnects and does not replay what it missed. The drop probe backfills that gap (`source="backfill"`, see the drop probe row). |
 | kmwan (multi-WAN watchdog) | unchanged: failover, pings 8.8.8.8 / 9.9.9.9 / 208.67.222.222 | GL → Network → Multi-WAN | Kept pending data; the probe records its state during each drop. Switch its tracking off if drops line up with it. |
 | DPI / per-app stats | on | GL → Network | Viktor uses them. |
-| Guest network | forwards to the tunnel | unchanged | Viktor's call (2026-09-27). Guest traffic reaches Sofia masqueraded as 10.3.2.6. |
-| No NAT to the Kubernetes VLAN | `iptables -t nat -I postrouting_rule -s 192.168.8.0/24 -d 10.0.20.0/24 -j ACCEPT` at the top of `/etc/firewall.user` | set by `provision.sh` (marker `london-lan-no-nat`) | Since 2026-11-22 (ADR-0045). The tunnel zone masquerades London traffic as 10.3.2.6, but a London Kubernetes node must reach the Sofia nodes from its own address, because Calico accepts VXLAN only from known node addresses. `postrouting_rule` runs before the zone's masquerade. Main-LAN traffic to every other Sofia network is still masqueraded. Traefik `local-only` and the Loki alert K9 admit `192.168.8.0/24`. |
+| Guest network | forwards to the tunnel; roles checked by the `london_roles` chain | `provision.sh` | Viktor's call (2026-09-27), narrowed by the device roles on 2026-11-22 ("Device roles" below). Guest traffic reaches Sofia under its own 192.168.9.x address. |
+| No masquerade on the tunnel | `firewall.wgclient1.masq '0'` and `wireguard.peer_855.masq '0'` (GL's "IP Masquerading" option of the VPN client) | set by `provision.sh` | Since 2026-11-22 (Viktor): London traffic reaches Sofia under each device's own address, which also covers the Kubernetes node's need (ADR-0045). Sofia routes 192.168.8.0/24 and 192.168.9.0/24 back through the tunnel. One NAT stays, on OPNsense: traffic to the Sofia home LAN (192.168.1.0/24) arrives as 192.168.1.2 (alias `wg_site_lans`), because the TP-Link's stateful firewall drops the home hosts' replies that it routes back to OPNsense without having seen the opening packet (tested 2026-11-22). The TP-Link already holds the static route 192.168.8.0/24 via 192.168.1.2. |
 | Dell worker lease | `dell-worker` 48:89:e7:18:0e:66 → 192.168.8.20 | set by `provision.sh` | The Ubuntu worker on the Dell Precision registers this address as its node IP (ADR-0045). Fedora and Windows on the same laptop use private Wi-Fi addresses and get ordinary leases. |
 | SSH and admin page on WAN | open to every source; SSH takes keys only (`PasswordAuth` and `RootPasswordAuth` off) | set by `provision.sh` | Open by Viktor's call (2026-09-27) so the router stays reachable over IPv6 when the tunnel is down. Over IPv4 the WAN is behind the ISP's CGNAT, but over IPv6 the whole internet reaches both ports: in the 30 days to 2026-11-22 scanners from DigitalOcean, IONOS and China Telecom connected to SSH, and none got past authentication. Password login went off on 2026-11-22 (Viktor). The key list replaces the router's on every run. |
 | WAN brute-force bans | A source that opens 5 new SSH connections within 60 s is dropped on SSH for 24 h; 20 new admin-page connections within 10 s drop it on 443 for 1 h. Each new attempt during a ban restarts the timer. Sofia's IPv6 ranges (`2001:470:5a7f::/48`, `2001:470:6f:43d::/64`) are exempt | firewall include `/etc/firewall.bruteforce` from `scripts/london-flint/wan-bruteforce.sh`, kept across upgrades via `/etc/sysupgrade.conf`; set by `provision.sh` | Kernel `recent` lists, IPv4 and IPv6, WAN (`eth1`) only, so the tunnel and the LAN are never counted. The exemption keeps `provision.sh` working over IPv6, which opens about ten connections in a row. Chosen over fail2ban and CrowdSec, which would need Python or a Go agent on a router with about 480 MB free, and which a firmware upgrade removes. A ban logs `wan-bruteforce ban ssh` or `ban admin` (kernel, `{job="syslog", host="flint-london"} |= "wan-bruteforce"`). Lift one with `echo -<address> > /proc/net/xt_recent/bf_ssh_ban` (or `bf_admin_ban`). Tested 2026-11-22 with the exemption removed: the 5th SSH connection and the 20th admin request from the devvm timed out. |
 | IPv6 | Native with the delegated /56 (set 2026-10-02) | GL → Network → IPv6 | Real addresses skip NAT and the ISP's IPv4 CGNAT. |
+
+## Device roles
+
+Every London device is a guest unless the London Wi-Fi app gives its MAC a
+role. The role decides which connections a device may open to Sofia. Sofia
+can still open connections to every device, because replies are ESTABLISHED
+and never reach the role check. Design and decisions:
+`docs/plans/2026-11-22-london-network-roles-design.md`.
+
+```mermaid
+flowchart TD
+  person[Person or Viktor] -->|"sign in, or move a device"| app["wifi.viktorbarzin.me<br/>stacks/wifi, 10.0.20.215"]
+  agent["london-roles on the Flint"] -->|"long poll, 50 s"| app
+  agent -->|"lease table on change"| app
+  agent --> sets["ipsets lr_admin, lr_storage,<br/>lr_iot, lr_infra_ha, lr_infra_k8s"]
+  sets --> chain["chain london_roles<br/>(lan and guest to wgclient1)"]
+```
+
+| role | reaches in Sofia | given by |
+|---|---|---|
+| admin | everything | sign-in by a member of `london-admin`, or Viktor on `/admin` |
+| storage | 192.168.1.13 TCP 445 | sign-in by a member of `london-storage`, or Viktor |
+| infra-ha | 192.168.1.127 TCP 2049, 10.0.20.200 TCP 19532 | Viktor (ha-london) |
+| infra-k8s | 10.0.20.0/24 | Viktor (dell-worker) |
+| iot | nothing; same as guest | Viktor (plugs, air sensor) |
+| guest | only the sign-in page, 10.0.20.215 TCP 443 | default |
+
+**Mode.** `ROLES_MODE` in `scripts/london-flint/provision.sh` is `log` from
+2026-11-22: the chain lets everything through and logs what enforce would
+block, with prefix `london-roles-would-block` (kernel, rate-limited to 20 a
+minute). Read them with
+`homelab logs query '{job="syslog", host="flint-london"} |= "london-roles-would-block"'`.
+To enforce, set `ROLES_MODE=enforce` and run `provision.sh`; the chain then
+logs `london-roles-blocked` and rejects. To let a role reach one more service,
+add a rule to `firewall()` in `scripts/london-flint/london-roles.sh` and run
+`provision.sh`.
+
+**iot is only a label.** The closed MediaTek driver drops client-to-client
+frames inside the radio when isolation is on (`iwpriv ra0 set NoForwarding=1`),
+and they never reach `br-lan`, although the bridge port has hairpin mode on
+(tested 2026-11-22, ha-london to plug-livia). So the Flint cannot keep iot
+devices away from laptops on one SSID.
+
+**Pieces on the router.** All are installed by `provision.sh` and listed in
+`/etc/sysupgrade.conf`:
+
+| file | role |
+|---|---|
+| `/usr/bin/london-roles` | the agent (`scripts/london-flint/london-roles.sh`, tests in `london_roles_test.py`) |
+| `/etc/init.d/london-roles` | procd service running `london-roles run` |
+| `/etc/hotplug.d/dhcp/90-london-roles` | sends the lease table when a lease changes |
+| `/etc/firewall.london-roles` | firewall include that rebuilds the chain on every reload |
+| `/etc/london-roles.conf` | `LR_URL`, `LR_MODE` |
+| `/etc/london-roles.token` | bearer token, from Vault `secret/wifi` `router_token` |
+| `/etc/london-roles.list` | last role list, loaded at boot before the first poll |
+
+The device table the agent sends holds the DHCP leases plus neighbour entries
+for MACs without a lease, so a device with a fixed address (ha-london) can
+still get a role. When the app or the tunnel is down, the agent keeps its last
+list and retries every 5 to 60 seconds. `LondonRoleSyncStale` fires after 10
+minutes without a poll.
+
+**Checks.** On the router: `logread -e london-roles | tail`,
+`cat /etc/london-roles.list`, `ipset list lr_admin`,
+`iptables -S london_roles`. In the app: `/` shows the device you are on, and
+`/admin` lists every device.
 
 ## Monitoring
 
@@ -202,7 +268,7 @@ backup agent `hassio.proxmox`).
 | mount | NFS `192.168.1.127:/srv/nfs/ha-london-backup`, usage backup. Supervisor mounts it with `softerr,timeo=100,retrans=2` (NFS 4.2), so a stalled tunnel fails a write after about 30 s instead of blocking |
 | default backup location | still local (`default_backup_mount` null). Adding the mount made it the default; that was undone so add-on and update backups stay on the card as before |
 | retention | 4 copies, per location |
-| export | `scripts/pve-nfs-exports`, clients `192.168.1.2` and `10.3.2.6`. The Pi's traffic reaches the host as 192.168.1.2: the Flint masquerades it to 10.3.2.6 and OPNsense source-NATs that to its LAN address (measured 2026-11-11). An export limited to 10.3.2.6 alone would refuse the Pi, which is how the Synology mount hung the Pi for 4 minutes on 2026-09-18 |
+| export | `scripts/pve-nfs-exports`, client `192.168.1.2`. The Pi's traffic reaches the host as 192.168.1.2: OPNsense source-NATs London traffic to the Sofia home LAN to its LAN address. Since 2026-11-22 the Flint no longer masquerades, so 10.3.2.6 is gone. An export limited to the Pi's own address would refuse it, which is how the Synology mount hung the Pi for 4 minutes on 2026-09-18 |
 | copies | nfs-mirror carries the directory to sda nightly and offsite-sync to the Synology (`docs/architecture/backup-dr.md`) |
 | alert | `HomeAssistantLondonBackupStale` pages when the newest `*.tar` there is over 8 days old or the metric is missing, from `ha-london-backup-status` on the host (hourly, `playbooks/pve-host.yml` tag `ha-london-backup`) |
 
