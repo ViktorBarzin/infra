@@ -94,6 +94,10 @@ adb works while the tablet sleeps and is locked: shell commands, installs, setti
 
 After a restart, nothing runs until someone unlocks the tablet once by hand. The connect port also changes after a restart, so `android-adb` scans ports 30000-50000 for it.
 
+The tablet has two Android profiles: user 0 is Anca's and is the one in use, user 10 is Viktor's. `adb shell` and `pm` act on user 0 unless you pass `--user 10`. An app that `pm list packages` shows can still be missing from user 0; check `dumpsys package <pkg>` for `User 0: installed=true`. `pm install-existing --user 0 <pkg>` copies an app over from the other profile.
+
+Stremio on user 0 signs in to the shared account stremio@viktorbarzin.me. A download row under each Real-Debrid stream opens the file in Chrome, which saves it to Downloads; VLC plays it offline. The rows come from the AIOStreams `externalDownloads` setting, described in the service catalog.
+
 When the Companion app signed in, ha-london added `device_tracker.london_tablet` to `person.viktorbarzin` by itself. A `person/update` call over the WebSocket API removed it again. Do the same after you sign the app in again.
 
 ## Configuration
