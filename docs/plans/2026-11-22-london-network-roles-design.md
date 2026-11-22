@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 plan: true
 ---
 
@@ -52,7 +52,7 @@ edges:
   - {from: psk, to: app, state: new, label: "every role may reach the sign-in page"}
 checks:
   - {node: tunnel, text: "The devvm saw ha-london as 192.168.8.103 (2026-11-22). Sofia home LAN replies failed without NAT, so OPNsense keeps that one NAT", status: passed}
-  - {node: agent, text: "A guest device gets no answer from 10.0.20.0/24; the devvm still reaches the projector over adb", status: open}
+  - {node: agent, text: "ha-london to the devvm was rejected and logged; the devvm still reaches the projector over adb (2026-11-22)", status: passed}
   - {node: agent, text: "Radio isolation drops client frames before the bridge (tested 2026-11-22), so iot is recorded as equal to guest", status: failed}
   - {node: app, text: "ha-london opened the page and saw its own MAC and role; admin role changes reached the Flint ipsets in 2 s", status: passed}
   - {node: psk, text: "The work Mac casts to the projector while the projector is a guest", status: open}
@@ -199,4 +199,4 @@ The agent and the firewall changes go through `scripts/london-flint/provision.sh
 > This plan replaces the 2026-09-27 decision that the guest network keeps its path to Sofia.
 
 > [!IMPORTANT]
-> Status on 2026-11-22: steps 1 to 5 are done (Viktor signed in from his two admin devices). The main 5 GHz SSID took the guest SSID's name and password. So no new interface had to come up, and the guest devices stayed connected. 5G-Tower Admin is gone. The role agent runs in log-only mode until the week's review.
+> Done on 2026-11-22. Viktor cut the log-only week to three hours. The log added two ports for ha-london (the vacuum camera) and admin for his Dell laptop. AirPlay attempts to TVs in Sofia are blocked on purpose. Blocking has run since 18:10 UTC.

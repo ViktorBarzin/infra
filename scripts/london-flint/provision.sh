@@ -385,7 +385,7 @@ EOF
 # firewall include that rebuilds the london_roles chain. The bearer token for
 # the wifi app comes from Vault and lives only on the router. ROLES_MODE is
 # "log" (log what enforce would block) or "enforce".
-ROLES_MODE=log
+ROLES_MODE=enforce
 for f in london-roles.sh:london-roles london-roles.init:london-roles.init london-roles.hotplug:london-roles.hotplug london-roles.firewall:london-roles.firewall; do
 	# shellcheck disable=SC2086
 	ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" "cat > /tmp/${f#*:}.new" <"$HERE/${f%%:*}"

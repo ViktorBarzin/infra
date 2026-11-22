@@ -98,18 +98,18 @@ flowchart TD
 |---|---|---|
 | admin | everything | sign-in by a member of `london-admin`, or Viktor on `/admin` |
 | storage | 192.168.1.13 TCP 445 | sign-in by a member of `london-storage`, or Viktor |
-| infra-ha | 192.168.1.127 TCP 2049, 10.0.20.200 TCP 19532 | Viktor (ha-london) |
+| infra-ha | 192.168.1.127 TCP 2049 (backups), 10.0.20.200 TCP 19532 (journal upload), 8554 and 8080 (vacuum camera) | Viktor (ha-london) |
 | infra-k8s | 10.0.20.0/24 | Viktor (dell-worker) |
 | iot | nothing; same as guest | Viktor (plugs, air sensor) |
 | guest | only the sign-in page, 10.0.20.215 TCP 443 | default |
 
-**Mode.** `ROLES_MODE` in `scripts/london-flint/provision.sh` is `log` from
-2026-11-22: the chain lets everything through and logs what enforce would
-block, with prefix `london-roles-would-block` (kernel, rate-limited to 20 a
-minute). Read them with
-`homelab logs query '{job="syslog", host="flint-london"} |= "london-roles-would-block"'`.
-To enforce, set `ROLES_MODE=enforce` and run `provision.sh`; the chain then
-logs `london-roles-blocked` and rejects. To let a role reach one more service,
+**Mode.** `ROLES_MODE` in `scripts/london-flint/provision.sh` is `enforce`
+since 2026-11-22 18:10 UTC, after three hours of `log` (Viktor cut the planned
+week short). The chain rejects and logs each blocked connection with prefix
+`london-roles-blocked` (kernel, rate-limited to 20 a minute). Read them with
+`homelab logs query '{job="syslog", host="flint-london"} |= "london-roles-blocked"'`.
+`ROLES_MODE=log` with `provision.sh` turns blocking off again; the chain then
+only logs, with prefix `london-roles-would-block`. To let a role reach one more service,
 add a rule to `firewall()` in `scripts/london-flint/london-roles.sh` and run
 `provision.sh`.
 
@@ -132,9 +132,10 @@ devices away from laptops on one SSID.
 | `/etc/london-roles.token` | bearer token, from Vault `secret/wifi` `router_token` |
 | `/etc/london-roles.list` | last role list, loaded at boot before the first poll |
 
-The device table the agent sends holds the DHCP leases plus neighbour entries
-for MACs without a lease, so a device with a fixed address (ha-london) can
-still get a role. When the app or the tunnel is down, the agent keeps its last
+The device table the agent sends holds the DHCP leases, then neighbour
+entries for MACs without a lease (ha-london has a fixed address), then
+reserved addresses (`uci` dhcp hosts with an `ip`), so an offline device such
+as dell-worker can get a role before it rejoins. When the app or the tunnel is down, the agent keeps its last
 list and retries every 5 to 60 seconds. `LondonRoleSyncStale` fires after 10
 minutes without a poll.
 
