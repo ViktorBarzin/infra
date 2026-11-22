@@ -211,6 +211,18 @@ for sec in iphone_london dell_worker plug_livia plug_jinx plug_pikkachu plug_mic
 		echo "dhcp: $sec removed (named in the wifi app)"
 	fi
 done
+# Reservations made in the GL.iNet UI before the app, for devices that are
+# gone: the retired rpi-london (.103, now ha-london's fixed address) and two
+# old private MACs (.184, .105). Removed 2026-11-22 (Viktor).
+for sec in $(uci -X show dhcp | sed -n "s/^dhcp\.\([^.=]*\)=host$/\1/p"); do
+	case "$(uci -q get "dhcp.$sec.mac" | tr 'A-F' 'a-f')" in
+	b8:27:eb:e9:18:92 | 28:05:a5:08:0c:00 | ce:4d:cb:95:b2:20)
+		echo "dhcp: removed stale reservation $sec ($(uci -q get "dhcp.$sec.mac") $(uci -q get "dhcp.$sec.ip"))"
+		uci delete "dhcp.$sec"
+		dhcp_changed=1
+		;;
+	esac
+done
 
 # The router's own traffic to 10.0.0.0/8 goes through the tunnel (table 1001),
 # ahead of GL's fwmark rules at 6000. dnsmasq copies each client query's mark

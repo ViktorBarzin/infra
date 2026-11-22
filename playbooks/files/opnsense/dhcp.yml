@@ -24,18 +24,6 @@ interfaces:
     ip: 10.0.10.10
     hostname: devvm
     description: null
-  - mac: 00:0c:29:e0:82:b0
-    ip: 10.0.10.15
-    hostname: truenas
-    description: null
-  - mac: 00:50:56:87:4a:2d
-    ip: 10.0.10.20
-    hostname: ubuntu-server
-    description: null
-  - mac: 00:0c:29:c6:43:64
-    ip: 10.0.10.30
-    hostname: homeassistant
-    description: null
 - interface: opt1
   subnet: 10.0.20.0/24
   pool_start: 10.0.20.221

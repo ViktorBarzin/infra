@@ -187,7 +187,7 @@ flowchart LR
     end
 
     subgraph OPNsense["OPNsense (10.0.20.1)"]
-        Kea[Kea DHCP4<br/>3 subnets<br/>42 reservations]
+        Kea[Kea DHCP4<br/>3 subnets<br/>9 reservations]
         DDNS[Kea DHCP-DDNS<br/>off since 2026-07-18, not configured on OPNsense]
         ARP[ARP Table]
     end

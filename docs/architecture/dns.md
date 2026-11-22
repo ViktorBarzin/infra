@@ -29,7 +29,7 @@ graph TB
 
     subgraph "OPNsense (10.0.20.1)"
         pf_unbound[Unbound<br/>Resolver<br/>auth-zone AXFR]
-        pf_kea[Kea DHCP4<br/>3 subnets, 53 reservations]
+        pf_kea[Kea DHCP4<br/>3 subnets, 9 reservations]
         pf_ddns[Kea DHCP-DDNS<br/>RFC 2136, not running]
     end
 
@@ -504,7 +504,7 @@ DDNS scope.
 Devices get automatic DNS registration without manual intervention. See [networking.md § IPAM & DNS Auto-Registration](networking.md#ipam--dns-auto-registration) for the full data flow diagram.
 
 Summary:
-1. **Kea DHCP** on OPNsense assigns IP (53 reservations across 3 subnets). DHCP option 6 (DNS servers) is pushed with two IPs per internal subnet: internal resolver + AdGuard public fallback (`94.140.14.14`) — clients survive an internal DNS outage.
+1. **Kea DHCP** on OPNsense assigns IP (9 reservations across 3 subnets, `playbooks/files/opnsense/dhcp.yml`). DHCP option 6 (DNS servers) is pushed with two IPs per internal subnet: internal resolver + AdGuard public fallback (`94.140.14.14`) — clients survive an internal DNS outage.
 2. **Kea DDNS** sends **TSIG-signed** RFC 2136 dynamic update to Technitium (A + PTR records) — immediate. Key `kea-ddns` (HMAC-SHA256); Technitium enforces both source-IP ACL and TSIG signature on `viktorbarzin.lan` + reverse zones. Off since 2026-07-18 on pfSense and not configured on OPNsense (see "Dynamic updates" above), so DHCP names currently reach DNS through phpipam-import only.
 3. **phpipam-import** CronJob (every 30 min, ADR-0032) records every address in phpIPAM from Kea, OPNsense ARP (after a ping sweep of the home LAN), the site routers, Kubernetes, WireGuard and Headscale. Names flow into phpIPAM from DHCP and DNS; it publishes to Technitium only the OpenWrt sites' lease names (below) and the names on hand rows (rows whose description does not start with `-- `), marking the records it owns outside the site ranges with the record comment `phpipam`. It never overwrites a record it does not own. `phpipam-pfsense-import`, `phpipam-remote-import` and `phpipam-dns-sync` were replaced by it on 2026-10-13.
 
