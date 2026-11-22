@@ -191,26 +191,44 @@ else
 	echo "dhcp: dell-worker lease present"
 fi
 
-# London LAN traffic to the Kubernetes VLAN keeps its own source address. The
-# tunnel zone masquerades everything else as 10.3.2.6, but a London Kubernetes
-# node must reach the Sofia nodes from its real address: Calico accepts VXLAN
-# only from known node addresses. postrouting_rule runs before the zone's
-# masquerade, so ACCEPT there skips it. The rule sits at the top of
-# /etc/firewall.user, before GL's policy fix, which ends with "exit 0".
-nat_rule='iptables -t nat -C postrouting_rule -s 192.168.8.0/24 -d 10.0.20.0/24 -j ACCEPT 2>/dev/null || iptables -t nat -I postrouting_rule -s 192.168.8.0/24 -d 10.0.20.0/24 -j ACCEPT'
-if ! grep -q 'london-lan-no-nat' /etc/firewall.user; then
-	{
-		head -n 1 /etc/firewall.user
-		echo '# london-lan-no-nat (scripts/london-flint/provision.sh): London LAN -> 10.0.20.0/24 is not masqueraded'
-		echo "$nat_rule"
-		tail -n +2 /etc/firewall.user
-	} >/tmp/firewall.user.new
+# London traffic to Sofia keeps its own source address: no masquerade on the
+# tunnel (Viktor, 2026-11-22, docs/plans/2026-11-22-london-network-roles-design.md).
+# Sofia routes 192.168.8.0/24 back through the tunnel. The one NAT left is
+# OPNsense's, for traffic to the Sofia home LAN (192.168.1.0/24), whose
+# TP-Link drops asymmetric replies (playbooks/files/opnsense/aliases.yml,
+# wg_site_lans). GL keeps the
+# setting per WireGuard peer (the "IP Masquerading" option of the VPN client)
+# and writes it into the firewall zone, so both are set.
+fw_changed=0
+for p in $(uci -X show wireguard | sed -n "s/^wireguard\.\(peer_[0-9]*\)\.masq='1'$/\1/p"); do
+	[ "$(uci -q get "wireguard.$p.end_point" || true)" = "" ] && continue
+	case "$(uci -q get "wireguard.$p.end_point")" in vpn.viktorbarzin.me:*) ;; *) continue ;; esac
+	uci set "wireguard.$p.masq=0"
+	uci commit wireguard
+	echo "wireguard: $p masquerade off"
+done
+for k in masq masq6; do
+	[ "$(uci -q get firewall.wgclient1.$k)" = 0 ] || { uci set "firewall.wgclient1.$k=0"; fw_changed=1; }
+done
+# The rule that exempted 192.168.8.0/24 -> 10.0.20.0/24 from the masquerade
+# (ADR-0045) is no longer needed.
+if grep -q 'london-lan-no-nat' /etc/firewall.user; then
+	grep -v -e 'london-lan-no-nat' -e 'postrouting_rule -s 192.168.8.0/24 -d 10.0.20.0/24' /etc/firewall.user >/tmp/firewall.user.new
 	cat /tmp/firewall.user.new >/etc/firewall.user
 	rm -f /tmp/firewall.user.new
-	echo "firewall.user: london-lan-no-nat added"
+	iptables -t nat -D postrouting_rule -s 192.168.8.0/24 -d 10.0.20.0/24 -j ACCEPT 2>/dev/null || true
+	echo "firewall.user: london-lan-no-nat removed"
 fi
-sh -c "$nat_rule"
-iptables -t nat -C postrouting_rule -s 192.168.8.0/24 -d 10.0.20.0/24 -j ACCEPT && echo "nat: London LAN -> 10.0.20.0/24 not masqueraded"
+if [ "$fw_changed" = 1 ]; then
+	uci commit firewall
+	/etc/init.d/firewall reload >/dev/null 2>&1
+	echo "firewall: tunnel masquerade off"
+fi
+if iptables -t nat -S zone_wgclient1_postrouting | grep -q MASQUERADE; then
+	echo "firewall: tunnel still masquerades" >&2
+	exit 1
+fi
+echo "firewall: no masquerade on the tunnel"
 
 # Device names (docs/architecture/dns.md, "London devices"). Every leased
 # device is named in viktorbarzin.lan by phpipam-import, from the

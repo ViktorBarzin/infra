@@ -37,6 +37,12 @@ aliases:
   content:
   - 192.168.0.0/24
   - 192.168.3.0/24
+  # London LAN. Since 2026-11-22 the Flint no longer masquerades, so this rule
+  # is the one NAT left for London: traffic to the Sofia home LAN arrives as
+  # 192.168.1.2. Without it the TP-Link's stateful firewall drops the home
+  # hosts' replies, which it routes back to OPNsense without having seen the
+  # opening packet (tested 2026-11-22: SYN reached 192.168.1.127, the SYN-ACK
+  # never came back). Traffic to 10/8 is routed with London's real addresses.
   - 192.168.8.0/24
   - 192.168.9.0/24
   - 192.168.10.0/24
