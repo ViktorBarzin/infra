@@ -390,6 +390,28 @@ and the set answers `_googlecast._tcp` about 3 minutes later. The reboot can
 reset adb authorization, so someone at the set must accept the devvm's key
 with "Always allow from this computer".
 
+### Radio
+
+The radio plays on the projector. The Logitech speaker is paired with the
+projector by Bluetooth, so the sound comes out of the speaker when it is on and
+connected, and out of the projector otherwise. ha-london's Google Cast
+integration (added 2026-11-22) sees the projector as
+`media_player.nebula_mars_3_air`. `script.radio_play` casts a station's MP3
+stream to it, and `script.radio_stop` stops it. Both are in
+`packages/radio.yaml` of the ha-london-config repo, with the station list and
+stream addresses. The Overview dashboard, Home tab, has a Radio section with one
+button per station: Radio Swiss Jazz, Smooth Jazz 24/7, Jazz London Radio, Smooth
+Christmas, Heart Xmas and SomaFM Christmas Lounge.
+
+Casting replaces what is on screen with the Cast player. After Stop, the
+earlier app (ImmichFrame, for example) does not come back by itself. Whether a
+cast wakes the projector from standby was not tested. Cast volume is the
+projector's media volume, the same setting the remote changes for the speaker.
+
+UK Jazz FM and Magic Christmas have no public stream address, so they are not
+in the list. Music Assistant does not fit on the Pi 3: on 2026-11-22 it had
+216 MB of RAM free and 664 MB in swap.
+
 ### Home screen
 
 The home screen is Projectivy Launcher (`com.spocky.projengmenu`, free tier,
