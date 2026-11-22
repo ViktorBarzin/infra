@@ -534,7 +534,7 @@ The `websecure` entrypoint sets `respondingTimeouts` in `stacks/traefik/modules/
 
 ### MetalLB & Load Balancing
 
-MetalLB v0.15.3 allocates IPs from `10.0.20.200-10.0.20.220` (21 IPs) in **Layer 2 mode**; **14 are in use** (counted 2026-11-16). Most LoadBalancer services share **10.0.20.200** (`metallb.io/allow-shared-ip: shared`, `externalTrafficPolicy: Cluster`). **Five services hold dedicated IPs with `externalTrafficPolicy: Local`** to preserve the real client source IP (and, for Traefik, to make QUIC/HTTP3 work — a shared IP forbids the mixed ETP the UDP listener needs).
+MetalLB v0.15.3 allocates IPs from `10.0.20.200-10.0.20.220` (21 IPs) in **Layer 2 mode**; **15 are in use** (counted 2026-11-22). Most LoadBalancer services share **10.0.20.200** (`metallb.io/allow-shared-ip: shared`, `externalTrafficPolicy: Cluster`). **Five services hold dedicated IPs with `externalTrafficPolicy: Local`** to preserve the real client source IP (and, for Traefik, to make QUIC/HTTP3 work — a shared IP forbids the mixed ETP the UDP listener needs).
 
 > **Why not consolidate to fewer IPs?** The four dedicated IPs can't be merged. MetalLB L2 only lets `ETP=Local` services share an IP if they have *identical pod selectors* (Traefik/KMS/Technitium/Frigate don't), and a shared `ETP=Local` IP announces from a single node — blackholing any service whose pods aren't on it. Traefik additionally can never leave a dedicated IP (QUIC needs the UDP listener on its own ETP=Local IP). Merging would cost client-IP preservation or HA, so the 5-IP layout is deliberate — not sprawl. Full analysis: `docs/plans/2026-06-03-lb-ip-hygiene-design.md`.
 
@@ -553,6 +553,8 @@ MetalLB v0.15.3 allocates IPs from `10.0.20.200-10.0.20.220` (21 IPs) in **Layer
 | **10.0.20.211** (dedicated) | Local | netsec/netsec-opnsense→5140 TCP (raw Suricata EVE and Squid netsec.json lines from OPNsense; source ranges 10.0.20.1/32, 10.0.10.1/32; see `network-security-monitoring.md`) |
 | **10.0.20.210** (dedicated) | Cluster | crowdsec/crowdsec-lapi-edge→8080 TCP |
 | **10.0.20.212** (dedicated) | Local | crowdsec/crowdsec-c2-mirror→41412 TCP (plain-text list of CrowdSec `c2-block` decisions for OPNsense alias `crowdsec_c2`; source ranges 10.0.20.1/32, 10.0.10.1/32; see `network-security-monitoring.md`) |
+| **10.0.20.213** (dedicated) | Cluster | camera-import/sftpgo→22 TCP (SFTP from the Nikon Z5 II; LAN and tunnel only; see `docs/runbooks/camera-import.md`) |
+| **10.0.20.214** (dedicated) | Local | tang/tang-dell-worker→80 TCP (Tang for the Dell worker's State volume, ADR-0045; source ranges 192.168.8.0/24, 10.0.10.0/24) |
 | **10.0.20.213** (dedicated) | Cluster | camera-import/camera-import-sftp→22 TCP (SFTP inbox for the Nikon Z5 II, LAN and tunnel only; see `docs/runbooks/camera-import.md`) |
 
 **Mailserver does NOT use a LB IP** — inbound mail enters via OPNsense HAProxy on `10.0.20.1:{25,465,587,993}` → NodePorts `30125-30128` (PROXY-v2; see "Mail Server" below). (Earlier revisions of this table wrongly listed mailserver on `.200` and KMS on `.200` — both corrected 2026-06-03.)
