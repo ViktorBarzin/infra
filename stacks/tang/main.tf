@@ -17,7 +17,7 @@ locals {
   # Image: padhihomelab/tang builds latchset/jose and latchset/tang from pinned
   # commits on Alpine (github.com/padhi-homelab/docker_tang). Its entrypoint
   # wraps tangd in socat; tangd -l listens by itself, so it is called directly.
-  image = "padhihomelab/tang@sha256:3a9a5b1d07c70e97d6a3b56919acedf2abcd6b5e9ded132531123c719e0b267e"
+  image = "docker.io/padhihomelab/tang@sha256:3a9a5b1d07c70e97d6a3b56919acedf2abcd6b5e9ded132531123c719e0b267e"
 
   nodes = {
     "dell-worker" = {
