@@ -422,21 +422,42 @@ Projectivy takes the Home button through its accessibility service, which is
 on in `settings get secure enabled_accessibility_services`, and through
 Projectivy settings, General, "Override current launcher".
 
-The top row is the Favourites category, set as the default category: TV,
-ImmichFrame, Stremio, Netflix, YouTube. Three Stremio rows with show and film
-posters follow: Continue Watching and the Library rows for series and movies. TV
-Apps and Inputs come after them. The poster rows need Projectivy settings,
+The top row is the stock TV Apps category, set as the default category. It
+holds every installed app, so a newly installed app appears at its end. The
+order is custom: TV, ImmichFrame, Stremio, Netflix, YouTube, then the rest. To
+move an app, hold OK on it, choose "Reorder", press left or right, then OK.
+Three Stremio rows with show and film posters follow: Continue Watching and the
+Library rows for series and movies. Inputs comes after them. The Favourites
+category exists but is hidden. The poster rows need Projectivy settings,
 General, "Enable channels"; each app's rows are switched on under the gear,
-"Edit channels". Edit app rows under the gear, "Edit categories". Add an app
-with a long press on it, then "Add to…", then Favourites. To move a row, press
-left to the side menu, select the arrows icon next to the row, press up or
-down, then OK.
+"Edit channels". Show or hide whole rows under the gear, "Edit categories". To
+move a row, press left to the side menu, select the arrows icon next to the
+row, press up or down, then OK.
+
+The background is Projectivy's Wikimedia Commons source. Projectivy has no
+Immich source: a wallpaper plugin that reads the ImmichFrame server works, but
+Projectivy enables third-party plugins only with its Premium unlock (GBP 5.99),
+which Viktor declined on 2026-11-22. The plugin's code is on the unmerged branch
+`wizard/projectivy-wallpaper` of `viktor/portal-immich-frame`.
 
 Each `uiautomator dump` over adb stops the accessibility service, and the set
 shows an "Accessibility service" toast. It comes back by itself, but check
-`dumpsys accessibility` for `Bound services` after screen reads. If Home opens
-Google TV again, set the secure setting above again. To go back to Google TV,
-uninstall Projectivy.
+`dumpsys accessibility` for `Bound services` after screen reads. A force-stop
+of Projectivy (`am start -S`, `am force-stop`) clears the setting for good. If
+Home opens Google TV, set the secure setting above again and open Projectivy
+once. To go back to Google TV, uninstall Projectivy.
+
+### Screensaver
+
+The screensaver is ImmichFrame (`com.immichframe.immichframe/.ScreenSaverService`
+in `settings get secure screensaver_components`). It starts after 10 idle
+minutes (`settings get system screen_off_timeout`, 600000) and the set goes to
+standby 30 minutes later (`settings get secure sleep_timeout`, 1800000). For
+that, `settings get global stay_on_while_plugged_in` is 0: with its old value
+15 the screen never went idle, so no screensaver ever started. ImmichFrame
+loads its photos from `highlights-immich.viktorbarzin.me` (10.0.20.203), so
+the projector needs a device role that reaches that address ("Device roles"
+above). Without one it shows "Connecting to server".
 
 ## Robot vacuum camera
 
