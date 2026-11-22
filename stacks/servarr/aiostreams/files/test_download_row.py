@@ -96,13 +96,90 @@ class ChooseTests(unittest.TestCase):
         self.assertIsNone(dr.choose([P2P, EXTERNAL_ROW, UNCACHED]))
 
 
+UHD_MID = stream("🕵️ [RD⚡] Torrentio 2160p", "2160p", int(14.6 * GB), url="https://x/uhdmid", filename="uhdmid.mkv")
+SD_720_BIG = stream("🕵️ [RD⚡] Torrentio 720p", "720p", int(3.5 * GB), url="https://x/sd720big", filename="sd720big.mkv")
+SD_480 = stream("🕵️ [RD⚡] Torrentio 480p", "480p", int(0.7 * GB), url="https://x/sd480", filename="sd480.avi")
+
+
+def urls(rows):
+    return [r["externalUrl"] for r in rows]
+
+
+class OptionsTests(unittest.TestCase):
+    def test_recommended_first_then_a_ladder_by_quality(self):
+        streams = [REMUX_1080, SMALL_1080, MID_1080, SD_720, SD_720_BIG, UHD_SMALL, UHD_MID, UHD_REMUX]
+        self.assertEqual(
+            urls(dr.options(streams)),
+            [
+                "https://x/mid1080",  # recommended: largest 1080p up to 6 GB
+                "https://x/sd720",  # 720p smallest
+                "https://x/sd720big",  # 720p largest up to 15 GB
+                "https://x/small1080",  # 1080p smallest
+                "https://x/uhd",  # 4K smallest
+                "https://x/uhdmid",  # 4K largest up to 15 GB
+            ],
+        )
+
+    def test_only_the_smallest_when_nothing_else_fits_under_15_gb(self):
+        self.assertEqual(urls(dr.options([REMUX_1080, UHD_REMUX])), ["https://x/remux1080", "https://x/uhdremux"])
+
+    def test_no_second_row_when_the_bigger_file_is_barely_bigger(self):
+        twin = stream("🕵️ [RD⚡] Comet 1080p", "1080p", int(1.8 * GB), url="https://x/twin")
+        self.assertEqual(urls(dr.options([SMALL_1080, twin, SD_720])), ["https://x/twin", "https://x/sd720", "https://x/small1080"])
+
+    def test_480p_only_without_720p(self):
+        self.assertEqual(urls(dr.options([SMALL_1080, SD_480])), ["https://x/small1080", "https://x/sd480"])
+        self.assertNotIn("https://x/sd480", urls(dr.options([SMALL_1080, SD_720, SD_480])))
+
+    def test_english_only_file_fills_a_slot_before_a_dual_audio_one(self):
+        dual = stream("🕵️ [RD⚡] Torrentio 720p", "720p", int(0.9 * GB), url="https://x/dual720")
+        dual["description"] = "🌎 Hindi | English"
+        self.assertNotIn("https://x/dual720", urls(dr.options([SMALL_1080, dual, SD_720])))
+
+    def test_nothing_to_offer(self):
+        self.assertEqual(dr.options([P2P, EXTERNAL_ROW]), [])
+
+    def test_row_text(self):
+        first, *rest = dr.options([MID_1080, SMALL_1080, UHD_SMALL])
+        self.assertEqual(first["name"], "⬇ Recommended")
+        self.assertTrue(first["description"].startswith("1080p · 4.2 GB"))
+        self.assertEqual([r["name"] for r in rest], ["⬇ 1080p", "⬇ 4K"])
+        self.assertTrue(rest[1]["description"].startswith("4K · 5.5 GB"))
+        self.assertIn("uhd.mkv", rest[1]["description"])
+        self.assertNotIn("url", first)
+
+
+class TitleTests(unittest.TestCase):
+    def test_matches(self):
+        self.assertTrue(dr.title_matches("Paddington 2", "Paddington.2.2017.1080p.BluRay.mkv"))
+        self.assertTrue(dr.title_matches("Breaking Bad", "Breaking Bad s01e01-Pilot-1080p.x265.mkv"))
+        self.assertTrue(dr.title_matches("Mission: Impossible", "Mission.Impossible.1996.720p.mkv"))
+        self.assertTrue(dr.title_matches("Amélie", "Amelie.2001.1080p.mkv"))
+
+    def test_another_film(self):
+        self.assertFalse(dr.title_matches("Inception", "The Island of Dr. Moreau (1996) Director's Cut.mkv"))
+        self.assertFalse(dr.title_matches("Paddington 2", "Paddington.2014.1080p.mkv"))
+
+    def test_word_boundaries(self):
+        self.assertFalse(dr.title_matches("Up", "Upgrade.2018.1080p.mkv"))
+
+    def test_no_filename_is_kept(self):
+        self.assertTrue(dr.title_matches("Inception", ""))
+
+    def test_options_drop_other_films(self):
+        moreau = stream("🕵️ [RD⚡] Torrentio 720p", "720p", int(0.7 * GB), url="https://x/moreau", filename="The Island of Dr. Moreau (1996).mkv")
+        own = stream("🕵️ [RD⚡] Torrentio 720p", "720p", int(1.0 * GB), url="https://x/own", filename="Inception.2010.720p.mkv")
+        self.assertEqual(urls(dr.options([moreau, own], title="Inception")), ["https://x/own"])
+        self.assertEqual(urls(dr.options([moreau], title="Inception")), [])
+
+
 class RowTests(unittest.TestCase):
     def test_row(self):
         row = dr.row(SMALL_1080)
-        self.assertEqual(row["name"], "⬇ Download")
+        self.assertEqual(row["name"], "⬇ 1080p")
         self.assertEqual(row["externalUrl"], "https://x/small1080")
         self.assertNotIn("url", row)
-        self.assertIn("1080p · 1.6 GB", row["description"])
+        self.assertTrue(row["description"].startswith("1080p · 1.6 GB"))
         self.assertIn("Paddington 2 BONE.mkv", row["description"])
 
     def test_row_with_unknown_resolution(self):
@@ -141,7 +218,9 @@ class RouteTests(unittest.TestCase):
 class FakeUpstream:
     """Stands in for AIOStreams' user API and stream endpoint."""
 
-    def __init__(self, streams=None, fail_first_with=None, error=None):
+    def __init__(self, streams=None, fail_first_with=None, error=None, title=None):
+        self.title = title
+        self.meta_calls = []
         self.streams = streams or []
         self.fail_first_with = fail_first_with
         self.error = error
@@ -149,6 +228,11 @@ class FakeUpstream:
         self.stream_calls = []
 
     def get_json(self, url, auth=None):
+        if "/meta/" in url:
+            self.meta_calls.append(url)
+            if self.error:
+                raise self.error
+            return {"meta": {"name": self.title}} if self.title else {}
         if url.endswith("/api/v1/user"):
             self.password_fetches += 1
             return {"data": {"encryptedPassword": f"enc/{self.password_fetches}"}}
@@ -162,7 +246,20 @@ class FakeUpstream:
 
 class StreamsTests(unittest.TestCase):
     def make(self, upstream, variant=None):
-        return dr.Addon(base="http://localhost:3000", uuid="u-1", password="pw", get_json=upstream.get_json, variant=variant)
+        return dr.Addon(
+            base="http://localhost:3000", uuid="u-1", password="pw", get_json=upstream.get_json,
+            variant=variant, cinemeta="http://cinemeta",
+        )
+
+    def test_title_comes_from_the_show_not_the_episode(self):
+        up = FakeUpstream([SMALL_1080])
+        self.make(up).streams("series", "tt0903747:1:1")
+        self.assertEqual(up.meta_calls, ["http://cinemeta/meta/series/tt0903747.json"])
+
+    def test_drops_files_of_other_titles(self):
+        own = stream("🕵️ [RD⚡] Torrentio 720p", "720p", GB, url="https://x/own", filename="Inception.2010.720p.mkv")
+        up = FakeUpstream([SMALL_1080, own], title="Inception")  # SMALL_1080 is a Paddington file
+        self.assertEqual(urls(self.make(up).streams("movie", "tt1375666")["streams"]), ["https://x/own"])
 
     def test_asks_the_named_variant(self):
         up = FakeUpstream([SMALL_1080])
@@ -172,10 +269,11 @@ class StreamsTests(unittest.TestCase):
             ["http://localhost:3000/stremio/u-1/enc%2F1/v/download/stream/series/tt0903747:1:1.json"],
         )
 
-    def test_one_row(self):
+    def test_rows(self):
         up = FakeUpstream([REMUX_1080, SMALL_1080])
         result = self.make(up).streams("movie", "tt4468740")
-        self.assertEqual([r["externalUrl"] for r in result["streams"]], ["https://x/small1080"])
+        # The 23 GB remux is over the 15 GB ladder cap, so one row.
+        self.assertEqual(urls(result["streams"]), ["https://x/small1080"])
         self.assertEqual(up.stream_calls, ["http://localhost:3000/stremio/u-1/enc%2F1/stream/movie/tt4468740.json"])
 
     def test_password_is_fetched_once(self):
