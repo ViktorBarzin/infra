@@ -1,6 +1,16 @@
 # Backup & Disaster Recovery Architecture
 
-Last updated: 2026-11-11
+Last updated: 2026-11-22
+
+> **Rule (Viktor, 2026-11-22): every backup on sda belongs to a periodic job
+> that expires its own copies.** When a job retires, delete its data on sda the
+> same day; the monthly offsite full pass then removes the Synology copy. Do
+> not keep a retired job's last copies as a floor. On 2026-11-22 sda was at
+> 87.6% (`BackupDiskFull`), and 363 GB of it was data no job expired: the three
+> retired vzdump images (258 GB) and the retired devvm-home generations
+> (~105 GB). Deleting them, and the retired pfSense backups (4.9 GB), took sda
+> to 50%. Hand-made copies such as `manual-upgrade-*/` are removed by hand once
+> the upgrade is settled.
 
 > **2026-11-10 — the night runs as one ordered chain.** `nightly-chain` on the
 > PVE host (`scripts/nightly-chain.sh`, `nightly-chain.timer` at 00:00 UTC) is
@@ -26,9 +36,9 @@ Last updated: 2026-11-11
 > disposable now (`docs/plans/2026-11-11-disposable-devvm.md`) and the second
 > rebuild drill passed with nothing lost, so the file copy of `/home` stopped.
 > Its script and units still ship, disabled. Its last generations stay in
-> `/mnt/backup/devvm-home/` and the Synology copy; nothing rolls them over any
-> more, so they keep their contents, deleted secrets included
-> (`docs/runbooks/devvm-credentials.md`), until removed by hand.
+> `/mnt/backup/devvm-home/` and the Synology copy until 2026-11-22, when the
+> sda copy was deleted under the rule above (the Synology copy goes at the
+> next monthly full pass).
 >
 > The six step timers are disabled (`DISABLED_TIMERS` in
 > `scripts/ci/pve-scripts-sync.sh`). daily-backup, offsite-sync-backup and
@@ -122,13 +132,13 @@ The **bypass list** (leg 2) is just `/srv/nfs/immich/` — too big for sda (1.5 
 
 **3-2-1 Breakdown**:
 - **Copy 1** (live): all PVC data + VM disks on Proxmox sdc thin pool (10.7TB RAID1 HDD); all NFS data at `/srv/nfs[-ssd]/`
-- **Copy 2** (local backup): sda `/mnt/backup` (1.1TB RAID1 SAS) — **46% used** post-2026-05-26 (was 87% before anca-elements cleanup; bypass-list pruning added ~260 G of *-backup + ollama + audiblez + ebook2audiobook)
+- **Copy 2** (local backup): sda `/mnt/backup` (1.1TB RAID1 SAS) — **50% used** on 2026-11-22 after the retired vzdump, devvm-home and pfSense data was deleted (was 87.6%)
 - **Copy 3** (offsite): Synology NAS at 192.168.1.13
   - `Synology/Backup/Viki/pve-backup/` — sda contents (PVC backups + nfs-mirror output: ~90 service dirs incl. `*-backup` DB dumps. **ollama/audiblez/ebook2audiobook/prometheus-backup excluded 2026-06-01** — regenerable, live-only)
   - `Synology/Backup/Viki/nfs/` — immich only (post-2026-05-26)
   - `Synology/Backup/Viki/nfs-ssd/` — **immich-ML only (2026-06-01)**; ollama/llamacpp dropped (re-pullable models, live-only on the SSD)
 
-**VM image backups (added 2026-06-09, RETIRED 2026-09-15)**: no VM is imaged any more. The timer is disabled on purpose and `scripts/ci/pve-scripts-sync.sh` keeps it disabled (`DISABLED_TIMERS`), because each weekly run read all 228 GiB of devvm's disk and took sdc read latency from 0.23 ms to 107.26 ms. The devvm restore path is now the devvm playbook plus `devvm-home-backup`. The three images already on `/mnt/backup/vzdump/` (newest 2026-09-13) are a floor that no longer advances. The rest of this paragraph describes it as it ran. The hand-managed Linux VMs (those NOT in Terraform — see `compute.md`) were historically **not imaged at all** — only their *contents* reached backup if they happened to host a PVC/NFS path. `vzdump-vms` takes a weekly (Sunday 01:00) live `vzdump --mode snapshot` of each configured VMID → `/mnt/backup/vzdump/` (Copy 2), carried offsite by the monthly offsite-sync full pass (Copy 3). It was nightly until 2026-08-16; day-to-day cover for devvm is now `devvm-home-backup` (daily 03:30), and the image is the bare-metal restore floor. **Currently enabled for VMID 102 (devvm)** — the shared workstation, whose per-user home dirs + local-only git repos are otherwise irreplaceable. Extend via `VZDUMP_VMIDS` in the unit. See "VM Image Backups (vzdump)" under How It Works.
+**VM image backups (added 2026-06-09, RETIRED 2026-09-15)**: no VM is imaged any more. The timer is disabled on purpose and `scripts/ci/pve-scripts-sync.sh` keeps it disabled (`DISABLED_TIMERS`), because each weekly run read all 228 GiB of devvm's disk and took sdc read latency from 0.23 ms to 107.26 ms. The devvm restore path is now the devvm playbook plus `devvm-home-backup`. The three images it left on `/mnt/backup/vzdump/` (2026-08-30 to 2026-09-13, 258 GB) were deleted on 2026-11-22 under the rule at the top. The rest of this paragraph describes it as it ran. The hand-managed Linux VMs (those NOT in Terraform — see `compute.md`) were historically **not imaged at all** — only their *contents* reached backup if they happened to host a PVC/NFS path. `vzdump-vms` takes a weekly (Sunday 01:00) live `vzdump --mode snapshot` of each configured VMID → `/mnt/backup/vzdump/` (Copy 2), carried offsite by the monthly offsite-sync full pass (Copy 3). It was nightly until 2026-08-16; day-to-day cover for devvm is now `devvm-home-backup` (daily 03:30), and the image is the bare-metal restore floor. **Currently enabled for VMID 102 (devvm)** — the shared workstation, whose per-user home dirs + local-only git repos are otherwise irreplaceable. Extend via `VZDUMP_VMIDS` in the unit. See "VM Image Backups (vzdump)" under How It Works.
 
 ## Architecture Diagram
 
@@ -280,7 +290,7 @@ graph LR
 ```mermaid
 graph TB
     subgraph PVE["Proxmox Host (192.168.1.127)"]
-        subgraph sda["sda: 1.1TB RAID1 SAS — 70% used (315 GB free)"]
+        subgraph sda["sda: 1.1TB RAID1 SAS — 50% used (2026-11-22)"]
             sda_vg["VG: backup<br/>LV: data (ext4)<br/>/mnt/backup"]
             sda_content["pvc-data/<YYYY-WW>/<ns>/<pvc>/<br/>sqlite-backup/, opnsense/, pve-config/<br/>+ daily mirror of /srv/nfs/<svc>/ via nfs-mirror"]
         end
@@ -377,8 +387,8 @@ graph LR
 | OPNsense Backup | Nightly chain step 5 (daily-backup) | PVE host: `scp` over SSH | `/conf/config.xml`, newest 14 copies kept |
 | Site-router config | Weekly, Sunday 04:30 | PVE host: `router-config-backup` | `sysupgrade -b` archive per OpenWrt site router (mladost3-openwrt today), 8 kept |
 | Offsite Sync | Nightly chain step 8, last | PVE host: `offsite-sync-backup` | Two-step: sda→pve-backup + NFS→nfs/nfs-ssd via inotify |
-| VM Image Backup (vzdump) | **Retired 2026-09-15** (timer disabled) | PVE host: `vzdump-vms` | Was a weekly live `vzdump` of devvm → `/mnt/backup/vzdump/`. The last three images (newest 2026-09-13) stay as a floor that no longer advances; daily protection is `devvm-home-backup` |
-| devvm /home (incremental) | **Retired 2026-11-12** (removed from the nightly chain; last generations kept) | PVE host: `devvm-home-backup` | `rsync --link-dest` hardlink generations of devvm `/home` → `/mnt/backup/devvm-home/` |
+| VM Image Backup (vzdump) | **Retired 2026-09-15** (timer disabled) | PVE host: `vzdump-vms` | Was a weekly live `vzdump` of devvm → `/mnt/backup/vzdump/`. Its last three images were deleted on 2026-11-22; the devvm is rebuilt from code (`docs/plans/2026-11-11-disposable-devvm.md`) |
+| devvm /home (incremental) | **Retired 2026-11-12** (removed from the nightly chain; last generations deleted 2026-11-22) | PVE host: `devvm-home-backup` | `rsync --link-dest` hardlink generations of devvm `/home` → `/mnt/backup/devvm-home/` |
 | T3 snapshots | Nightly chain step 7, keep 3 per user | PVE host: `t3-state-pull` | devvm `/var/backups/t3-state/<user>/` daily snapshots → `/mnt/backup/t3-state/<user>/`, gzipped; restored by `t3-restore-state` on the devvm |
 | PostgreSQL Backup (full) | Nightly chain dumps, 14d retention | CronJob in `dbaas` namespace | pg_dumpall for all databases |
 | PostgreSQL Backup (per-db) | Nightly chain dumps (same Job as the full dump), 14d retention | CronJob in `dbaas` namespace | pg_dump -Fc per database → `/backup/per-db/<db>/`; Cloud `p_*` databases → `/backup/cloud-per-db/<db>/` |
@@ -583,7 +593,7 @@ instead so T3 runs its own import.
 - `scp root@10.0.20.1:/conf/config.xml` to `config-<date>.xml`; root on the PVE host logs in with `/root/.ssh/id_rsa`, authorized by `playbooks/opnsense.yml --tags users`
 - The newest 14 copies are kept
 - The configuration source is also in git (`playbooks/files/opnsense/*.yml`), so this copy is for a fast restore of the exact running state
-- Replaced the pfSense step, which took config.xml via the API plus a weekly filesystem tar, at the 2026-11-10 cutover. `/mnt/backup/pfsense/` keeps the last pfSense backups, 4.7 GB on 2026-11-10, and nothing adds to or prunes it now
+- Replaced the pfSense step, which took config.xml via the API plus a weekly filesystem tar, at the 2026-11-10 cutover. The last pfSense backups in `/mnt/backup/pfsense/` were deleted on 2026-11-22; the stopped pfSense VM 101 is the rollback. `nfs-mirror` protects `/opnsense/` since 2026-11-22: before that its nightly `--delete` removed all but the newest copy, so sda held 1 copy, not 14
 
 **Site-router config backups** (`router-config-backup`, separate from daily-backup):
 - **Script**: `/usr/local/bin/router-config-backup` on the PVE host (source `infra/scripts/router-config-backup.sh`, unit + timer alongside). Deploy is CI, like the others (see "Deploying the PVE host scripts").
@@ -848,8 +858,8 @@ Nothing in this set is deployed by hand any more.
 | `/usr/local/bin/vzdump-vms` | PVE host: live `vzdump` image of devvm → `/mnt/backup/vzdump/`. **Retired 2026-09-15**, still deployed so reviving it is one `systemctl enable` |
 | `/usr/local/bin/devvm-home-backup` | PVE host: daily incremental `rsync --link-dest` of devvm `/home` → `/mnt/backup/devvm-home/`. ~29 GB per generation after the 2026-09-03 exclude fix (was 37 GB — virtualenvs and four SDK caches were slipping through) |
 | `/mnt/backup/` | PVE host: sda mount point (1.1TB backup disk) |
-| `/mnt/backup/vzdump/` | PVE host: vzdump VM images (keep 3 per VMID), mirrored offsite monthly |
-| `/mnt/backup/devvm-home/` | PVE host: devvm `/home` hardlink generations (keep 14), mirrored offsite monthly (`-H` preserves the link farm) |
+| `/mnt/backup/vzdump/` | PVE host: vzdump VM images (keep 3 per VMID). Empty since 2026-11-22: the job is retired and its images were deleted |
+| `/mnt/backup/devvm-home/` | PVE host: devvm `/home` hardlink generations (keep 14). Deleted 2026-11-22: the job is retired |
 | `/mnt/backup/.nfs-changes.log` | NFS change log from inotifywait, consumed by offsite-sync |
 | `/etc/systemd/system/nfs-change-tracker.service` | inotifywait watcher for `/srv/nfs` + `/srv/nfs-ssd` |
 | `/usr/local/bin/nightly-chain` | PVE host: runs the night's dumps and the six host steps in order, holding kured's node lock (source `infra/scripts/nightly-chain.{sh,service,timer}`, helper `kured-lock.sh`) |
@@ -1086,14 +1096,14 @@ ssh root@192.168.1.127
 
 # Check space usage by component
 du -sh /mnt/backup/pvc-data/*
-du -sh /mnt/backup/opnsense /mnt/backup/pfsense
+du -sh /mnt/backup/opnsense /mnt/backup/clickhouse-backup /mnt/backup/claude-sessions-backup
 du -sh /mnt/backup/sqlite-backup
 
 # Clean up old weekly versions (keep latest 2)
 find /mnt/backup/pvc-data -maxdepth 1 -type d -name "????-??" | sort | head -n -2 | xargs rm -rf
 ```
 
-Nothing prunes `/mnt/backup/pfsense/` any more: it holds the last pfSense backups, about 4.7 GB on 2026-11-10.
+A `du` of all of `/mnt/backup` takes more than 7 minutes. Size one top-level directory at a time, each with its own `timeout`. Look first for data that no job expires (a retired job, a hand-made copy) and for a job whose retention kept a burst of large runs: on 2026-11-22 the rybbit `clickhouse-backup` held 54 GB of 14-day-old full dumps, 30 GB of them test runs.
 
 ### Missing Backup for New Service
 

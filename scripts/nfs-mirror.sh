@@ -61,7 +61,10 @@ EXCLUDES=(
     # reaps any /mnt/backup dir that has no /srv/nfs counterpart.
     --exclude='/pvc-data/'
     --exclude='/sqlite-backup/'
-    --exclude='/pfsense/'
+    # daily-backup's OPNsense config.xml copies (14 kept). Added 2026-11-22: the
+    # 2026-11-10 cutover moved that step from /pfsense/ to /opnsense/ without
+    # this line, so every night this mirror deleted all but the newest copy.
+    --exclude='/opnsense/'
     --exclude='/pve-config/'
     --exclude='/vzdump/'       # VM images from vzdump-vms — NOT a /srv/nfs svc (else --delete reaps them nightly)
     # devvm-home-backup's hardlink generations, added 2026-08-16 with no
