@@ -24,6 +24,7 @@ import patterns
 PATTERNS = tuple(patterns.PATTERNS)
 COLOUR_PATTERNS = tuple(p.name for p in patterns.PATTERNS.values() if p.colour)
 DEFAULT_COUNT = 150
+DEFAULT_MUSIC_DELAY_MS = 200  # Bluetooth delay to the speaker; tuned by ear
 STATE_FILE = Path("/data/state.json")
 OPTIONS_FILE = Path("/data/options.json")
 SCRIPT = Path(__file__).with_name("play.py")
@@ -91,13 +92,25 @@ def led_count(path: Path) -> int:
     return n if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= 1000 else DEFAULT_COUNT
 
 
-def command(state: State, count: int = DEFAULT_COUNT) -> list[str]:
+def music_delay_ms(path: Path) -> int:
+    """How long the music patterns wait for the speaker, from the add-on options."""
+    try:
+        ms = json.loads(path.read_text()).get("music_delay_ms")
+    except (OSError, ValueError, AttributeError):
+        return DEFAULT_MUSIC_DELAY_MS
+    ok = isinstance(ms, int) and not isinstance(ms, bool) and 0 <= ms <= 2000
+    return ms if ok else DEFAULT_MUSIC_DELAY_MS
+
+
+def command(state: State, count: int = DEFAULT_COUNT,
+            music_delay_ms: int = DEFAULT_MUSIC_DELAY_MS) -> list[str]:
     return [
         sys.executable, str(SCRIPT),
         "--pattern", state["pattern"],
         "--rgb", ",".join(str(c) for c in state["rgb"]),
         "--brightness", str(state["brightness"]),
         "--count", str(count),
+        "--music-delay-ms", str(music_delay_ms),
     ]
 
 
@@ -115,9 +128,11 @@ def save(path: Path, state: State) -> None:
 
 
 class Strip:
-    def __init__(self, state_file: Path, count: int = DEFAULT_COUNT) -> None:
+    def __init__(self, state_file: Path, count: int = DEFAULT_COUNT,
+                 music_delay_ms: int = DEFAULT_MUSIC_DELAY_MS) -> None:
         self.state_file = state_file
         self.count = count
+        self.music_delay_ms = music_delay_ms
         self.state = load(state_file)
         self.proc: subprocess.Popen[bytes] | None = None
         self.lock = threading.Lock()
@@ -143,7 +158,7 @@ class Strip:
     def _apply(self) -> None:
         self._stop()
         if self.state["on"]:
-            argv = command(self.state, self.count)
+            argv = command(self.state, self.count, self.music_delay_ms)
             print("starting", " ".join(argv[1:]), flush=True)
             self.proc = subprocess.Popen(argv)
 
@@ -223,7 +238,7 @@ def handler(strip: Strip) -> type[BaseHTTPRequestHandler]:
 
 
 def main() -> None:
-    strip = Strip(STATE_FILE, led_count(OPTIONS_FILE))
+    strip = Strip(STATE_FILE, led_count(OPTIONS_FILE), music_delay_ms(OPTIONS_FILE))
     strip.start()
     httpd = ThreadingHTTPServer(("0.0.0.0", PORT), handler(strip))
 

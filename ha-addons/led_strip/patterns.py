@@ -673,6 +673,93 @@ def ruler(n: int, colour: RGB, rng: random.Random) -> Frames:
     yield pixels, None
 
 
+# --- music -------------------------------------------------------------------
+# The music patterns draw what the radio plays. music.py listens to the Pi's
+# sound and sets `listen`; without it (tests, previews) they follow a made-up
+# demo signal, so they still move.
+
+BANDS = 10
+MUSIC_FRAME = 1 / 30
+# Bass to treble: red, orange, amber, yellow, lime, green, teal, blue, indigo, violet.
+SPECTRUM: list[RGB] = [(255, 0, 0), (255, 70, 0), (255, 140, 0), (230, 210, 0), (120, 255, 0),
+                       (0, 255, 40), (0, 200, 160), (0, 90, 255), (70, 0, 255), (170, 0, 255)]
+GLOW = 0.04  # what an unlit part of a music pattern keeps, so the strip never looks dead
+
+
+@dataclass(frozen=True)
+class Levels:
+    bands: tuple[float, ...]  # loudness per band, 0 to 1, bass first
+    level: float  # overall loudness, 0 to 1
+    beat: float  # 1 on a bass beat, falling back to 0
+
+
+SILENCE = Levels((0.0,) * BANDS, 0.0, 0.0)
+
+
+def demo_levels(t: float) -> Levels:
+    """A made-up signal: bands rising and falling, a beat twice a second."""
+    bands = tuple(0.5 + 0.45 * math.sin(t * (1.3 + i * 0.37) + i) for i in range(BANDS))
+    beat = max(0.0, 1 - (t * 2 % 1) * 4)
+    return Levels(bands, 0.55 + 0.4 * math.sin(t * 1.7), beat)
+
+
+listen: Callable[[float], Levels] = demo_levels  # t = seconds since the pattern started
+
+
+def music_spectrum(n: int, colour: RGB, rng: random.Random) -> Frames:
+    shown = [0.0] * BANDS
+    peaks = [0.0] * BANDS
+    t = 0.0
+    while True:
+        now = listen(t)
+        for b in range(BANDS):
+            # Rise at once, fall back gently; the peak dot falls slower still.
+            shown[b] = max(now.bands[b], shown[b] * 0.85)
+            peaks[b] = max(shown[b], peaks[b] - 0.015)
+        pixels: Pixels = []
+        for j in range(n):
+            pos = j * BANDS / n
+            b = min(BANDS - 1, int(pos))
+            f = pos - b  # where this LED sits inside its band, 0 to 1
+            step = BANDS / n
+            base = SPECTRUM[b]
+            if f < shown[b] or (f == 0 and shown[b] > 0.05):
+                pixels.append(base)
+            elif peaks[b] > 0.05 and f <= peaks[b] < f + step:
+                pixels.append(mix(base, WHITE, 0.6))
+            else:
+                pixels.append(scale(base, GLOW))
+        yield pixels, MUSIC_FRAME
+        t += MUSIC_FRAME
+
+
+def music_meter(n: int, colour: RGB, rng: random.Random) -> Frames:
+    shown = 0.0
+    t = 0.0
+    centre = (n - 1) / 2
+    half = max(n / 2, 0.5)
+    while True:
+        shown = max(listen(t).level, shown * 0.88)
+        pixels: Pixels = []
+        for j in range(n):
+            d = abs(j - centre) / half  # 0 in the middle, 1 at the ends
+            colour_here = mix((0, 255, 0), (255, 220, 0), d * 2) if d < 0.5 else mix((255, 220, 0), (255, 0, 0), d * 2 - 1)
+            pixels.append(colour_here if d <= shown else scale(colour_here, GLOW))
+        yield pixels, MUSIC_FRAME
+        t += MUSIC_FRAME
+
+
+def music_pulse(n: int, colour: RGB, rng: random.Random) -> Frames:
+    flash = 0.0
+    t = 0.0
+    while True:
+        now = listen(t)
+        flash = max(now.beat, flash * 0.8)
+        k = GLOW * 2 + (1 - GLOW * 2) * max(flash, now.level * 0.3)
+        yield solid(n, scale(hue(t / 40), k)), MUSIC_FRAME
+        t += MUSIC_FRAME
+
+
 # --- the list ----------------------------------------------------------------
 
 
@@ -684,6 +771,7 @@ class Pattern:
     about: str
     frames: Callable[[int, RGB, random.Random], Frames]
     colour: bool = False  # uses the colour picked in Home Assistant
+    music: bool = False  # draws what the radio plays (play.py starts music.py)
 
 
 PATTERNS: dict[str, Pattern] = {p.name: p for p in [
@@ -723,5 +811,8 @@ PATTERNS: dict[str, Pattern] = {p.name: p for p in [
     Pattern("comet", "Comet", "Your colour", "A head with a fading tail runs along", comet, colour=True),
     Pattern("scanner", "Scanner", "Your colour", "An eye sweeps back and forth", scanner, colour=True),
     Pattern("theater_chase", "Chase", "Your colour", "Dots marching like cinema lights", theater_chase, colour=True),
+    Pattern("music_spectrum", "Spectrum bars", "Music", "Ten bands from bass to treble, following the radio", music_spectrum, music=True),
+    Pattern("music_meter", "Level meter", "Music", "Grows from the middle with the radio's loudness", music_meter, music=True),
+    Pattern("music_pulse", "Beat pulse", "Music", "The whole strip flashes on the bass beat", music_pulse, music=True),
     Pattern("ruler", "Ruler", "Setup", "LED 1 blue, every 10th red, every 50th green", ruler),
 ]}

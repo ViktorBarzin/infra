@@ -133,3 +133,15 @@ _Avoid_: player, Echo, projector speaker
 **Station directory**:
 The public list of internet radio stations from which any station can be found and played without a button.
 _Avoid_: catalogue, station list
+
+**Pattern**:
+One animation the Livia LED strip can show, such as aurora or candle. The strip shows one Pattern at a time.
+_Avoid_: effect, scene, animation
+
+**Music pattern**:
+A Pattern drawn from the radio's sound as it plays: spectrum bars, a level meter or a beat pulse.
+_Avoid_: equalizer, visualiser, sound-reactive mode
+
+**Follow music**:
+The setting that makes the strip show the chosen Music pattern while the radio plays, and the earlier Pattern again when it stops.
+_Avoid_: sync, music mode, auto lights

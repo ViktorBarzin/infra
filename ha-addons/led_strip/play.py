@@ -88,6 +88,8 @@ def main() -> None:
     parser.add_argument("--rgb", type=parse_rgb, default=(176, 143, 18))
     parser.add_argument("--brightness", type=int, default=102, help="1 to 255")
     parser.add_argument("--count", type=int, default=150, help="LEDs on the strip")
+    parser.add_argument("--music-delay-ms", type=int, default=200,
+                        help="how long music patterns wait for the Bluetooth speaker")
     args = parser.parse_args()
 
     from rpi_ws281x import Adafruit_NeoPixel  # only on the Pi
@@ -96,6 +98,12 @@ def main() -> None:
                               args.brightness, LED_CHANNEL)
     strip.begin()
     pattern = patterns.PATTERNS[args.pattern]
+    if pattern.music:
+        import music  # numpy and parec, only for the music patterns
+
+        feed = music.Feed(args.music_delay_ms / 1000)
+        feed.start()
+        patterns.listen = feed.levels
     rng = random.Random()
     try:
         play(strip, lambda: pattern.frames(args.count, args.rgb, rng))

@@ -12,11 +12,14 @@ init: false
 boot: auto
 startup: application
 devicetree: true
+audio: true
 devices:
   - /dev/spidev0.0
   - /dev/gpiomem
 watchdog: tcp://[HOST]:[PORT:8099]
 options:
   led_count: 150
+  music_delay_ms: 200
 schema:
   led_count: "int(1,1000)"
+  music_delay_ms: "int(0,2000)"

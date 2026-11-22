@@ -13,7 +13,11 @@ RUN apk add --no-cache --virtual .build gcc musl-dev linux-headers \
     && rm -rf /tmp/src \
     && apk del .build
 
+# The music patterns: parec records the Pi's output, numpy finds the bands.
+RUN apk add --no-cache pulseaudio-utils \
+    && pip install --no-cache-dir --only-binary=:all: numpy==2.3.5
+
 WORKDIR /app
-COPY server.py play.py patterns.py ./
+COPY server.py play.py patterns.py music.py ./
 
 CMD ["python3", "-u", "server.py"]

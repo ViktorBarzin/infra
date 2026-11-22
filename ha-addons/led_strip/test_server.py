@@ -79,6 +79,20 @@ class NewPatternTest(unittest.TestCase):
             path.write_text(json.dumps({"led_count": 0}))
             self.assertEqual(server.led_count(path), 150)
 
+    def test_music_delay_is_passed_through(self):
+        state = server.merge(server.DEFAULT_STATE, {"on": True, "pattern": "music_spectrum"})
+        argv = server.command(state, music_delay_ms=250)
+        self.assertEqual(argv[argv.index("--music-delay-ms") + 1], "250")
+
+    def test_music_delay_from_options_with_fallback(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "options.json"
+            self.assertEqual(server.music_delay_ms(path), server.DEFAULT_MUSIC_DELAY_MS)
+            path.write_text(json.dumps({"led_count": 150, "music_delay_ms": 320}))
+            self.assertEqual(server.music_delay_ms(path), 320)
+            path.write_text(json.dumps({"music_delay_ms": -5}))
+            self.assertEqual(server.music_delay_ms(path), server.DEFAULT_MUSIC_DELAY_MS)
+
 
 class PersistTest(unittest.TestCase):
     def test_round_trip_and_fallback(self):

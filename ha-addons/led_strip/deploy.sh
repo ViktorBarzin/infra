@@ -20,7 +20,7 @@ tag_exists() {
 }
 until tag_exists; do echo "waiting for ghcr.io/$image:$version (push to master builds it)"; sleep 30; done
 
-tar -C "$here" -czf - Dockerfile config.yaml server.py play.py patterns.py \
+tar -C "$here" -czf - Dockerfile config.yaml server.py play.py patterns.py music.py \
   | ssh_ha 'sudo rm -rf /addons/led_strip && sudo mkdir -p /addons/led_strip && sudo tar -C /addons/led_strip -xzf - && ls /addons/led_strip'
 
 ssh_ha 'bash -s' <<'EOF'
