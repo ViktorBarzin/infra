@@ -44,6 +44,12 @@ Use this runbook when you need to surface a new directory under `/srv/nfs/` or `
 
    Log in as a granted user — `/<archive-name>` must appear in their NC sidebar; read, upload, and delete must all work. Log in as a non-granted user and confirm the mount is not visible at all.
 
+## Opening an archive in Finder
+
+A large archive does not fit a laptop's full sync, so the macOS desktop client excludes it. To browse it in Finder, switch the account to on-demand files: the File Provider checkbox in the client's account settings, or `macFileProviderModeEnabled=true` in `~/Library/Containers/com.nextcloud.desktopclient/Data/Library/Preferences/Nextcloud/nextcloud.cfg` with the client quit. The archive then appears under `~/Library/CloudStorage/Nextcloud-<host>-<user>/` and each file downloads when opened.
+
+In that mode the client downloads every file that matches its ignore list (`Contents/Resources/sync-exclude.lst` in the app) in full. Before you switch a laptop over, size the archive's matches; unfinished browser downloads (`*.crdownload`, `*.part`) are the usual large ones. On 2026-11-22 `/anca-elements` held 42 GB of `*.crdownload`, which the client began to download onto a Mac with 12 GB free. They also fill every download slot, so files the user opens hang with "Operation timed out".
+
 ## Backout
 
 Remove the entry from `archiveMounts` in the manifest ConfigMap, then `scripts/tg apply`. The bootstrap Job re-runs and removes the mount. The root mounts (`PVE NFS Pool`, `PVE NFS-SSD Pool`, visible to group `admin` only) are unaffected throughout.
