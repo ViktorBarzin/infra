@@ -385,6 +385,30 @@ resource "kubernetes_service" "bambuddy" {
   }
 }
 
+# The web app loads its JavaScript chunks, the model thumbnails and a burst of
+# API calls at once; the default 10/50 per-client limiter answered 429 to the
+# login page's own API calls on first load (2026-11-22), as it did for
+# GlitchTip.
+resource "kubernetes_manifest" "rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "bambuddy-rate-limit"
+      namespace = kubernetes_namespace.bambuddy.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = 50
+        burst   = 300
+        sourceCriterion = {
+          requestHeaderName = "X-Client-Prefix"
+        }
+      }
+    }
+  }
+}
+
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # Forward auth would 302 the `homelab print` API calls, which authenticate
@@ -395,6 +419,12 @@ module "ingress" {
   namespace       = kubernetes_namespace.bambuddy.metadata[0].name
   name            = "bambuddy"
   tls_secret_name = var.tls_secret_name
+  # real-ip first so X-Client-Prefix is set for the per-client limiter.
+  skip_default_rate_limit = true
+  extra_middlewares = [
+    "traefik-real-ip@kubernetescrd",
+    "bambuddy-bambuddy-rate-limit@kubernetescrd",
+  ]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Bambuddy"
