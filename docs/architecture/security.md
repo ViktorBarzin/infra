@@ -1224,12 +1224,13 @@ spec:
 
 ### Anti-AI Service Down, Traffic Blocked
 
-**Problem**: anti-AI ForwardAuth (`ai-bot-block`) blocks traffic. With `bot-block-proxy` as a no-op `return 200` (poison-fountain scaled to 0) this should not happen; if it does, `bot-block-proxy` itself is unreachable (Traefik ForwardAuth fails **closed** when the auth server is down).
+**Problem**: anti-AI ForwardAuth (`ai-bot-block`) blocks traffic. With `bot-block-proxy` as a no-op allow-all (poison-fountain scaled to 0) this should not happen; if it does, `bot-block-proxy` itself is unreachable (Traefik ForwardAuth fails **closed** when the auth server is down).
 
 **Fix**:
 1. Check `bot-block-proxy` pods are Ready: `kubectl get pods -n traefik -l app=bot-block-proxy` (2 replicas; critical-path forward-auth target).
 2. Inspect/restart: `kubectl rollout restart deployment/bot-block-proxy -n traefik`. Config lives in the `bot-block-proxy-config` ConfigMap (`stacks/traefik/modules/traefik/main.tf`); changes auto-reload via the `configmap.reloader.stakater.com/reload` annotation.
 3. Temporary disable: Set `anti_ai_scraping = false` in `ingress_factory` for affected services.
+4. **Only conditional writes fail with 412** (Nextcloud desktop "Precondition Failed" on an existing file, CalDAV edits): the Traefik access log shows `DownstreamStatus 412` with `OriginStatus 0`, and `bot-block-proxy` logs `GET /auth ... 412`. forwardAuth copies the client's `If-Match` / `If-Unmodified-Since` onto the auth request and nginx judges them against its own 200. The `/auth` location clears those headers in `access_by_lua_block`, which only runs if the response comes from a content handler; a `return` directive skips it. Check: `printf 'GET /auth HTTP/1.0\r\nIf-Match: "x"\r\n\r\n' | nc 127.0.0.1 8080` inside a `bot-block-proxy` pod must answer 200.
 
 ### Rate Limit Too Aggressive
 

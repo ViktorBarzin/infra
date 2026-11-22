@@ -785,6 +785,12 @@ resource "kubernetes_config_map" "bot_block_proxy_config" {
           large_client_header_buffers 8 256k;
 
           location /auth {
+              # Traefik's forwardAuth copies the client's request headers onto
+              # this GET. nginx's not_modified filter then judges a client's
+              # If-Match / If-Unmodified-Since against THIS 200 response and
+              # answers 412, which Traefik hands back to the client. That broke
+              # every conditional write behind ai-bot-block: Nextcloud desktop
+              # updates to existing files and CalDAV edits. Clear them first.
               access_by_lua_block {
                   ngx.req.clear_header("If-Match")
                   ngx.req.clear_header("If-None-Match")
@@ -800,7 +806,14 @@ resource "kubernetes_config_map" "bot_block_proxy_config" {
               # logs shipped to Loki (2026-06-05) and cost up to 100ms/req. To
               # re-enable the trap: restore the upstream + proxy_pass (git
               # history) and scale poison-fountain up.
-              return 200 "allowed";
+              #
+              # The answer MUST come from a content handler, not `return`:
+              # `return` ends the request in the rewrite phase, before the
+              # access phase, so the header clearing above never ran and every
+              # conditional request got 412 (June to 2026-11-22).
+              content_by_lua_block {
+                  ngx.print("allowed")
+              }
           }
           location /healthz {
               access_log off;
