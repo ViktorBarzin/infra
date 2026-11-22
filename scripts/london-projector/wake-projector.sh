@@ -122,7 +122,9 @@ status() {
     sed -n 's/.*topResumedActivity=ActivityRecord{[^ ]* [^ ]* \([^ ]*\).*/\1/p' | head -1)"
   home="$("$ADB" -s "$HOST:5555" shell cmd package resolve-activity --brief \
     -a android.intent.action.MAIN -c android.intent.category.HOME 2>/dev/null | tail -1 | tr -d '\r')"
-  if [ -n "$top" ] && [ "$top" = "$home" ]; then
+  # Projectivy is the launcher people see since 2026-11-22: it takes the Home
+  # button through an accessibility service, so HOME still resolves to launcherx.
+  if [ -n "$top" ] && { [ "$top" = "$home" ] || [ "${top%%/*}" = "com.spocky.projengmenu" ]; }; then
     echo "free: on, showing the launcher ($stamp)"
   else
     echo "in use: ${top:-unknown} is on screen, so someone is watching ($stamp)"

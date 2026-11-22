@@ -303,6 +303,14 @@ def test_status_reports_the_launcher_as_free(tmp_path):
     assert result.stdout.startswith("free: on, showing the launcher")
 
 
+def test_status_reports_projectivy_as_the_launcher(tmp_path):
+    # Since 2026-11-22 Projectivy takes the Home button through its
+    # accessibility service; the system HOME intent still resolves to launcherx.
+    result, _, _ = run_status(tmp_path, top="com.spocky.projengmenu/.ui.home.MainActivity")
+    assert result.returncode == 0
+    assert result.stdout.startswith("free: on, showing the launcher")
+
+
 def test_status_reports_standby_as_free(tmp_path):
     result, _, _ = run_status(tmp_path, wakefulness="Asleep")
     assert result.returncode == 0

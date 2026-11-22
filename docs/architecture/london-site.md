@@ -388,6 +388,27 @@ and the set answers `_googlecast._tcp` about 3 minutes later. The reboot can
 reset adb authorization, so someone at the set must accept the devvm's key
 with "Always allow from this computer".
 
+### Home screen
+
+The home screen is Projectivy Launcher (`com.spocky.projengmenu`, free tier,
+from Google Play), not Google TV. Google TV puts a sponsored banner of
+streaming apps above "Your apps" and has no setting to remove it. Google TV
+(`launcherx`) is still installed and still the system HOME activity.
+Projectivy takes the Home button through its accessibility service, which is
+on in `settings get secure enabled_accessibility_services`, and through
+Projectivy settings, General, "Override current launcher".
+
+The top row is the Favourites category, set as the default category: TV,
+ImmichFrame, Stremio, Netflix, YouTube. TV Apps and Inputs follow. Edit rows
+from the gear at the top right, then "Edit categories". Add an app with a long
+press on it, then "Add to…", then Favourites.
+
+Each `uiautomator dump` over adb stops the accessibility service, and the set
+shows an "Accessibility service" toast. It comes back by itself, but check
+`dumpsys accessibility` for `Bound services` after screen reads. If Home opens
+Google TV again, set the secure setting above again. To go back to Google TV,
+uninstall Projectivy.
+
 ## Robot vacuum camera
 
 The robot vacuum Yiko (Ecovacs DEEBOT X8 PRO OMNI, 192.168.8.175) is
