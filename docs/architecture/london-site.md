@@ -401,9 +401,14 @@ on in `settings get secure enabled_accessibility_services`, and through
 Projectivy settings, General, "Override current launcher".
 
 The top row is the Favourites category, set as the default category: TV,
-ImmichFrame, Stremio, Netflix, YouTube. TV Apps and Inputs follow. Edit rows
-from the gear at the top right, then "Edit categories". Add an app with a long
-press on it, then "Add to…", then Favourites.
+ImmichFrame, Stremio, Netflix, YouTube. Three Stremio rows with show and film
+posters follow: Continue Watching and the Library rows for series and movies. TV
+Apps and Inputs come after them. The poster rows need Projectivy settings,
+General, "Enable channels"; each app's rows are switched on under the gear,
+"Edit channels". Edit app rows under the gear, "Edit categories". Add an app
+with a long press on it, then "Add to…", then Favourites. To move a row, press
+left to the side menu, select the arrows icon next to the row, press up or
+down, then OK.
 
 Each `uiautomator dump` over adb stops the accessibility service, and the set
 shows an "Accessibility service" toast. It comes back by itself, but check
