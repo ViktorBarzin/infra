@@ -47,7 +47,7 @@ envsubst on /template/job-template.yaml  | kubectl apply -f -
 
 Job 0 — preflight       (pinned: k8s-node1, +nvidia.com/gpu:NoSchedule toleration)
   ├── compat-gate: addon/API/containerd support for target (else BLOCK-actionable+alert / HOLD-quiet)
-  ├── All nodes Ready + no Mem/Disk pressure
+  ├── All nodes Ready + no Mem/Disk pressure (Opportunistic workers excepted)
   ├── halt-on-alert (kured-style ignore-list)
   ├── 24h-quiet baseline (no Ready transitions <24h ago)
   ├── kubeadm upgrade plan matches target (skipped when master already at target — partial-resume)
@@ -108,6 +108,19 @@ them in Loki with `{namespace="k8s-upgrade"} |= "[k8s-upgrade-"`.
   (`worker_nodes` / `next_pending_worker` in `scripts/upgrade-step.sh`), so
   **adding a node needs no change** — the chain upgrades every worker still
   off-target, then runs postflight. SSH uses node InternalIPs (no DNS needed).
+- **Opportunistic workers are not in the chain** (label
+  `node-role.viktorbarzin.me/opportunistic`, ADR-0045; the first is
+  `dell-worker`). Every node listing in `upgrade-step.sh` and the detection
+  CronJob's oldest-kubelet probe leave them out: the readiness, pressure and
+  settle gates, the worker sequence, the containerd skew probe, the apt repo
+  rewrite and the postflight version check. They are offline for days by
+  design. After the chain finishes, upgrade each one by re-running
+  `playbooks/physical-node.yml` with the new pinned version
+  (`docs/runbooks/physical-node.md`). Until then it runs an older kubelet,
+  which Kubernetes allows up to three minor versions behind the API server;
+  `K8sVersionSkew` and the healthcheck's node check leave it out too.
+  `test_upgrade_step_opportunistic.py` fails if a new `get nodes` misses the
+  exclusion.
 
 ### Auto-upgrade compat gate
 

@@ -197,6 +197,22 @@ resource "helm_release" "tigera_operator" {
       requests = { cpu = "50m", memory = "512Mi" }
       limits   = { memory = "1Gi" }
     }
+    # The operator tolerates every taint (chart default), so without this it
+    # could land on an Opportunistic worker (ADR-0045). When that node goes
+    # offline, the pod tolerates the unreachable taint too and stays bound to
+    # it, and nothing reconciles Calico until the node returns.
+    affinity = {
+      nodeAffinity = {
+        requiredDuringSchedulingIgnoredDuringExecution = {
+          nodeSelectorTerms = [{
+            matchExpressions = [{
+              key      = "node-role.viktorbarzin.me/opportunistic"
+              operator = "DoesNotExist"
+            }]
+          }]
+        }
+      }
+    }
   })]
 }
 
@@ -309,6 +325,38 @@ resource "kubectl_manifest" "installation_dual_stack" {
         ]
         nodeAddressAutodetectionV6 = { cidrs = ["2001:470:5a7f:20::/64"] }
       }
+    }
+  })
+}
+
+# Pod MTU on dell-worker, the first Opportunistic worker (ADR-0045). It
+# reaches the cluster from London through the WireGuard tunnel, whose path MTU
+# is 1200 bytes. Felix auto-detects the MTU from the host's own interfaces
+# (Wi-Fi, 1500), so without this its pods would get 1450 and any packet over
+# 1150 would be dropped or fragmented in the tunnel. VXLAN adds 50 bytes over
+# IPv4 and 70 over IPv6, so 1150 and 1130.
+#
+# The Installation's calicoNetwork.mtu is cluster-wide and stays unset here, so
+# the cni-config carries mtu 0 and each node takes its pod MTU from the file
+# Felix writes, /var/lib/calico/mtu (1430 on the Sofia nodes: 1500 less the
+# IPv6 VXLAN header). Felix writes the smallest MTU of the encapsulations in
+# use, so dell-worker's pods get 1130 while IPv6 VXLAN is on and 1150 without
+# it. A FelixConfiguration named node.<node> is Felix's per-node override of
+# the `default` one, and calico-node sets no MTU environment variable that
+# would take precedence. This is keyed on the node name, not on the
+# opportunistic label, because the MTU belongs to the path to London, not to
+# the role. It only changes pods on dell-worker: Sofia pods keep 1430, so a
+# large UDP packet from Sofia to a Dell pod may be fragmented or dropped in the
+# tunnel, while TCP settles on the smaller MSS that the Dell side announces.
+resource "kubectl_manifest" "felix_dell_worker_mtu" {
+  depends_on = [helm_release.tigera_operator]
+  yaml_body = yamlencode({
+    apiVersion = "projectcalico.org/v3"
+    kind       = "FelixConfiguration"
+    metadata   = { name = "node.dell-worker" }
+    spec = {
+      vxlanMTU   = 1150
+      vxlanMTUV6 = 1130
     }
   })
 }

@@ -19,6 +19,14 @@
 # master-drain Job runs on a worker; each worker-drain Job runs on the
 # already-upgraded master. SSH targets are node InternalIPs (no DNS dependency).
 #
+# Opportunistic workers (label node-role.viktorbarzin.me/opportunistic, ADR-0045;
+# the first is dell-worker) are left out of EVERY node listing here: the
+# readiness and settle gates, the worker sequence, the apt repo rewrite and the
+# postflight version check. They are offline for days by design and are
+# upgraded by re-running playbooks/physical-node.yml with the new pinned
+# version after the chain finishes (docs/runbooks/physical-node.md).
+# test_upgrade_step_opportunistic.py fails if a new `get nodes` misses it.
+#
 # Required env vars (set on the Job pod by job-template.yaml):
 #   PHASE              preflight | master | worker | postflight
 #   TARGET_NODE        k8s-master | k8s-nodeN  (empty for preflight/postflight)
@@ -403,7 +411,7 @@ drain_node() {
 # Self-preemption invariant preserved: a phase Job never runs on the node it
 # drains. The master-drain Job runs on a worker (the "runner"); every
 # worker-drain Job runs on the (already-upgraded) master.
-worker_nodes() { $KUBECTL get nodes -l '!node-role.kubernetes.io/control-plane' \
+worker_nodes() { $KUBECTL get nodes -l '!node-role.kubernetes.io/control-plane,!node-role.viktorbarzin.me/opportunistic' \
   -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | sort; }
 all_nodes() { { echo k8s-master; worker_nodes; } | sed '/^$/d'; }
 # SSH target = the node's InternalIP (avoids any DNS dependency).
@@ -558,9 +566,9 @@ phase_preflight() {
       ;;
   esac
 
-  # 1. All nodes Ready + no pressure
+  # 1. All nodes Ready + no pressure (Opportunistic workers excepted)
   local bad_nodes
-  bad_nodes=$($KUBECTL get nodes -o json | jq -r '
+  bad_nodes=$($KUBECTL get nodes -l '!node-role.viktorbarzin.me/opportunistic' -o json | jq -r '
     .items[]
     | select(
         (.status.conditions[] | select(.type=="Ready").status) != "True"
@@ -609,7 +617,7 @@ phase_preflight() {
     if [ -z "$ts_ep" ]; then ts_ep=$(date -u -D '%Y-%m-%dT%H:%M:%SZ' -d "$ts" +%s 2>/dev/null || true); fi
     if [ -z "$ts_ep" ]; then echo "WARN quiet-baseline: cannot parse Ready ts '$ts' (date impl?); skipping"; continue; fi
     if [ "$(( now_ep - ts_ep ))" -lt 600 ]; then recent=1; recent_node="$node"; break; fi
-  done < <($KUBECTL get nodes -o jsonpath='{range .items[*]}{.metadata.name}{" "}{range .status.conditions[?(@.type=="Ready")]}{.lastTransitionTime}{"\n"}{end}{end}')
+  done < <($KUBECTL get nodes -l '!node-role.viktorbarzin.me/opportunistic' -o jsonpath='{range .items[*]}{.metadata.name}{" "}{range .status.conditions[?(@.type=="Ready")]}{.lastTransitionTime}{"\n"}{end}{end}')
   if [ "$recent" -eq 1 ]; then
     slack "DEFERRED preflight — $recent_node transitioned Ready <10min ago (settle window)"
     record_deferred settle_window "$recent_node went Ready less than 600s ago"
@@ -929,9 +937,10 @@ phase_postflight() {
   # if an earlier aborted attempt left it down this is the final guarantee.
   $KUBECTL -n tigera-operator scale deploy tigera-operator --replicas=1 >/dev/null 2>&1 || true
 
-  # All nodes at target
+  # All nodes at target. Opportunistic workers are left out: the physical-node
+  # playbook moves them to the new version after this chain.
   local versions wrong
-  versions=$($KUBECTL get nodes -o jsonpath='{range .items[*]}{.metadata.name}:{.status.nodeInfo.kubeletVersion}{"\n"}{end}')
+  versions=$($KUBECTL get nodes -l '!node-role.viktorbarzin.me/opportunistic' -o jsonpath='{range .items[*]}{.metadata.name}:{.status.nodeInfo.kubeletVersion}{"\n"}{end}')
   # `grep -v` returns 1 when all nodes are on target (the happy path —
   # exactly when postflight SHOULD succeed); under `set -o pipefail` that
   # would abort the script right at the moment of victory.

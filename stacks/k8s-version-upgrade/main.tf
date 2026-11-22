@@ -485,7 +485,9 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                 # thinking the upgrade is complete. Was `.items[0]` (master
                 # only) which made the chain skip when workers were behind.
                 # Fixed 2026-05-23 after node4-only chain failure.
-                RUNNING=$(/usr/local/bin/kubectl get nodes \
+                # Opportunistic workers (ADR-0045) are left out: they lag by
+                # design until playbooks/physical-node.yml upgrades them.
+                RUNNING=$(/usr/local/bin/kubectl get nodes -l '!node-role.viktorbarzin.me/opportunistic' \
                   -o jsonpath='{range .items[*]}{.status.nodeInfo.kubeletVersion}{"\n"}{end}' \
                   | tr -d v | sort -V | head -1)
                 RUNNING_MINOR=$(echo "$RUNNING" | awk -F. '{print $1"."$2}')

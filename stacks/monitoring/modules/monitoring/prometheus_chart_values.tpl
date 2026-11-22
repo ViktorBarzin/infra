@@ -448,6 +448,10 @@ kube-state-metrics:
   metricLabelsAllowlist:
     # wine-app: the WineApp* alerts below (modules/kubernetes/wine_app, ADR-0035)
     - deployments=[sablier.enable,wine-app]
+    # Opportunistic workers (ADR-0045): kube_node_labels then carries
+    # label_node_role_viktorbarzin_me_opportunistic="true" on such a node, and
+    # the node-down, DaemonSet and capacity rules use it to leave them out.
+    - nodes=[node-role.viktorbarzin.me/opportunistic]
   # Export the dns-type annotation ingress_factory stamps on every ingress
   # (cloudflare.viktorbarzin.me/dns-type = proxied | non-proxied | internal) on
   # kube_ingress_annotations. The Trivy alert rules join on it by namespace to
@@ -948,8 +952,11 @@ serverFiles:
           # NB kube_job_status_active is required by the K8sUpgradeStalled live-job
           # guard (stacks/k8s-version-upgrade) — removing it re-opens the sticky-latch
           # false-critical (the guard would evaluate against an empty series).
+          # NB kube_node_labels carries label_node_role_viktorbarzin_me_opportunistic
+          # (allowlisted on kube-state-metrics above), which every node-down and
+          # capacity rule uses to leave Opportunistic workers out.
           - source_labels: [__name__]
-            regex: 'memory_.+|tripit_.+|reels_.+|cloud_.+|notify_.+|realtime_listen_connected|realtime_last_notify_age_seconds|tasks_ops_total|sablier_.+|qbittorrent_.+|trivy_.+|kube_ingress_annotations|kube_deployment_annotations|kube_replicaset_annotations|kube_cronjob_status_last_successful_time|kube_cronjob_spec_suspend|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_disk_discards_completed_total|node_disk_discarded_sectors_total|node_disk_read_time_seconds_total|node_disk_write_time_seconds_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
+            regex: 'memory_.+|tripit_.+|reels_.+|cloud_.+|notify_.+|realtime_listen_connected|realtime_last_notify_age_seconds|tasks_ops_total|sablier_.+|qbittorrent_.+|trivy_.+|kube_ingress_annotations|kube_deployment_annotations|kube_replicaset_annotations|kube_cronjob_status_last_successful_time|kube_cronjob_spec_suspend|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_labels|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_disk_discards_completed_total|node_disk_discarded_sectors_total|node_disk_read_time_seconds_total|node_disk_write_time_seconds_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
             action: keep
       - job_name: kubernetes-service-endpoints-slow
         honor_labels: true
@@ -1291,6 +1298,26 @@ serverFiles:
   #           targets: "alertmanager.viktorbarzin.lan"
   alerting_rules.yml:
     groups:
+      # Opportunistic workers (ADR-0045, GLOSSARY.md): nodes such as dell-worker
+      # that are offline for days by design. They carry the label
+      # node-role.viktorbarzin.me/opportunistic=true, which kube-state-metrics
+      # exports on kube_node_labels and the kubernetes-nodes scrape copies onto
+      # its targets. Viktor's decision: no node-down alert for them and no alert
+      # for being offline too long. The node rules below leave them out with
+      # `unless on(node) kube_node_labels{label_node_role_viktorbarzin_me_opportunistic="true"}`.
+      # The record below counts DaemonSet pods that are not Ready on such a node,
+      # so the per-DaemonSet rules (DaemonSetMissingPods, CalicoNodeNotReady)
+      # can subtract them. DaemonSet pods tolerate the unreachable taint, so
+      # they stay bound to an offline node and count as not Ready.
+      - name: Opportunistic nodes
+        rules:
+          - record: opportunistic_node:daemonset_pods_not_ready:count
+            expr: |
+              count by (namespace, daemonset) (
+                label_replace(kube_pod_info{created_by_kind="DaemonSet"}, "daemonset", "$1", "created_by_name", "(.+)")
+                and on(node) kube_node_labels{label_node_role_viktorbarzin_me_opportunistic="true"}
+                unless on(namespace, pod) (kube_pod_status_ready{condition="true"} == 1)
+              )
       # GPU VRAM budget (ADR-0016). The post-mortem 2026-06-02 follow-up — alert
       # on GPU free-VRAM — finally built. Physical T4 = 15360 MiB; free =
       # physical - sum(gpu_pod_memory_used_bytes) (the host-PID exporter gauge).
@@ -3523,7 +3550,10 @@ serverFiles:
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.pod }}: unschedulable — check resource requests and node affinity"
           - alert: NodeNotReady
-            expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+            # Opportunistic workers are offline by design (group "Opportunistic nodes").
+            expr: |
+              kube_node_status_condition{condition="Ready",status="true"} == 0
+              unless on(node) kube_node_labels{label_node_role_viktorbarzin_me_opportunistic="true"}
             for: 5m
             labels:
               severity: critical
@@ -3719,7 +3749,10 @@ serverFiles:
           # drained/cordoned by kube_node_spec_unschedulable, down by the Ready
           # condition. The control-plane is excluded by name (node!~"k8s-master.*")
           # because this cluster's kube-state-metrics exposes neither kube_node_role
-          # nor node taints/labels — revisit if an HA control-plane is added.
+          # nor node taints — revisit if an HA control-plane is added.
+          # Opportunistic workers (kube_node_labels, ADR-0045) are left out of BOTH
+          # halves: they are tainted, offline for days, and nothing may depend on
+          # them, so their free memory is not capacity an eviction can count on.
           #
           # BOTH halves filter to non-terminal pods (Running|Pending). kube-state-metrics
           # keeps emitting kube_pod_container_resource_requests for Succeeded/Failed pods
@@ -3746,6 +3779,7 @@ serverFiles:
                 )
                 unless on(node) (kube_node_spec_unschedulable == 1)
                 unless on(node) (kube_node_status_capacity{resource="nvidia_com_gpu"} > 0)
+                unless on(node) kube_node_labels{label_node_role_viktorbarzin_me_opportunistic="true"}
               )
               >
               sum(
@@ -3763,6 +3797,7 @@ serverFiles:
                   * on(node) (kube_node_status_condition{condition="Ready",status="true"} == 1)
                 )
                 unless on(node) (kube_node_spec_unschedulable == 1)
+                unless on(node) kube_node_labels{label_node_role_viktorbarzin_me_opportunistic="true"}
               )
             for: 15m
             # keep_firing_for: headroom sits close to the line, so ordinary pod
@@ -5285,8 +5320,13 @@ serverFiles:
             # the apiserver restart itself is ControlPlaneStaticPodRestarted's.
             # Backtest over the 30 days to 2026-09-26: 38 episodes before, 11
             # after, and every dropped one had the node's node-exporter up.
+            #
+            # Opportunistic workers are offline by design and are left out by
+            # the node label the kubernetes-nodes job copies onto its targets
+            # (labelmap of __meta_kubernetes_node_label_*), so this does not
+            # depend on kube-state-metrics.
             expr: |
-              (up{job="kubernetes-nodes"} or on() vector(0)) == 0
+              (up{job="kubernetes-nodes", node_role_viktorbarzin_me_opportunistic!="true"} or on() vector(0)) == 0
               unless on(instance)
               label_replace(max by (node) (up{job="kubernetes-service-endpoints", service="prometheus-prometheus-node-exporter"}), "instance", "$1", "node", "(.+)") == 1
             for: 3m
@@ -5373,10 +5413,16 @@ serverFiles:
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.statefulset }}: {{ $value | printf \"%.0f\" }} replica(s) unavailable"
           - alert: DaemonSetMissingPods
+            # Pods on an offline Opportunistic worker are not counted as missing
+            # (record opportunistic_node:daemonset_pods_not_ready:count).
             expr: |
               (
                 kube_daemonset_status_desired_number_scheduled
                 - on(namespace, daemonset) kube_daemonset_status_number_ready
+                - on(namespace, daemonset) (
+                    opportunistic_node:daemonset_pods_not_ready:count
+                    or on(namespace, daemonset) (kube_daemonset_status_desired_number_scheduled * 0)
+                  )
               ) > 0
             for: 30m
             labels:
@@ -5547,12 +5593,22 @@ serverFiles:
             annotations:
               summary: "Running containers on {{ $labels.instance }} dropped >50% in 10m ({{ $value | printf \"%.2f\" }} ratio)"
           - alert: CalicoNodeNotReady
-            expr: kube_daemonset_status_number_ready{namespace="calico-system", daemonset="calico-node"} < kube_daemonset_status_desired_number_scheduled{namespace="calico-system", daemonset="calico-node"}
+            # calico-node on an offline Opportunistic worker is not counted
+            # (record opportunistic_node:daemonset_pods_not_ready:count).
+            expr: |
+              (
+                kube_daemonset_status_desired_number_scheduled{namespace="calico-system", daemonset="calico-node"}
+                - on(namespace, daemonset) kube_daemonset_status_number_ready{namespace="calico-system", daemonset="calico-node"}
+                - on(namespace, daemonset) (
+                    opportunistic_node:daemonset_pods_not_ready:count{namespace="calico-system", daemonset="calico-node"}
+                    or on(namespace, daemonset) (kube_daemonset_status_desired_number_scheduled{namespace="calico-system", daemonset="calico-node"} * 0)
+                  )
+              ) > 0
             for: 5m
             labels:
               severity: critical
             annotations:
-              summary: "Calico: only {{ $value | printf \"%.0f\" }} of desired calico-node pods ready — networking degraded"
+              summary: "Calico: {{ $value | printf \"%.0f\" }} calico-node pod(s) not ready — networking degraded"
           # ---- node OS config drift (bead code-yypr) --------------------------
           # playbooks/k8s-node-tuning.yml declares the kubelet, containerd and
           # sysctl settings kubeadm does not carry. Until 2026-09-05 nothing ran
@@ -5653,8 +5709,10 @@ serverFiles:
           # cluster-reboots protection lives separately in
           # `kured-sentinel-gate` Check 4 (reads node Ready
           # lastTransitionTime, independent of this alert).
+          # Opportunistic workers start every time they come online, by design,
+          # so they are left out by the label the kubernetes-nodes job copies.
           - alert: RecentNodeReboot
-            expr: (time() - process_start_time_seconds{job="kubernetes-nodes"}) < 3600
+            expr: (time() - process_start_time_seconds{job="kubernetes-nodes", node_role_viktorbarzin_me_opportunistic!="true"}) < 3600
             for: 0m
             labels:
               severity: info
@@ -5792,8 +5850,10 @@ serverFiles:
           # (kured blocks node reboots on ANY firing alert) — intended: don't reboot
           # nodes mid-broken-upgrade. It self-clears when the chain converges every node
           # to target, at which point kured resumes.
+          # Opportunistic workers are left out: they are upgraded by re-running
+          # playbooks/physical-node.yml, not by the chain, so they lag by design.
           - alert: K8sVersionSkew
-            expr: count(count by (kubelet_version) (kube_node_info)) > 1 unless on() (kube_job_status_active{namespace="k8s-upgrade", job_name=~"k8s-upgrade-(preflight|master|worker|postflight)-.*"} > 0)
+            expr: count(count by (kubelet_version) (kube_node_info unless on(node) kube_node_labels{label_node_role_viktorbarzin_me_opportunistic="true"})) > 1 unless on() (kube_job_status_active{namespace="k8s-upgrade", job_name=~"k8s-upgrade-(preflight|master|worker|postflight)-.*"} > 0)
             for: 15m
             labels:
               severity: warning

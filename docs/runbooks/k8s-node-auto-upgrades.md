@@ -24,9 +24,9 @@ apt-daily-upgrade.timer (random within window)
   ▼ (sentinel-gate DaemonSet polls every 5min)
 kured-sentinel-gate checks:
   ├── 1. Host has /var/run/reboot-required
-  ├── 2. ALL nodes Ready
-  ├── 3. ALL calico-node pods Running
-  └── 4. NO node Ready-transition in last 24h (soak window)
+  ├── 2. ALL nodes Ready (Opportunistic workers excepted)
+  ├── 3. ALL calico-node pods Running (except on Opportunistic workers)
+  └── 4. NO node Ready-transition in last 24h (soak window; Opportunistic workers excepted)
   │
   ▼ all pass
 touch /var/run/gated-reboot-required

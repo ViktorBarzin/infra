@@ -9,6 +9,17 @@
 #   - no node has transitioned Ready in the last 24 hours (24h soak)
 #   - no Prometheus alert is firing (excluding self-referential ignore-list)
 #
+# "All nodes" means every node WITHOUT the label
+# node-role.viktorbarzin.me/opportunistic (ADR-0045). An Opportunistic worker
+# such as dell-worker is offline for days by design, so the three node checks
+# leave it out; otherwise it would hold every reboot in Sofia while it is off,
+# and its daily return would restart the 24h soak. kured itself does not run
+# there: neither kured nor the sentinel gate tolerates the
+# node-role.viktorbarzin.me/opportunistic:NoSchedule taint, so kured never
+# drains or reboots an Opportunistic worker. Such a node reboots when its owner
+# turns it off and on, and its packages are updated by re-running
+# playbooks/physical-node.yml (docs/runbooks/physical-node.md).
+#
 # History:
 #   - 2026-03 post-mortem (memory 390): 26h cluster outage triggered by kured
 #     rebooting nodes while containerd's overlayfs snapshotter was corrupted.
@@ -227,6 +238,8 @@ resource "helm_release" "kured" {
         "prometheus.io/path"   = "/metrics"
       }
     }
+    # No toleration for node-role.viktorbarzin.me/opportunistic, on purpose:
+    # kured must not drain or reboot an Opportunistic worker (see the header).
     # reboot-self-heal Phase 2: the kured chart REPLACES its default
     # control-plane/master tolerations when `tolerations` is set, so both are
     # re-listed here (replicating the chart default exactly) alongside the GPU
@@ -466,8 +479,18 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
                 fi
                 echo "  Host has /var/run/reboot-required"
 
-                # Check 2: Are ALL nodes Ready?
-                NOT_READY=$(kubectl get nodes --no-headers | grep -v ' Ready' | wc -l | tr -d ' ')
+                # Opportunistic workers (ADR-0045) are offline for days by
+                # design, so Checks 2-4 leave them out by their label. If this
+                # lookup fails, OPP_FS stays empty and the checks include every
+                # node, which fails closed.
+                OPP_FS=$(kubectl get nodes -l node-role.viktorbarzin.me/opportunistic -o jsonpath='{range .items[*]}spec.nodeName!={.metadata.name},{end}' 2>/dev/null || true)
+                CALICO_SEL=()
+                if [ -n "$OPP_FS" ]; then
+                  CALICO_SEL=(--field-selector "$${OPP_FS%,}")
+                fi
+
+                # Check 2: Are ALL nodes Ready (Opportunistic workers excepted)?
+                NOT_READY=$(kubectl get nodes -l '!node-role.viktorbarzin.me/opportunistic' --no-headers | grep -v ' Ready' | wc -l | tr -d ' ')
                 if [ "$NOT_READY" -gt 0 ]; then
                   echo "  BLOCKED: $NOT_READY node(s) not Ready"
                   rm -f /host/var-run/gated-reboot-required
@@ -476,8 +499,9 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
                 fi
                 echo "  All nodes Ready"
 
-                # Check 3: Are ALL calico-node pods Running?
-                CALICO_NOT_RUNNING=$(kubectl get pods -n calico-system -l k8s-app=calico-node --no-headers 2>/dev/null | grep -v Running | wc -l | tr -d ' ')
+                # Check 3: Are ALL calico-node pods Running (except those on
+                # Opportunistic workers)?
+                CALICO_NOT_RUNNING=$(kubectl get pods -n calico-system -l k8s-app=calico-node "$${CALICO_SEL[@]}" --no-headers 2>/dev/null | grep -v Running | wc -l | tr -d ' ')
                 if [ "$CALICO_NOT_RUNNING" -gt 0 ]; then
                   echo "  BLOCKED: $CALICO_NOT_RUNNING calico-node pod(s) not Running"
                   rm -f /host/var-run/gated-reboot-required
@@ -500,7 +524,7 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
                       break
                     fi
                   fi
-                done < <(kubectl get nodes -o jsonpath='{range .items[*]}{range .status.conditions[?(@.type=="Ready")]}{.lastTransitionTime}{"\n"}{end}{end}')
+                done < <(kubectl get nodes -l '!node-role.viktorbarzin.me/opportunistic' -o jsonpath='{range .items[*]}{range .status.conditions[?(@.type=="Ready")]}{.lastTransitionTime}{"\n"}{end}{end}')
 
                 if [ "$RECENT_REBOOT" -eq 1 ]; then
                   echo "  BLOCKED: A node transitioned Ready within the last 24 hours (soak window)"

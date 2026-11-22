@@ -292,7 +292,10 @@ check_nodes() {
     section 1 "Node Status"
     local nodes not_ready versions unique_versions detail=""
 
-    nodes=$($KUBECTL get nodes --no-headers 2>&1) || { fail "Cannot reach cluster"; json_add "node_status" "FAIL" "Cannot reach cluster"; return 0; }
+    # Opportunistic workers (node-role.viktorbarzin.me/opportunistic, ADR-0045)
+    # are offline for days by design and lag a version until the physical-node
+    # playbook upgrades them, so they are not counted here.
+    nodes=$($KUBECTL get nodes -l '!node-role.viktorbarzin.me/opportunistic' --no-headers 2>&1) || { fail "Cannot reach cluster"; json_add "node_status" "FAIL" "Cannot reach cluster"; return 0; }
     not_ready=$(echo "$nodes" | awk '$2 != "Ready" {print $1}' || true)
     versions=$(echo "$nodes" | awk '{print $5}' | sort -u)
     unique_versions=$(echo "$versions" | wc -l | tr -d ' ')
