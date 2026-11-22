@@ -233,6 +233,8 @@ poll_once() {
 # Which NEW connections from London may enter the tunnel. A RETURN goes back
 # to the zone's lan -> wgclient1 ACCEPT; the end of the chain logs, and in
 # enforce mode rejects.
+# The wifi app's role map describes these rules in plain words (ROLE_ACCESS
+# in src/lib/roles.ts of Forgejo viktor/wifi); change both together.
 firewall() {
 	for role in $ROLES; do ipset create "$(set_name "$role")" hash:mac -exist; done
 	iptables -N london_roles 2>/dev/null
