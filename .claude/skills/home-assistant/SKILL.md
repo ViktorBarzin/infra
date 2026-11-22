@@ -463,6 +463,7 @@ Bike named **"Classic Performance"** → entities are `sensor.classic_performanc
 - Projector + debug bridge: unavailable (Tapo plug off)
 - Scripts: `script.start_netflix`, `script.start_stremio`
 - Scene: `scene.night` (turns off Livia + Michelle plugs)
+- Radio: `script.radio_play` (field `station`, e.g. "Jazz FM") plays a station on `media_player.milea_s_echo_dot` by Alexa command; `script.radio_stop`. Buttons in the Overview Home tab, Radio section. Details: `docs/runbooks/london-alexa.md`
 
 #### 8. Yiko robot vacuum (Ecovacs X8 Pro Omni) and its camera
 Control Yiko with `homelab ha yiko`. Do not drive the robot by hand:
