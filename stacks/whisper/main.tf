@@ -198,7 +198,7 @@ resource "kubernetes_deployment" "piper" {
 
         container {
           name  = "piper"
-          image = "rhasspy/wyoming-piper:2.5.3"
+          image = "rhasspy/wyoming-piper:2.5.4"
           args  = ["--voice", "en_US-lessac-medium"]
 
           port {
