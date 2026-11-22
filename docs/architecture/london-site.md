@@ -36,7 +36,7 @@ Firmware is GL 4.11.0 since 2026-10-02 (was 4.9.1).
 | LuCI | GL UI → SYSTEM → Advanced Settings → Go To LuCI |
 | admin password | Vaultwarden item `london.viktorbarzin.me` (user `root`) |
 | APIs | GL JSON-RPC `POST /rpc` (challenge, login, call); OpenWrt ubus at `http://10.3.2.6:8080/ubus` (session.login as root) |
-| SSH | `ssh root@10.3.2.6`, read-only diagnostics only. With the tunnel down: `ssh -o HostKeyAlias=10.3.2.6 root@2a01:4b00:ab23:1200::1` from the devvm (IPv6), same host key |
+| SSH | `ssh root@10.3.2.6`, read-only diagnostics only. With the tunnel down: `ssh -o HostKeyAlias=10.3.2.6 root@2a01:4b00:ab23:1200::1` from the devvm (IPv6), same host key. Keys only: the list is `scripts/london-flint/authorized_keys`, and a machine missing from it cannot log in |
 
 Every change goes through the GL UI settings or LuCI, or the RPC calls those UIs
 make, so the result is visible in one of the two UIs. The exception is the
@@ -73,7 +73,8 @@ hardcoded in `/usr/share/gl-ngx/oui-access.lua`). A browser on the LAN using
 | Guest network | forwards to the tunnel | unchanged | Viktor's call (2026-09-27). Guest traffic reaches Sofia masqueraded as 10.3.2.6. |
 | No NAT to the Kubernetes VLAN | `iptables -t nat -I postrouting_rule -s 192.168.8.0/24 -d 10.0.20.0/24 -j ACCEPT` at the top of `/etc/firewall.user` | set by `provision.sh` (marker `london-lan-no-nat`) | Since 2026-11-22 (ADR-0045). The tunnel zone masquerades London traffic as 10.3.2.6, but a London Kubernetes node must reach the Sofia nodes from its own address, because Calico accepts VXLAN only from known node addresses. `postrouting_rule` runs before the zone's masquerade. Main-LAN traffic to every other Sofia network is still masqueraded. Traefik `local-only` and the Loki alert K9 admit `192.168.8.0/24`. |
 | Dell worker lease | `dell-worker` 48:89:e7:18:0e:66 → 192.168.8.20 | set by `provision.sh` | The Ubuntu worker on the Dell Precision registers this address as its node IP (ADR-0045). Fedora and Windows on the same laptop use private Wi-Fi addresses and get ordinary leases. |
-| SSH and admin page on WAN | open, password login on | unchanged | Viktor's call (2026-09-27). After the cutover they are reachable from the internet over IPv6. |
+| SSH and admin page on WAN | open to every source; SSH takes keys only (`PasswordAuth` and `RootPasswordAuth` off) | set by `provision.sh` | Open by Viktor's call (2026-09-27) so the router stays reachable over IPv6 when the tunnel is down. Over IPv4 the WAN is behind the ISP's CGNAT, but over IPv6 the whole internet reaches both ports: in the 30 days to 2026-11-22 scanners from DigitalOcean, IONOS and China Telecom connected to SSH, and none got past authentication. Password login went off on 2026-11-22 (Viktor). The key list replaces the router's on every run. |
+| WAN brute-force bans | A source that opens 5 new SSH connections within 60 s is dropped on SSH for 24 h; 20 new admin-page connections within 10 s drop it on 443 for 1 h. Each new attempt during a ban restarts the timer. Sofia's IPv6 ranges (`2001:470:5a7f::/48`, `2001:470:6f:43d::/64`) are exempt | firewall include `/etc/firewall.bruteforce` from `scripts/london-flint/wan-bruteforce.sh`, kept across upgrades via `/etc/sysupgrade.conf`; set by `provision.sh` | Kernel `recent` lists, IPv4 and IPv6, WAN (`eth1`) only, so the tunnel and the LAN are never counted. The exemption keeps `provision.sh` working over IPv6, which opens about ten connections in a row. Chosen over fail2ban and CrowdSec, which would need Python or a Go agent on a router with about 480 MB free, and which a firmware upgrade removes. A ban logs `wan-bruteforce ban ssh` or `ban admin` (kernel, `{job="syslog", host="flint-london"} |= "wan-bruteforce"`). Lift one with `echo -<address> > /proc/net/xt_recent/bf_ssh_ban` (or `bf_admin_ban`). Tested 2026-11-22 with the exemption removed: the 5th SSH connection and the 20th admin request from the devvm timed out. |
 | IPv6 | Native with the delegated /56 (set 2026-10-02) | GL → Network → IPv6 | Real addresses skip NAT and the ISP's IPv4 CGNAT. |
 
 ## Monitoring
@@ -152,8 +153,9 @@ scripts/london-flint/provision.sh
 ```
 
 It builds the probe package, installs whatever is missing, sets the exporter to
-listen on every interface, and checks from Sofia that the exporter answers and
-the probe runs. It is idempotent, so a second run changes nothing. After an
+listen on every interface, installs the SSH key list and the WAN brute-force
+bans, and checks from Sofia that the exporter answers, the probe runs, SSH
+offers only `publickey` and the bans are loaded. It is idempotent, so a second run changes nothing. After an
 upgrade, also check that the tunnel came up (`ifstatus wgclient1` shows
 `"up": true`): on 2026-10-02 a network restart left it `pending` with no
 address until `ifup wgclient1`.

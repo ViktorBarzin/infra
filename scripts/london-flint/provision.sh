@@ -7,6 +7,9 @@
 # It is idempotent: packages already present at the wanted version are left
 # alone, so a second run changes nothing.
 #
+# It also locks SSH to the keys in authorized_keys and loads the WAN
+# brute-force bans from wan-bruteforce.sh.
+#
 # Run from the devvm, which reaches the router over the WireGuard tunnel:
 #   scripts/london-flint/provision.sh
 # If the tunnel is down, the router answers SSH on its LAN IPv6 address:
@@ -33,6 +36,12 @@ ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'cat > /tmp/london-drop-probe.ipk' <"$i
 
 # shellcheck disable=SC2086
 ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'cat > /tmp/60-mtk-debug-off' <"$HERE/mtk-debug-off.hotplug"
+
+# shellcheck disable=SC2086
+ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'cat > /tmp/firewall.bruteforce' <"$HERE/wan-bruteforce.sh"
+# The router gets the key list without its comment lines.
+# shellcheck disable=SC2086
+grep -v '^#' "$HERE/authorized_keys" | ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'cat > /tmp/authorized_keys'
 
 # ssh joins its arguments into one remote command line, so the package list
 # needs its own quotes to arrive as a single argument.
@@ -85,6 +94,50 @@ fi
 chmod 755 "$hook"
 grep -qxF "$hook" /etc/sysupgrade.conf || echo "$hook" >>/etc/sysupgrade.conf
 for i in ra0 rax0; do iwpriv "$i" set Debug=0; done
+
+# SSH: keys from authorized_keys only, no passwords (Viktor, 2026-11-22). SSH
+# and the admin page stay open on the WAN, and over IPv6 that is the whole
+# internet. The key list replaces the router's, and this script's own key is
+# in it, so the next run still gets in.
+if ! cmp -s /tmp/authorized_keys /etc/dropbear/authorized_keys; then
+	cp /tmp/authorized_keys /etc/dropbear/authorized_keys
+	echo "ssh: authorized_keys updated"
+fi
+chmod 600 /etc/dropbear/authorized_keys
+rm -f /tmp/authorized_keys
+if [ "$(uci -q get dropbear.@dropbear[0].PasswordAuth)" != off ] || [ "$(uci -q get dropbear.@dropbear[0].RootPasswordAuth)" != off ]; then
+	uci set dropbear.@dropbear[0].PasswordAuth='off'
+	uci set dropbear.@dropbear[0].RootPasswordAuth='off'
+	uci commit dropbear
+	# Open sessions, this one included, survive the restart.
+	/etc/init.d/dropbear restart
+	echo "ssh: password login off"
+else
+	echo "ssh: password login already off"
+fi
+
+# Ban WAN sources that open SSH or admin-page connections too fast. A firewall
+# include, so every firewall reload puts the rules back; listed in
+# sysupgrade.conf, so it outlives a firmware upgrade.
+bf=/etc/firewall.bruteforce
+if ! cmp -s /tmp/firewall.bruteforce "$bf"; then
+	mv /tmp/firewall.bruteforce "$bf"
+	echo "installed $bf"
+else
+	rm -f /tmp/firewall.bruteforce
+fi
+chmod 755 "$bf"
+grep -qxF "$bf" /etc/sysupgrade.conf || echo "$bf" >>/etc/sysupgrade.conf
+if [ "$(uci -q get firewall.bruteforce.path)" != "$bf" ]; then
+	uci set firewall.bruteforce=include
+	uci set firewall.bruteforce.type='script'
+	uci set firewall.bruteforce.path="$bf"
+	uci set firewall.bruteforce.reload='1'
+	uci commit firewall
+	echo "firewall: include $bf"
+fi
+sh "$bf"
+echo "firewall: WAN brute-force bans loaded"
 
 # DNS: log every lookup (--log-queries=extra puts a serial and the client on
 # each line; the lines leave over the TCP syslog to Loki and nothing goes to
@@ -283,7 +336,14 @@ metrics=$(curl -s -m 10 http://10.3.2.6:9100/metrics | grep -c '^node_' || true)
 probe=$(ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'pgrep -f /usr/bin/london-drop-probe >/dev/null && echo running || echo stopped')
 echo "node exporter: $metrics node_* series over the tunnel"
 # shellcheck disable=SC2086
-ring=$(ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'ps w | sed -n "s|.*/sbin/logd -S \([0-9]*\).*|\1|p"')
+ring=$(ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'ps w | sed -n "s|.*/sbin/logd -S \([0-9][0-9]*\).*|\1|p"')
+# The router should offer publickey and nothing else.
+# shellcheck disable=SC2086
+auth=$(ssh -v -o BatchMode=yes -o PubkeyAuthentication=no $SSH_OPTS "$ROUTER" true 2>&1 | sed -n 's/.*Authentications that can continue: //p' | head -1 | tr -d '\r')
+# shellcheck disable=SC2086
+bans=$(ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'ip6tables -C input_wan_rule -j wan_bruteforce && iptables -C input_wan_rule -j wan_bruteforce && echo loaded || echo missing')
 echo "drop probe: $probe"
 echo "log ring: ${ring} KB"
-[ "$metrics" -gt 0 ] && [ "$probe" = running ] && [ "$ring" = 8192 ]
+echo "ssh login methods: $auth"
+echo "WAN brute-force bans: $bans"
+[ "$metrics" -gt 0 ] && [ "$probe" = running ] && [ "$ring" = 8192 ] && [ "$auth" = publickey ] && [ "$bans" = loaded ]
