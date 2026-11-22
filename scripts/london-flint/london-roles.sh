@@ -26,6 +26,7 @@ LR_LEASES=${LR_LEASES:-/tmp/dhcp.leases}
 LR_RUN=${LR_RUN:-/tmp/london-roles}
 # Tests point this at a stand-in: busybox sh runs its own ip applet first.
 LR_IP=${LR_IP:-ip}
+LR_UCI=${LR_UCI:-uci}
 LR_URL=https://wifi.viktorbarzin.me
 LR_MODE=log
 # shellcheck disable=SC1090 # the config file is the router's own
@@ -42,12 +43,21 @@ token() { tr -d '\n' <"$LR_TOKEN_FILE"; }
 
 # The device table as the app receives it: "mac ip hostname", sorted. DHCP
 # leases first; then the London neighbour entries, for devices with a fixed
-# address and no lease (ha-london). A MAC with a lease keeps the lease's line.
+# address and no lease (ha-london); then reserved addresses, for devices that
+# are offline now (dell-worker), so they can get a role before they rejoin. A
+# MAC keeps the first line found for it.
 leases_body() {
 	{
-		[ -f "$LR_LEASES" ] && awk 'NF >= 4 { print "L", tolower($2), $3, $4 }' "$LR_LEASES"
-		"$LR_IP" -4 neigh show | awk '$1 ~ /^192\.168\.(8|9)\./ { for (i = 2; i < NF; i++) if ($i == "lladdr") print "N", tolower($(i + 1)), $1, "*" }'
-	} | awk '$1 == "L" { seen[$2] = 1; print $2, $3, $4; next } !($2 in seen) { seen[$2] = 1; print $2, $3, $4 }' | sort
+		[ -f "$LR_LEASES" ] && awk 'NF >= 4 { print tolower($2), $3, $4 }' "$LR_LEASES"
+		"$LR_IP" -4 neigh show | awk '$1 ~ /^192\.168\.(8|9)\./ { for (i = 2; i < NF; i++) if ($i == "lladdr") print tolower($(i + 1)), $1, "*" }'
+		"$LR_UCI" -q show dhcp | awk -F= '
+			{ split($1, k, "."); v = $2; gsub(/\047/, "", v) }
+			k[3] == "name" { name[k[2]] = v }
+			k[3] == "mac" { mac[k[2]] = tolower(v) }
+			k[3] == "ip" { ip[k[2]] = v }
+			END { for (h in ip) if (h in mac && mac[h] !~ / /) print mac[h], ip[h], (h in name ? name[h] : "*") }
+		'
+	} | awk '!($1 in seen) { seen[$1] = 1; print }' | sort
 }
 
 leases_hash() { leases_body | sha256sum | cut -d' ' -f1; }
@@ -162,6 +172,9 @@ firewall() {
 	iptables -A london_roles -m set --match-set lr_storage src -d 192.168.1.13 -p tcp --dport 445 -j RETURN
 	iptables -A london_roles -m set --match-set lr_infra_ha src -d 192.168.1.127 -p tcp --dport 2049 -j RETURN
 	iptables -A london_roles -m set --match-set lr_infra_ha src -d 10.0.20.200 -p tcp --dport 19532 -j RETURN
+	# The robot vacuum camera (stacks/ecovacs-video-proxy): RTSP and its HTTP side.
+	iptables -A london_roles -m set --match-set lr_infra_ha src -d 10.0.20.200 -p tcp --dport 8554 -j RETURN
+	iptables -A london_roles -m set --match-set lr_infra_ha src -d 10.0.20.200 -p tcp --dport 8080 -j RETURN
 	iptables -A london_roles -m set --match-set lr_infra_k8s src -d 10.0.20.0/24 -j RETURN
 	# Every device may open the sign-in page.
 	iptables -A london_roles -d "$SIGNIN_IP" -p tcp --dport 443 -j RETURN

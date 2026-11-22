@@ -38,7 +38,17 @@ NEIGH = (
     "192.168.8.20 dev br-lan FAILED\n"
     "10.3.2.1 dev wgclient1 lladdr 00:00:00:00:00:09 REACHABLE\n"
 )
+# Reserved addresses (uci dhcp host sections with an ip) add devices that are
+# offline now, so they can be given a role before they next join (dell-worker).
+UCI_HOSTS = (
+    "dhcp.dell_worker.name='dell-worker'\n"
+    "dhcp.dell_worker.mac='48:89:E7:18:0E:66'\n"
+    "dhcp.dell_worker.ip='192.168.8.20'\n"
+    "dhcp.plug_thor.name='plug-thor'\n"
+    "dhcp.plug_thor.mac='aa:aa:aa:aa:aa:02'\n"
+)
 LEASE_BODY = (
+    "48:89:e7:18:0e:66 192.168.8.20 dell-worker\n"
     "aa:aa:aa:aa:aa:01 192.168.8.126 mbp-london\n"
     "aa:aa:aa:aa:aa:02 192.168.8.118 *\n"
     "c4:e9:84:10:52:c8 192.168.8.103 *\n"
@@ -88,6 +98,9 @@ def env(tmp_path: Path) -> Env:
     neigh = tmp_path / "neigh"
     neigh.write_text(NEIGH)
     _stub(bin_dir, "ip", f'cat "{neigh}"\n')
+    uci_hosts = tmp_path / "uci"
+    uci_hosts.write_text(UCI_HOSTS)
+    _stub(bin_dir, "uci", f'cat "{uci_hosts}"\n')
     # iptables: -C (check) finds nothing, so the hooks get inserted.
     _stub(bin_dir, "iptables", f'echo "iptables $*" >> "{log}"\n[ "$1" = -C ] && exit 1\nexit 0\n')
     # curl: record the call; answer from $CURL_REPLY (body) with $CURL_CODE.
@@ -120,6 +133,7 @@ def env(tmp_path: Path) -> Env:
         "LR_RUN": str(run_dir),
         "CURL_SENT": str(tmp_path / "sent"),
         "LR_IP": str(bin_dir / "ip"),
+        "LR_UCI": str(bin_dir / "uci"),
     }
     return Env(root=tmp_path, log=log, list_file=list_file, env=e)
 
@@ -222,6 +236,13 @@ def test_log_mode_logs_and_lets_everything_through(env: Env) -> None:
     assert "-A london_roles -d 10.0.20.215 -p tcp --dport 443 -j RETURN" in r
     assert any("LOG --log-prefix london-roles-would-block:" in x for x in r)
     assert not any("REJECT" in x for x in r)
+
+
+def test_infra_ha_reaches_the_vacuum_camera_stream(env: Env) -> None:
+    env.run("firewall")
+    r = rules(env)
+    assert "-A london_roles -m set --match-set lr_infra_ha src -d 10.0.20.200 -p tcp --dport 8554 -j RETURN" in r
+    assert "-A london_roles -m set --match-set lr_infra_ha src -d 10.0.20.200 -p tcp --dport 8080 -j RETURN" in r
 
 
 def test_enforce_mode_rejects_after_logging(env: Env) -> None:
