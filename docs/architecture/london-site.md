@@ -146,7 +146,7 @@ needed, a fixed address (Viktor, 2026-11-22). The role list the agent fetches
 (`format=2`) carries both. The agent writes each named device as a `uci` dhcp
 host section `lr_<mac hex>` with `name`, `mac` and an optional `ip`. It
 commits and reloads dnsmasq only when a section changed. phpipam-import
-then publishes `<name>.viktorbarzin.lan` within 5 minutes. A new fixed
+then publishes `<name>.viktorbarzin.lan` within 30 minutes (it runs every 30). A new fixed
 address takes effect when the device next renews its lease. Fixed addresses
 are for devices that something else reaches by address: the plugs (Home
 Assistant), the projector, dell-worker (its Kubernetes node address) and the
@@ -157,9 +157,11 @@ UI's three reservations are refused too. The agent also leaves out an address
 that another host section reserves, because dnsmasq does not start with two
 reservations of one address.
 
-Names and roles are keyed by MAC. Set "Private Wi-Fi Address" to Fixed for
-`5G-Tower` on iPhones and Macs: on Rotating, the device changes its MAC and
-loses both. Anca's MacBook did this before 2026-11-22.
+Names and roles are keyed by MAC. Apple devices use one private MAC per
+SSID, so a device that joins another SSID arrives with a new MAC and loses
+both (Anca's MacBook, moving from `5G-Tower Admin` to `5G-Tower` on
+2026-11-22). Set "Private Wi-Fi Address" to Fixed for `5G-Tower` on iPhones
+and Macs: Rotating changes the MAC too.
 
 **Checks.** On the router: `logread -e london-roles | tail`,
 `cat /etc/london-roles.list`, `ipset list lr_admin`,
