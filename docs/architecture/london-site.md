@@ -90,7 +90,7 @@ flowchart TD
   person[Person or Viktor] -->|"sign in, or move a device"| app["wifi.viktorbarzin.me<br/>stacks/wifi, 10.0.20.215"]
   agent["london-roles on the Flint"] -->|"long poll, 50 s"| app
   agent -->|"lease table on change"| app
-  agent --> sets["ipsets lr_admin, lr_storage,<br/>lr_iot, lr_infra_ha, lr_infra_k8s"]
+  agent --> sets["ipsets lr_admin, lr_storage,<br/>lr_iot, lr_infra_ha, lr_infra_k8s, lr_media"]
   sets --> chain["chain london_roles<br/>(lan to wgclient1)"]
   agent --> hosts["dhcp host sections lr_&lt;mac&gt;<br/>(names, fixed addresses)"]
   hosts --> dns["phpipam-import:<br/>name.viktorbarzin.lan"]
@@ -102,6 +102,7 @@ flowchart TD
 | storage | 192.168.1.13 TCP 445 | sign-in by a member of `london-storage`, or Viktor |
 | infra-ha | 192.168.1.127 TCP 2049 (backups), 10.0.20.200 TCP 19532 (journal upload), 8554 and 8080 (vacuum camera) | Viktor (ha-london) |
 | infra-k8s | 10.0.20.0/24 | Viktor (dell-worker) |
+| media | 10.0.20.203 TCP 443, Traefik's web services | Viktor (the projector, for ImmichFrame) |
 | iot | nothing; same as guest | Viktor (plugs, air sensor) |
 | guest | only the sign-in page, 10.0.20.215 TCP 443 | default |
 

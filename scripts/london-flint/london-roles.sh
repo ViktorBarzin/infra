@@ -37,8 +37,9 @@ LR_MODE=log
 # shellcheck disable=SC1090 # the config file is the router's own
 [ -f "$LR_CONF" ] && . "$LR_CONF"
 
-ROLES="admin storage iot infra-ha infra-k8s"
+ROLES="admin storage iot infra-ha infra-k8s media"
 SIGNIN_IP=10.0.20.215
+TRAEFIK_IP=10.0.20.203
 
 log() { logger -t london-roles "$*"; }
 
@@ -244,6 +245,8 @@ firewall() {
 	iptables -A london_roles -m set --match-set lr_infra_ha src -d 10.0.20.200 -p tcp --dport 8554 -j RETURN
 	iptables -A london_roles -m set --match-set lr_infra_ha src -d 10.0.20.200 -p tcp --dport 8080 -j RETURN
 	iptables -A london_roles -m set --match-set lr_infra_k8s src -d 10.0.20.0/24 -j RETURN
+	# Media players (the projector's ImmichFrame): the cluster's web services on Traefik.
+	iptables -A london_roles -m set --match-set lr_media src -d "$TRAEFIK_IP" -p tcp --dport 443 -j RETURN
 	# Every device may open the sign-in page.
 	iptables -A london_roles -d "$SIGNIN_IP" -p tcp --dport 443 -j RETURN
 	if [ "$LR_MODE" = enforce ]; then

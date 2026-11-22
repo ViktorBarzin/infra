@@ -389,3 +389,17 @@ def test_a_saved_list_in_format_1_is_fetched_again_in_full(env: Env) -> None:
     env.run("once")
     (call,) = [c for c in env.calls("curl") if "/api/router/roles" in c]
     assert "roles?since=0&" in call
+
+
+def test_media_reaches_only_traefik_https(env: Env) -> None:
+    env.run("firewall")
+    r = rules(env)
+    assert "-A london_roles -m set --match-set lr_media src -d 10.0.20.203 -p tcp --dport 443 -j RETURN" in r
+    assert not any("lr_media" in x and "10.0.20.203" not in x for x in r)
+    assert "create lr_media hash:mac -exist" in env.calls("ipset")
+
+
+def test_a_media_line_is_accepted(env: Env) -> None:
+    reply(env, "version 7\nleases ok\naa:aa:aa:aa:aa:03 media projector-london 192.168.8.100\n")
+    env.run("once")
+    assert "add lr_media_new aa:aa:aa:aa:aa:03 -exist" in env.calls("ipset")
