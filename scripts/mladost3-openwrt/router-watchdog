@@ -5,10 +5,17 @@
 #
 # Two triggers:
 #  1. Stick dropout, checked every TICK seconds. The USB stick holding /overlay
-#     vanished and came back under a new name, as on 2026-10-07. The router then
-#     runs from page cache with a dead overlay until it reboots, so reboot at
-#     once. If the stick does not come back, stay up: a reboot would boot the
-#     old config on internal flash.
+#     vanished and came back under a new name, as on 2026-10-07 and often since
+#     2026-11-15. The overlay is then dead, but routing, Wi-Fi, DHCP and the
+#     tunnel keep running from memory (8.5 days in October). So wait for the
+#     quiet hour QUIET_HOUR (local time) and reboot then. Reboot at once if the
+#     tunnel fails DEGRADED_FAILS checks in a row (DEGRADED_CHECK seconds
+#     apart), if a CRITICAL process is gone on two ticks in a row, or after
+#     MAX_WAIT seconds, whatever the clock says. A dropout reboot first switches
+#     the stick's USB port off for USB_OFF seconds, so the stick restarts clean.
+#     If the stick does not come back, switch its port off and on after
+#     POWER_FIRST seconds and then every POWER_RETRY seconds, and stay up: a
+#     reboot without the stick would boot the old config on internal flash.
 #  2. Tunnel loss, checked every CHECK_EVERY seconds. None of TARGETS answers,
 #     and none answers on RETRIES more tries RETRY_EVERY apart. Reboot at once
 #     if Sofia's public address answers and the last reboot was not ours (no
@@ -17,8 +24,10 @@
 #
 # It runs from a copy in /tmp under /rom/bin/busybox and calls only shell
 # builtins and ROM busybox applets, so it keeps working when the stick is gone.
-# It never reboots within MIN_UPTIME seconds of boot.
-# Every setting can be overridden from the environment; the tests do.
+# It keeps the stick's UUID in STATE (in /tmp), so a copy that procd restarts
+# after a dropout still knows the stick. It never reboots within MIN_UPTIME
+# seconds of boot. Every setting can be overridden from the environment; the
+# tests do.
 
 BB=${BB:-/rom/bin/busybox}
 TARGETS=${TARGETS:-10.3.2.1 10.0.10.1}
@@ -30,12 +39,25 @@ RETRIES=${RETRIES:-5}
 HOLD=${HOLD:-21600}
 MIN_UPTIME=${MIN_UPTIME:-600}
 BOOT_DELAY=${BOOT_DELAY:-120}
+QUIET_HOUR=${QUIET_HOUR:-4}
+DEGRADED_CHECK=${DEGRADED_CHECK:-120}
+DEGRADED_FAILS=${DEGRADED_FAILS:-2}
+MAX_WAIT=${MAX_WAIT:-86400}
+CRITICAL=${CRITICAL-hostapd dnsmasq dropbear netifd}
+POWER_FIRST=${POWER_FIRST:-120}
+POWER_RETRY=${POWER_RETRY:-1800}
+USB_POWER=${USB_POWER:-/sys/class/gpio/tp-link:power:usb1/value}
+USB_OFF=${USB_OFF:-5}
+TZ_FILE=${TZ_FILE:-/tmp/TZ}
+HOUR_FILE=${HOUR_FILE:-}
+STATE=${STATE:-/tmp/router-watchdog.state}
 UPTIME=${UPTIME:-/proc/uptime}
 MARKER=${MARKER:-/etc/router-watchdog.rebooted}
 SYS_BLOCK=${SYS_BLOCK:-/sys/class/block}
 DEV_DIR=${DEV_DIR:-/dev}
 MOUNTS=${MOUNTS:-/proc/mounts}
 PING=${PING:-$BB ping -c 3 -W 2 -q}
+PIDOF=${PIDOF:-$BB pidof}
 REBOOT=${REBOOT:-sysrq}
 TAG=router-watchdog
 
@@ -45,6 +67,23 @@ log() {
 }
 
 now() { read -r NOW _ < "$UPTIME"; NOW=${NOW%.*}; }
+
+# The local hour as a number in HOUR, or empty when the clock is unreadable.
+# TZ comes from /tmp/TZ (RAM), never /etc/TZ, which resolves through the
+# overlay. Tests set HOUR_FILE instead.
+hour() {
+	local h tz
+	if [ -n "$HOUR_FILE" ]; then
+		read -r h < "$HOUR_FILE" 2>/dev/null
+	else
+		read -r tz < "$TZ_FILE" 2>/dev/null
+		h=$(TZ=${tz:-UTC0} $BB date +%H 2>/dev/null)
+	fi
+	case "$h" in
+		[0-9] | [0-9][0-9]) h=${h#0}; HOUR=${h:-0} ;; # "04" -> 4, "00" -> 0
+		*) HOUR= ;;
+	esac
+}
 
 # A readable node for block device $1 (such as sdb1). The hotplug daemon makes
 # /dev nodes from files on the stick, so a returning stick may have none.
@@ -64,17 +103,38 @@ uuid_of() {
 	$BB dd if="$node" bs=8 skip=141 count=2 2>/dev/null | $BB hexdump -ve '1/1 "%02x"' 2>/dev/null
 }
 
-reboot_now() { # reboot_now REASON [mark]
+# Switch the stick's USB port off for USB_OFF seconds and back on. Always ends
+# by writing 1: a port left off would keep the stick away until a reboot.
+usb_power_cycle() {
+	if [ ! -w "$USB_POWER" ]; then
+		log "cannot switch USB power: $USB_POWER is not writable"
+		return 1
+	fi
+	echo 0 > "$USB_POWER" 2>/dev/null
+	$BB sleep "$USB_OFF"
+	local i=0 v=
+	while [ "$i" -lt 3 ]; do
+		echo 1 > "$USB_POWER" 2>/dev/null
+		read -r v < "$USB_POWER" 2>/dev/null
+		[ "$v" = 1 ] && break
+		i=$((i + 1))
+		$BB sleep 1
+	done
+	log "switched USB power off for ${USB_OFF}s and back on (now ${v:-unknown})"
+}
+
+reboot_now() { # reboot_now REASON [mark|usb]
 	# Never within MIN_UPTIME of boot: if a check ever misfires on a healthy
 	# router, this caps the loop and leaves a window to log in and stop it.
 	now
-	if [ "$NOW" -lt "$MIN_UPTIME" ]; then
+	if ! [ "$NOW" -ge "$MIN_UPTIME" ] 2>/dev/null; then
 		log "would reboot ($1), but uptime ${NOW}s is under ${MIN_UPTIME}s"
 		return 0
 	fi
 	if [ "$2" = mark ]; then echo "$1" > "$MARKER" 2>/dev/null; fi
 	log "rebooting: $1"
 	if [ "$REBOOT" != sysrq ]; then
+		[ "$2" = usb ] && usb_power_cycle
 		$REBOOT "REBOOT $1"
 		exit 0
 	fi
@@ -84,28 +144,75 @@ reboot_now() { # reboot_now REASON [mark]
 	$BB sleep 2
 	echo u > /proc/sysrq-trigger
 	$BB sleep 2
+	[ "$2" = usb ] && usb_power_cycle
 	echo b > /proc/sysrq-trigger
 	$BB sleep 10
 	$BB reboot -f
 	exit 1
 }
 
+# The stick is back as $BACK_AS but /overlay is dead. Called every TICK.
+degraded_tick() {
+	now
+	local why= p missing=
+	hour
+	if [ -n "$HOUR" ] && [ "$HOUR" -eq "$QUIET_HOUR" ]; then
+		why="quiet hour"
+	elif [ $((NOW - DEGRADED_SINCE)) -ge "$MAX_WAIT" ]; then
+		why="waited $(((NOW - DEGRADED_SINCE) / 60)) min"
+	else
+		for p in $CRITICAL; do
+			$PIDOF "$p" >/dev/null 2>&1 || { missing=$p; break; }
+		done
+		if [ -n "$missing" ] && [ "$missing" = "$LAST_MISSING" ]; then
+			why="$missing is not running"
+		fi
+		LAST_MISSING=$missing
+		if [ -z "$why" ] && [ $((NOW - LAST_CHECK)) -ge "$DEGRADED_CHECK" ]; then
+			LAST_CHECK=$NOW
+			if tunnel_up; then
+				FAILS=0
+			else
+				FAILS=$((FAILS + 1))
+				log "tunnel check failed while waiting ($FAILS of $DEGRADED_FAILS)"
+				[ "$FAILS" -ge "$DEGRADED_FAILS" ] && why="tunnel down for $FAILS checks"
+			fi
+		fi
+	fi
+	[ -n "$why" ] && reboot_now "stick dropout, $why: /overlay device $OVERLAY_DEV is gone and the stick is back as $BACK_AS" usb
+}
+
 # Trigger 1. Cheap while the overlay's device exists: one file test.
 watch_stick() {
 	[ -n "$STICK_UUID" ] || return 0
+	if [ -n "$DEGRADED_SINCE" ]; then degraded_tick; return 0; fi
 	[ -e "$SYS_BLOCK/$OVERLAY_DEV" ] && return 0
 	local p name
 	for p in "$SYS_BLOCK"/sd*; do
 		[ -e "$p" ] || continue
 		name=${p##*/}
 		if [ "$(uuid_of "$name")" = "$STICK_UUID" ]; then
-			reboot_now "stick dropout: /overlay device $OVERLAY_DEV is gone and the stick is back as $name"
+			now
+			BACK_AS=$name DEGRADED_SINCE=${SINCE:-$NOW} LAST_CHECK=$NOW FAILS=0 LAST_MISSING=
+			echo "$STICK_UUID $DEGRADED_SINCE" > "$STATE" 2>/dev/null
+			log "stick dropout: /overlay device $OVERLAY_DEV is gone and the stick is back as $name; the network runs from memory, so waiting for the quiet hour ${QUIET_HOUR}:00, or less if the tunnel or a core service fails"
+			degraded_tick
+			return 0
 		fi
 	done
-	if [ -z "$GONE_LOGGED" ]; then
-		log "/overlay device $OVERLAY_DEV is gone and the stick has not come back; staying up"
-		GONE_LOGGED=1
+	now
+	if [ -z "$GONE_SINCE" ]; then
+		GONE_SINCE=$NOW
+		log "/overlay device $OVERLAY_DEV is gone and the stick has not come back; staying up, switching its USB port off and on every $((POWER_RETRY / 60)) min"
 	fi
+	if [ -z "$LAST_POWER" ]; then
+		[ $((NOW - GONE_SINCE)) -ge "$POWER_FIRST" ] || return 0
+	else
+		[ $((NOW - LAST_POWER)) -ge "$POWER_RETRY" ] || return 0
+	fi
+	usb_power_cycle
+	now
+	LAST_POWER=$NOW
 }
 
 # Sleep $1 seconds in TICK steps, watching the stick between steps.
@@ -137,19 +244,30 @@ healthy() {
 	fi
 }
 
-OVERLAY_DEV= STICK_UUID= GONE_LOGGED= DOWN_SINCE=
+OVERLAY_DEV= STICK_UUID= SINCE= GONE_SINCE= LAST_POWER= DOWN_SINCE=
+DEGRADED_SINCE= BACK_AS= LAST_CHECK= FAILS=0 LAST_MISSING=
 while read -r dev mnt _; do
 	[ "$mnt" = /overlay ] && OVERLAY_DEV=${dev#/dev/}
 done < "$MOUNTS"
 case "$OVERLAY_DEV" in
-	sd*) STICK_UUID=$(uuid_of "$OVERLAY_DEV") ;;
+	sd*)
+		STICK_UUID=$(uuid_of "$OVERLAY_DEV")
+		if [ ${#STICK_UUID} -eq 32 ]; then
+			echo "$STICK_UUID" > "$STATE" 2>/dev/null
+		else
+			# The overlay's device is already gone: a restart after a dropout.
+			# Keep the first copy's wait start, so MAX_WAIT still holds.
+			read -r STICK_UUID SINCE _ < "$STATE" 2>/dev/null
+			case "$SINCE" in *[!0-9]* | '') SINCE= ;; esac
+		fi
+		;;
 esac
-# At boot, the 90-mladost3-syslog hotplug hook restarts logd once wg0 is up,
-# which empties its buffer before the line reaches Loki. Log after that.
+# At boot, the 90-mladost3-syslog hotplug hook reconnects the log sender once
+# wg0 is up. Log after that, so the line reaches Loki.
 now
 if [ "$NOW" -lt 300 ]; then nap "$BOOT_DELAY"; fi
 if [ -n "$STICK_UUID" ]; then
-	log "started: /overlay on $OVERLAY_DEV ($STICK_UUID); tunnel check every ${CHECK_EVERY}s against $TARGETS"
+	log "started: /overlay on $OVERLAY_DEV ($STICK_UUID); tunnel check every ${CHECK_EVERY}s against $TARGETS; dropout reboots wait for ${QUIET_HOUR}:00"
 else
 	log "started: /overlay on ${OVERLAY_DEV:-nothing}, not a USB stick, so the dropout check is off; tunnel check every ${CHECK_EVERY}s against $TARGETS"
 fi

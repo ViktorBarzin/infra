@@ -782,7 +782,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # Replayed 2026-10-07 18:20-18:45 UTC: 18 matches in 15 min.
               # Matches nothing on either router over the 2 days after.
               alert  = "SiteRouterDiskOrWatchdog"
-              expr   = "sum by (host) (count_over_time({job=\"syslog\"} |~ \"EXT4-fs (error|warning)|I/O error, dev sd|^rebooting: |^would reboot \\\\(|the stick has not come back\" [15m])) > 0"
+              expr   = "sum by (host) (count_over_time({job=\"syslog\"} |~ \"EXT4-fs (error|warning)|I/O error, dev sd|^rebooting: |^would reboot \\\\(|^stick dropout: |the stick has not come back\" [15m])) > 0"
               for    = "0s"
               labels = { severity = "warning" }
               annotations = {

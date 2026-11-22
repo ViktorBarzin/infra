@@ -1,0 +1,39 @@
+#!/bin/sh
+# /etc/hotplug.d/iface/90-mladost3-syslog on mladost3-openwrt
+# (infra/scripts/mladost3-openwrt). Remote syslog goes to 10.0.20.208 through
+# the tunnel. At boot, logread connects before wg0 exists and then sits on a
+# WAN-sourced socket that can never reach the homelab, so every line logged
+# before the tunnel is up is lost. When wg0 comes up:
+#  1. Reconnect only the sender instance. Restarting the whole log service, as
+#     this hook did until 2026-11-22, also restarts logd and empties its buffer.
+#  2. Once per boot, log the lines collected before that again under the tag
+#     bootlog, so the boot log reaches Loki: {app="bootlog"}. Each replayed
+#     line keeps its original timestamp in its text; Loki stamps the replay
+#     time. `logread -l N -r` cannot do this: it fails to send the backlog.
+[ "$ACTION" = ifup ] && [ "$INTERFACE" = wg0 ] || exit 0
+
+# With the stick gone (dead overlay), /etc/init.d/log may not be readable, so
+# deleting the sender could leave none. Keep the old one.
+while read -r dev mnt _; do
+	[ "$mnt" = /overlay ] || continue
+	case "$dev" in /dev/sd*) [ -e "/sys/class/block/${dev#/dev/}" ] || exit 0 ;; esac
+done < /proc/mounts
+
+snap=
+if [ ! -e /tmp/bootlog-replayed ]; then
+	touch /tmp/bootlog-replayed
+	snap=/tmp/bootlog.snapshot
+	logread > "$snap"
+fi
+
+ubus call service delete '{"name":"log","instance":"logremote"}'
+/etc/init.d/log start
+
+[ -n "$snap" ] || exit 0
+(
+	sleep 5 # let the new sender connect through the tunnel
+	while read -r line; do
+		logger -t bootlog -- "$line"
+	done < "$snap"
+	rm -f "$snap"
+) > /dev/null 2>&1 &

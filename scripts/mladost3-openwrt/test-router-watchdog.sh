@@ -48,6 +48,8 @@ reset() {
 	echo "/dev/sda1 /overlay ext4 rw,relatime 0 0" > /tmp/t/mounts
 	mkdisk /tmp/t/dev/sda1 $STICK
 	echo 1 > /tmp/t/up/176.12.22.76
+	echo 12 > /tmp/t/hour
+	echo 1 > /tmp/t/usbpower
 }
 
 # run SECONDS [VAR=value ...]: start the watchdog with test timings, let it run,
@@ -59,6 +61,8 @@ run() {
 	env PATH=/nonexistent TICK=1 CHECK_EVERY=2 RETRY_EVERY=1 RETRIES=2 HOLD=6 \
 		BB=$BB PING=/tmp/fakeping REBOOT=echo LOG_STDOUT=1 \
 		MARKER=/tmp/t/marker SYS_BLOCK=/tmp/t/sys DEV_DIR=/tmp/t/dev MOUNTS=/tmp/t/mounts \
+		HOUR_FILE=/tmp/t/hour USB_POWER=/tmp/t/usbpower USB_OFF=0 STATE=/tmp/t/state \
+		CRITICAL= DEGRADED_CHECK=1 POWER_FIRST=2 POWER_RETRY=3 \
 		"$@" /bin/sh /w/router-watchdog > /tmp/t/out 2>&1 &
 	pid=$!
 	t=0
@@ -104,16 +108,85 @@ check "tunnel and Sofia down: reboots after HOLD" 'has "REBOOT tunnel down" && h
 reset; echo old > /tmp/t/marker; echo 1 > /tmp/t/up/10.3.2.1; run 5
 check "healthy check clears the marker" '[ ! -e /tmp/t/marker ] && has "cleared"'
 
-reset; echo 1 > /tmp/t/up/10.3.2.1
-DURING='rm -r /tmp/t/sys/sda1; mkdir /tmp/t/sys/sdb /tmp/t/sys/sdb1; cp /tmp/t/dev/sda1 /tmp/t/dev/sdb1; mkdisk /tmp/t/dev/sdb $OTHER'
-run 8 CHECK_EVERY=100
-check "stick drops and returns: reboots" 'has "REBOOT stick dropout" && has "back as sdb1"'
+DROP='rm -r /tmp/t/sys/sda1; mkdir /tmp/t/sys/sdb /tmp/t/sys/sdb1; cp /tmp/t/dev/sda1 /tmp/t/dev/sdb1; mkdisk /tmp/t/dev/sdb $OTHER'
+
+reset; echo 1 > /tmp/t/up/10.3.2.1; echo 4 > /tmp/t/hour
+DURING=$DROP; run 8 CHECK_EVERY=100
+check "dropout in the quiet hour: reboots" 'has "REBOOT stick dropout, quiet hour" && has "back as sdb1"'
 check "dropout reboot leaves no marker" '[ ! -e /tmp/t/marker ]'
+check "dropout reboot power-cycles the USB port first" 'has "switched USB power off" && [ "$(cat /tmp/t/usbpower)" = 1 ] && [ "$(grep -n "switched USB" /tmp/t/out | head -1 | cut -d: -f1)" -lt "$(grep -n REBOOT /tmp/t/out | head -1 | cut -d: -f1)" ]'
+
+reset; echo 1 > /tmp/t/up/10.3.2.1
+DURING=$DROP; run 8 CHECK_EVERY=100
+check "dropout outside the quiet hour: waits, no reboot" 'has "waiting for" && ! has REBOOT && [ "$(grep -c "waiting for" /tmp/t/out)" = 1 ]'
+
+reset; echo 1 > /tmp/t/up/10.3.2.1
+DURING="$DROP; sleep 3; echo 4 > /tmp/t/hour"; run 10 CHECK_EVERY=100
+check "waiting, then the quiet hour comes: reboots" 'has "waiting for" && has "REBOOT stick dropout, quiet hour"'
+
+reset; echo 1 > /tmp/t/up/10.3.2.1
+DURING="$DROP; rm /tmp/t/up/10.3.2.1"; run 10 CHECK_EVERY=100
+check "waiting, tunnel lost: reboots at once" 'has "REBOOT stick dropout, tunnel down"'
+
+reset; echo 1 > /tmp/t/up/10.3.2.1
+DURING="$DROP; rm /tmp/t/up/10.3.2.1; echo 1 > /tmp/t/flaky/10.3.2.1"; run 8 CHECK_EVERY=100
+check "waiting, one failed tunnel check: no reboot" '! has REBOOT && has "waiting for" && has "failed while waiting (1 of 2)"'
+
+reset; echo 1 > /tmp/t/up/10.3.2.1
+DURING=$DROP; run 8 CHECK_EVERY=100 CRITICAL="sh nosuchservice"
+check "waiting, a core service is gone: reboots" 'has "REBOOT stick dropout, nosuchservice is not running"'
+
+reset; echo 1 > /tmp/t/up/10.3.2.1
+DURING=$DROP; run 8 CHECK_EVERY=100 CRITICAL="sh"
+check "waiting, core services running: no reboot" '! has REBOOT && has "waiting for"'
+
+reset; echo 1 > /tmp/t/up/10.3.2.1
+DURING=$DROP; run 8 CHECK_EVERY=100 MAX_WAIT=3
+check "waiting past MAX_WAIT: reboots" 'has "REBOOT stick dropout, waited"'
+
+reset; echo 1 > /tmp/t/up/10.3.2.1; echo garbage > /tmp/t/hour
+DURING=$DROP; run 8 CHECK_EVERY=100
+check "unreadable clock: keeps waiting, no crash" 'has "waiting for" && ! has REBOOT'
+
+reset; echo 1 > /tmp/t/up/10.3.2.1; echo 4 > /tmp/t/hour; rm /tmp/t/usbpower
+DURING=$DROP; run 8 CHECK_EVERY=100
+check "USB power switch missing: still reboots" 'has "cannot switch USB power" && has "REBOOT stick dropout"'
+
+# The real clock: the quiet hour set to the current UTC hour, TZ from a file.
+reset; echo 1 > /tmp/t/up/10.3.2.1; echo UTC0 > /tmp/t/tz
+DURING=$DROP; run 8 CHECK_EVERY=100 HOUR_FILE= TZ_FILE=/tmp/t/tz QUIET_HOUR=$(date -u +%H)
+check "real clock in the quiet hour: reboots" 'has "REBOOT stick dropout, quiet hour"'
+
+# A watchdog restarted by procd after the dropout cannot read the dead
+# stick's UUID; it takes it from the state file in /tmp.
+reset; echo 1 > /tmp/t/up/10.3.2.1; echo 4 > /tmp/t/hour
+run 2 CHECK_EVERY=100
+eval "$DROP"; mv /tmp/t/dev/sda1 /tmp/t/dev/sda1.dead; run 6 CHECK_EVERY=100
+check "restarted after the dropout: still detects it" 'has "REBOOT stick dropout"'
+
+reset; echo 1 > /tmp/t/up/10.3.2.1
+read -r up _ < /proc/uptime; echo "$STICK $((${up%.*} - 100))" > /tmp/t/state
+eval "$DROP"; mv /tmp/t/dev/sda1 /tmp/t/dev/sda1.dead; run 6 CHECK_EVERY=100 MAX_WAIT=50
+check "restarted after the dropout: keeps the first wait start" 'has "REBOOT stick dropout, waited"'
+
+reset; echo 1 > /tmp/t/up/10.3.2.1; echo garbage > /tmp/t/uptime
+DURING=$DROP; run 6 CHECK_EVERY=100 UPTIME=/tmp/t/uptime BOOT_DELAY=0 MIN_UPTIME=0 MAX_WAIT=0
+check "unreadable uptime: never reboots" '! has REBOOT'
+
+reset; echo 1 > /tmp/t/up/10.3.2.1; echo 4 > /tmp/t/hour
+eval "$DROP"; mv /tmp/t/dev/sda1 /tmp/t/dev/sda1.dead; run 6 CHECK_EVERY=100
+check "restarted after the dropout without the state file: check is off" '! has REBOOT && has "dropout check is off"'
 
 reset; echo 1 > /tmp/t/up/10.3.2.1
 DURING='rm -r /tmp/t/sys/sda1'
-run 6 CHECK_EVERY=100
-check "stick gone for good: logs once, no reboot" '[ "$(grep -c "is gone" /tmp/t/out)" = 1 ] && ! has REBOOT'
+run 10 CHECK_EVERY=100
+check "stick gone for good: logs once, no reboot" '[ "$(grep -c "has not come back" /tmp/t/out)" = 1 ] && ! has REBOOT'
+check "stick gone: power-cycles the port, more than once" '[ "$(grep -c "switched USB power off" /tmp/t/out)" -ge 2 ] && [ "$(cat /tmp/t/usbpower)" = 1 ]'
+
+reset; echo 1 > /tmp/t/up/10.3.2.1
+DURING='rm -r /tmp/t/sys/sda1; sleep 4; mkdir /tmp/t/sys/sdc1; cp /tmp/t/dev/sda1 /tmp/t/dev/sdc1'
+run 10 CHECK_EVERY=100 POWER_FIRST=1
+check "stick comes back after a power cycle: waits for the quiet hour" 'has "switched USB power off" && has "back as sdc1" && has "waiting for" && ! has REBOOT'
 
 reset; echo 1 > /tmp/t/up/10.3.2.1
 DURING='rm -r /tmp/t/sys/sda1; mkdir /tmp/t/sys/sdb1; mkdisk /tmp/t/dev/sdb1 $OTHER'
@@ -123,12 +196,13 @@ check "a different disk appears: no reboot" '! has REBOOT'
 reset; echo 1 > /tmp/t/up/10.3.2.1
 DURING='rm -r /tmp/t/sys/sda1; mkdir /tmp/t/sys/sdb1; echo 8:17 > /tmp/t/sys/sdb1/dev'
 run 6 CHECK_EVERY=100
-check "returned stick without a /dev node does not crash the loop" '! has REBOOT && has "is gone"'
+check "returned stick without a /dev node does not crash the loop" '! has REBOOT && has "has not come back"'
 
 reset; echo 1 > /tmp/t/up/10.3.2.1; echo "/dev/mtdblock4 /overlay jffs2 rw 0 0" > /tmp/t/mounts; run 4
 check "overlay on internal flash: dropout check off" 'has "dropout check is off" && has healthy'
 
 reset; echo 1 > /tmp/t/up/10.3.2.1
+echo 4 > /tmp/t/hour
 DURING='rm -r /tmp/t/sys/sda1; mkdir /tmp/t/sys/sdb1; cp /tmp/t/dev/sda1 /tmp/t/dev/sdb1'
 run 6 CHECK_EVERY=100 MIN_UPTIME=999999999
 check "too soon after boot: no reboot, says why" '! has REBOOT && has "would reboot (stick dropout"'
