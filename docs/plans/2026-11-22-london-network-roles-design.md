@@ -148,16 +148,35 @@ A person in an Authentik group gets that group's role for a device when they sig
 ## Order of work
 
 ```timeline
-caption: Every step up to the retirement of 5G-Tower Admin can be undone with one change
+caption: Steps 1 to 3 can be undone with one change; step 4 moves 5 devices to a new SSID
 steps:
   - {when: "1. Test", what: "Try iot isolation (AP isolation plus hairpin) on a test SSID", rollback: "Delete the test SSID"}
   - {when: "2. No NAT", what: "Add the TP-Link route; fix the NFS export and the Loki alert; remove the Flint masquerade and the OPNsense source NAT", rollback: "Set masq back on the wgclient1 zone"}
   - {when: "3. Sofia", what: "Authentik groups, wifi app with its database and LoadBalancer IP, alerts", rollback: "Destroy the new stack"}
-  - {when: "4. Merge", what: "guest5g joins br-lan; the role agent runs in log-only mode", rollback: "Set guest5g back to the guest network"}
-  - {when: "5. One week", what: "Read the log-only entries in Loki; add each needed pinhole to the role list", rollback: "-"}
-  - {when: "6. Enforce", what: "Remove the blanket lan and guest forwards to the tunnel; the agent enforces roles", rollback: "Add the lan forward back"}
-  - {when: "7. Retire", what: "Disable 5G-Tower Admin after its devices use 5G-Tower", ponr: true}
+  - {when: "4. Merge and retire", what: "guest5g joins br-lan; move the 5G-Tower Admin devices to 5G-Tower, then disable 5G-Tower Admin; the role agent starts in log-only mode", ponr: true}
+  - {when: "5. Sign in", what: "Assign roles after the move, because private Wi-Fi addresses change with the SSID", rollback: "Move the device back to guest"}
+  - {when: "6. One week", what: "Read the log-only entries in Loki; add each needed pinhole to the role list", rollback: "-"}
+  - {when: "7. Enforce", what: "Remove the blanket lan and guest forwards to the tunnel; the agent enforces roles", rollback: "Add the lan forward back"}
 ```
+
+Devices on 5G-Tower Admin on 2026-11-22: Viktor's iPhone, the Watch, mbp-london, portal-london and one unnamed device (`0e:5b:07:32:7e:7d`). dell-worker also joins it when it runs; its Wi-Fi setting is in `playbooks/host_vars/dell-worker.yml`. The Mac and the Watch use private addresses, so they get a new MAC on 5G-Tower. Update their curated names in `provision.sh` in the same step.
+
+## Role sync
+
+```numbers
+caption: Requests from the Flint to the wifi app, per day
+rows:
+  - {label: Role polls, before: "17,280 (every 5 s)", after: "about 1,700 (one held request per 50 s)"}
+  - {label: Device table uploads, before: "17,280", after: "one per DHCP change"}
+  - {label: Flash writes on the Flint, before: "-", after: "one per role change"}
+```
+
+- **Long poll.** The agent sends one request with its list version. The app answers at once when the roles change. Otherwise it answers "no change" after 50 seconds, and the agent asks again.
+- **No polling inside the app.** The app waits on Postgres `LISTEN/NOTIFY`, so a role change wakes the held request.
+- **Device table on change only.** A dnsmasq `dhcp-script` hook sends the lease table when a lease starts, renews to a new address or ends. Each poll carries a hash of the table. The app asks for the full table only when the hash differs.
+- **Atomic apply.** The agent builds new ipsets and swaps them in with `ipset swap`. Then it deletes the open Sofia connections of a device that lost a role. The firewall rules never change.
+- **Failure.** When the app does not answer, the agent keeps the last list and waits 5 to 60 seconds before it retries. At boot it loads `/etc/london-roles` before the first poll.
+- **Monitoring.** The agent writes the time of its last good sync to the node exporter text file. An alert fires after 10 minutes without a sync.
 
 ## Configuration
 
