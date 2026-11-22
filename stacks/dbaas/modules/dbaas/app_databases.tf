@@ -21,6 +21,10 @@ locals {
     # tasks PWA (TanStack Start, ~/code/tasks). Drizzle migrations run from the
     # app's `migrate` init container.
     tasks = {}
+    # wifi (TanStack Start, Forgejo viktor/wifi): London Wi-Fi devices and their
+    # roles, synced to the Flint (docs/plans/2026-11-22-london-network-roles-design.md).
+    # Drizzle migrations run from the `migrate` init container.
+    wifi = {}
     # Date Night (TanStack Start, Forgejo viktor/datenight): ideas, dates and
     # the weekly shortlist. Migrations run from the `migrate` init container.
     datenight = {}

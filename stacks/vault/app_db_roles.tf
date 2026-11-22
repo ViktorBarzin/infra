@@ -33,6 +33,7 @@ variable "pg_app_roles" {
     infra-map       = { username = "infra_map", rotation_schedule = "21 10 * * TUE", rotation_window = 3600 }
     datenight       = { username = "datenight", rotation_schedule = "23 10 * * TUE", rotation_window = 3600 }
     bambuddy        = { username = "bambuddy", rotation_schedule = "25 10 * * TUE", rotation_window = 3600 }
+    wifi            = { username = "wifi", rotation_schedule = "27 10 * * TUE", rotation_window = 3600 }
   }
 }
 
