@@ -44,7 +44,7 @@ Bambuddy keeps its users, settings and printers in its database. These were set 
 1. `POST /api/v1/auth/setup` with `auth_enabled: true`, user `admin` and the Vault password. Until this runs, the app is open, so run it through `kubectl port-forward` before the hostname resolves. The password needs a special character.
 2. Create the user `agent` in Operators. Operators lack `api_keys:create`, so move `agent` to Administrators, sign in as `agent`, create the key (`can_queue` and `can_control_printer` false, `can_manage_library` and `can_manage_projects` true), move it back to Operators, and write the key to `secret/bambuddy-agent` `api_key`.
 3. Settings (`PATCH /api/v1/settings/`): `use_slicer_api` true, `bambu_studio_api_url` `http://localhost:3001`, `preferred_slicer` and `open_in_slicer` `bambu_studio`, `external_url`, currency EUR. Without `use_slicer_api` the Slice button stays off.
-4. Add the printer (`POST /api/v1/printers/`: name `P2S`, serial and access code from `secret/emo/bambu-p2s`, IP 192.168.1.110, model `P2S`). Bambuddy tests the connection first and refuses the printer while it is off. On 2026-11-22 the Shelly plug was off, so this step is still open.
+4. Add the printer (`POST /api/v1/printers/`: name `P2S`, serial and access code from `secret/emo/bambu-p2s`, IP 192.168.1.110, model `P2S`). Bambuddy tests the connection first and refuses the printer while it is off. Done on 2026-11-22 with the plug switched on for it: printer id 1, status and camera snapshot checked.
 
 The files are on NFS and the database in the nightly per-database dump, so a restore of both brings all of this back.
 
