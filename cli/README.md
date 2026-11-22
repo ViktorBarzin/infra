@@ -626,7 +626,7 @@ See `infra/docs/adr/0004`–`0013` for the architecture decisions.
 | Command | Tier | What it does |
 |---|---|---|
 | `print projects` | read | list the projects in Bambuddy (`bambuddy.viktorbarzin.me`) with their page URLs |
-| `print publish --project NAME [--description D] [--url U] [--cover IMG] <file\|dir>...` | write | find or create the project and its same-named library folder, upload the files (a directory means its visible top-level files), replace a file of the same name, set the cover; prints the project URL |
+| `print publish --project NAME [--description D] [--url U] [--cover IMG] <file\|dir>...` | write | find or create the project and its same-named library folder, upload the files (a directory means its visible top-level files), replace a file of the same name, render a `README.md` into the project notes (v0.48.1, goldmark GFM, raw HTML dropped), set the cover; prints the project URL |
 
 The key is `BAMBUDDY_API_KEY`, else `vault kv get -field=api_key secret/bambuddy-agent` (admins and emo). It belongs to Bambuddy's local `agent` account, which has the library and projects scopes and cannot start a print. `BAMBUDDY_URL` overrides the base URL for tests. Doc: `docs/architecture/bambuddy.md`.
 

@@ -46,11 +46,14 @@ Bambuddy keeps its users, settings and printers in its database. These were set 
 3. Settings (`PATCH /api/v1/settings/`): `use_slicer_api` true, `bambu_studio_api_url` `http://localhost:3001`, `preferred_slicer` and `open_in_slicer` `bambu_studio`, `external_url`, currency EUR. Without `use_slicer_api` the Slice button stays off.
 4. Add the printer (`POST /api/v1/printers/`: name `P2S`, serial and access code from `secret/emo/bambu-p2s`, IP 192.168.1.110, model `P2S`). Bambuddy tests the connection first and refuses the printer while it is off. Done on 2026-11-22 with the plug switched on for it: printer id 1, status and camera snapshot checked.
 
+5. Filament inventory: the white PETG Basic came in from the AMS RFID; the other spools of Emo's first order (PETG Basic black and orange, PLA Basic black and Jade White) were added by hand with the order's prices, 10.15 and 10.68 EUR per kg. A hand-added spool links to an RFID roll by material and colour when the roll is first loaded; a colour that does not match (orange is a guess, `F75403`) gives a second spool to archive.
+6. The Shelly plug as a REST smart plug `P2S plug` on printer 1, through the Shelly RPC API at 192.168.1.111 (no Home Assistant token in Bambuddy). Power, lifetime energy and state are read from `Switch.GetStatus`. Automatic power-on is off. Automatic power-off after a print is off by default; it is a one-shot switch on the printer card, and when set it waits until the nozzle is below 50 °C.
+
 The files are on NFS and the database in the nightly per-database dump, so a restore of both brings all of this back.
 
 ## Agents
 
-`homelab print publish --project "<name>" <file|dir>...` finds or creates the project and a top-level library folder of the same name linked to it, then uploads the files. A file with the same name as one already in the folder replaces it, which is how a new revision goes in. `--description`, `--url` and `--cover <image>` fill in a new project. `homelab print projects` lists the projects with their page URLs. The key comes from `BAMBUDDY_API_KEY` or Vault `secret/bambuddy-agent`, which admins and emo (policy `projects-emo`) can read.
+`homelab print publish --project "<name>" <file|dir>...` finds or creates the project and a top-level library folder of the same name linked to it, then uploads the files. A file with the same name as one already in the folder replaces it, which is how a new revision goes in. A `README.md` among the files also becomes the project notes on the project page, rendered to HTML. `--description`, `--url` and `--cover <image>` fill in a new project. `homelab print projects` lists the projects with their page URLs. The key comes from `BAMBUDDY_API_KEY` or Vault `secret/bambuddy-agent`, which admins and emo (policy `projects-emo`) can read.
 
 A project folder holds the model files (`.stl`, `.3mf`), the design source (`.py`, `.scad`), a `README.md` that Bambuddy shows with the folder, renders and test-fit photos.
 

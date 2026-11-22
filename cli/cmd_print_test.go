@@ -64,6 +64,20 @@ func (f *fakeBambuddy) serve(w http.ResponseWriter, r *http.Request) {
 		body["id"] = f.id()
 		f.projects = append(f.projects, body)
 		writeJSON(body)
+	case r.Method == "PATCH" && strings.HasPrefix(p, "/api/v1/projects/"):
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		id := strings.TrimSuffix(strings.TrimPrefix(p, "/api/v1/projects/"), "/")
+		for _, pr := range f.projects {
+			if anyID(pr["id"]) == id {
+				for k, v := range body {
+					pr[k] = v
+				}
+				writeJSON(pr)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
 	case r.Method == "POST" && strings.HasSuffix(p, "/cover-image"):
 		_ = r.ParseMultipartForm(1 << 20)
 		file, hdr, _ := r.FormFile("file")
@@ -272,5 +286,40 @@ func TestPrintProjectsListsWithURLs(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output %q is missing %q", out, want)
 		}
+	}
+}
+
+func TestPrintPublishREADMEBecomesProjectNotes(t *testing.T) {
+	f, _ := newFakeBambuddy(t)
+	f.projects = []map[string]any{{"id": 7, "name": "Box", "notes": "old"}}
+	f.folders = []map[string]any{{"id": 8, "name": "Box", "parent_id": nil, "project_id": 7}}
+	dir := t.TempDir()
+	writeFile(t, dir, "README.md", "# Box\n\n| file | what |\n|---|---|\n| `a.stl` | body |\n\n<script>x</script>\n")
+	writeFile(t, dir, "a.stl", "A")
+
+	if _, err := captureStdout(t, func() error { return printPublish([]string{"--project", "Box", dir}) }); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	notes, _ := f.projects[0]["notes"].(string)
+	for _, want := range []string{"<h1", "Box</h1>", "<table>", "<code>a.stl</code>"} {
+		if !strings.Contains(notes, want) {
+			t.Fatalf("notes should be the README as HTML, missing %q in %q", want, notes)
+		}
+	}
+	if strings.Contains(notes, "<script>") {
+		t.Fatalf("raw HTML from the README must not pass through: %q", notes)
+	}
+}
+
+func TestPrintPublishWithoutREADMEKeepsNotes(t *testing.T) {
+	f, _ := newFakeBambuddy(t)
+	f.projects = []map[string]any{{"id": 7, "name": "Box", "notes": "kept"}}
+	f.folders = []map[string]any{{"id": 8, "name": "Box", "parent_id": nil, "project_id": 7}}
+	stl := writeFile(t, t.TempDir(), "a.stl", "A")
+	if _, err := captureStdout(t, func() error { return printPublish([]string{"--project", "Box", stl}) }); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if f.projects[0]["notes"] != "kept" {
+		t.Fatalf("notes changed without a README: %v", f.projects[0]["notes"])
 	}
 }

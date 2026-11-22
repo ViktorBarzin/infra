@@ -13,7 +13,21 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
 )
+
+// readmeNotesHTML renders a project README as the HTML that Bambuddy's
+// project notes hold (its notes editor stores HTML and sanitises it on
+// display). Raw HTML in the Markdown is dropped, goldmark's default.
+func readmeNotesHTML(md []byte) (string, error) {
+	var buf bytes.Buffer
+	if err := goldmark.New(goldmark.WithExtensions(extension.GFM)).Convert(md, &buf); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
 
 // `homelab print` publishes designed 3D parts into Bambuddy
 // (bambuddy.viktorbarzin.me, stacks/bambuddy), where people preview, slice
@@ -289,6 +303,26 @@ func printPublish(args []string) error {
 			return err
 		}
 		fmt.Printf("uploaded %s\n", name)
+	}
+
+	// The README is also the project's notes, so the project page shows it,
+	// not only the File Manager. Republishing the README updates them.
+	for _, local := range files {
+		if !strings.EqualFold(filepath.Base(local), "README.md") {
+			continue
+		}
+		md, err := os.ReadFile(local)
+		if err != nil {
+			return err
+		}
+		html, err := readmeNotesHTML(md)
+		if err != nil {
+			return err
+		}
+		if err := c.json("PATCH", fmt.Sprintf("/api/v1/projects/%d", proj.ID), map[string]any{"notes": html}, nil); err != nil {
+			return err
+		}
+		fmt.Println("project notes set from README.md")
 	}
 
 	if *cover != "" {
