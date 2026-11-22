@@ -253,7 +253,8 @@ so the Postgres series keep their own `service` label, the Cloud Service name.
 
 | Metric | Exported by | Read by |
 |---|---|---|
-| `cloud_reconcile_total{result}`, `cloud_reconcile_duration_seconds{kind}`, `cloud_reconcile_queue_depth` | reconciler | `CloudReconcileQueueStuck`, `CloudReconcileFailing` |
+| `cloud_reconcile_total{result}`, `cloud_reconcile_duration_seconds{kind}`, `cloud_reconcile_queue_depth` | reconciler | `CloudReconcileQueueStuck`, `CloudReconcileFailing`, `CloudAppsFailingAcrossProjects` (`applies_failing`: 4 failed jobs in an hour) |
+| `kube_deployment_status_replicas_unavailable`, `kube_deployment_spec_replicas` in `p-*` | kube-state-metrics | `CloudAppsFailingAcrossProjects` (`apps_unavailable`: 3 or more Projects, at least half of those with an App, with an App, edge or oauth2-proxy pod unavailable for 15 minutes, then 10 more) |
 | `cloud_postgres_database_bytes`, `cloud_postgres_database_limit_bytes`, `cloud_postgres_database_unmeasured` `{project,service}` | reconciler | `CloudPostgresDatabaseNearSize`, `CloudPostgresDatabaseUnmeasured` |
 | `cloud_postgres_database_read_only{project,service}` | reconciler: 1 when the role is read-only because the database reached its Size's disk | `CloudPostgresReadOnly` |
 | `cloud_postgres_disk_enforcement_failed{project,service}` | reconciler: 1 while the last size pass did not enforce the disk limit | `CloudPostgresDiskEnforcementFailed` |

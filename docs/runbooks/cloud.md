@@ -1533,6 +1533,7 @@ within 15 s, at its next beat.
 | `CloudPostgresTasksFailing` | no | "Postgres tasks fail", below |
 | `CloudBuildsFailingForCloud` | no | "Builds fail for Cloud's reason", below |
 | `CloudReconcilerLoopStalled` | no | "A reconciler loop stalled", below |
+| `CloudAppsFailingAcrossProjects` | no | "Many Apps fail across Projects", below |
 | `CloudProvisionerForeignRole`, `CloudProjectRoleUnlimited`, `CloudProjectConnectionsOverCeiling` | yes | their summaries hold the query; [docs/agents/databases.md](../agents/databases.md), "Cloud" |
 
 ### Postgres tasks fail
@@ -1590,6 +1591,28 @@ size pass.
    usual cause.
 2. If the lines stop (a hung loop) or the cause is gone, restart the
    reconciler ("Restart" above). Its series starts again at the restart.
+
+### Many Apps fail across Projects
+
+`CloudAppsFailingAcrossProjects{signal}` looks at User Apps across
+Projects, which no User sees. `apps_unavailable`: at least 3 Projects, and
+at least half of those that run an App, had an App, edge or oauth2-proxy
+pod unavailable for 15 minutes, then 10 more. `applies_failing`: 4 or more
+reconcile jobs failed in an hour; a failed Deploy (`crashed`,
+`health_check`) fails its job too. One User's broken App is not this.
+
+1. List the Apps that are down:
+   `homelab metrics query 'min_over_time(kube_deployment_status_replicas_unavailable{namespace=~"p-.+"}[15m]) > 0'`.
+2. Read one Project's pods and events, read only:
+   `kubectl --context kubernetes-admin@kubernetes -n p-<project> get pods,events`.
+   The same reason in every Project (ImagePullBackOff, a refused pod,
+   Pending pods, a CrashLoopBackOff in `edge-*` or `auth-*`) points at the
+   platform: the ghcr cache, an admission policy, node capacity,
+   Authentik. Fix that through its own stack.
+3. For `applies_failing`, read the failures in the `cloud` database:
+   `SELECT project_id, kind, last_error FROM reconcile_jobs WHERE state = 'failed' ORDER BY updated_at DESC LIMIT 20;`.
+   The same `last_error` in many Projects is Cloud's or the platform's;
+   different reasons are each User's own.
 
 ### The pull token, the ghcr cache and a rotation
 
@@ -1664,7 +1687,11 @@ builds it again.
   reconciler's `RECONCILE_IMAGE_PRUNE`. It starts at `dry-run` (2026-11-17)
   and moves to `on` after the dry-run lines are read; `dry-run` logs
   "would prune an image version" for each version and deletes none; `off`
-  is the rollback. Change the variable and let CI apply `cloud`.
+  is the rollback. Change the variable and let CI apply `cloud`. On
+  2026-11-22 the reconciler had logged no prune line in 5 days and made
+  no GitHub call: no App had more than 10 builds (the most was 3), so
+  there was nothing to read yet. It stays `dry-run` until an App passes
+  10 builds and its lines are read.
 - Metrics: `cloud_image_versions_pruned_total{mode}`,
   `cloud_image_prune_errors_total{reason}` (unauthorized, forbidden,
   rate_limited, list_failed, delete_failed), `cloud_image_prune_api_calls`

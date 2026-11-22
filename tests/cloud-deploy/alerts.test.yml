@@ -462,3 +462,103 @@ tests:
         alertname: CloudBuildsFailingForCloud
         exp_alerts:
           - exp_labels: {severity: warning, subsystem: cloud, failure: run_failed}
+
+  # Many Apps unavailable across Projects. Three of four Projects with an
+  # App have an App, edge or oauth2-proxy unavailable: from 10m: fires once
+  # each has been for 15 minutes, plus the 10-minute for.
+  - interval: 2m
+    input_series:
+      - series: 'kube_deployment_spec_replicas{namespace="p-a", deployment="app-a"}'
+        values: '1x30'
+      - series: 'kube_deployment_spec_replicas{namespace="p-b", deployment="app-b"}'
+        values: '1x30'
+      - series: 'kube_deployment_spec_replicas{namespace="p-c", deployment="app-c"}'
+        values: '1x30'
+      - series: 'kube_deployment_spec_replicas{namespace="p-d", deployment="app-d"}'
+        values: '1x30'
+      - series: 'kube_deployment_status_replicas_unavailable{namespace="p-a", deployment="app-a"}'
+        values: '0x5 1x40'
+      - series: 'kube_deployment_status_replicas_unavailable{namespace="p-b", deployment="edge-b"}'
+        values: '0x5 1x40'
+      - series: 'kube_deployment_status_replicas_unavailable{namespace="p-c", deployment="auth-c"}'
+        values: '0x5 1x40'
+      - series: 'kube_deployment_status_replicas_unavailable{namespace="p-d", deployment="app-d"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CloudAppsFailingAcrossProjects
+        exp_alerts: []
+      - eval_time: 38m
+        alertname: CloudAppsFailingAcrossProjects
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, signal: apps_unavailable}
+  # Two Projects down (a persona run's broken Apps): quiet.
+  - interval: 2m
+    input_series:
+      - series: 'kube_deployment_spec_replicas{namespace="p-a", deployment="app-a"}'
+        values: '1x30'
+      - series: 'kube_deployment_spec_replicas{namespace="p-b", deployment="app-b"}'
+        values: '1x30'
+      - series: 'kube_deployment_status_replicas_unavailable{namespace="p-a", deployment="app-a"}'
+        values: '1x30'
+      - series: 'kube_deployment_status_replicas_unavailable{namespace="p-b", deployment="app-b"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: CloudAppsFailingAcrossProjects
+        exp_alerts: []
+  # Three down among seven Projects with an App: under half, quiet. A pod
+  # unavailable for a moment in a rollout never counts.
+  - interval: 2m
+    input_series:
+      - series: 'kube_deployment_spec_replicas{namespace="p-1", deployment="app-1"}'
+        values: '1x30'
+      - series: 'kube_deployment_spec_replicas{namespace="p-2", deployment="app-2"}'
+        values: '1x30'
+      - series: 'kube_deployment_spec_replicas{namespace="p-3", deployment="app-3"}'
+        values: '1x30'
+      - series: 'kube_deployment_spec_replicas{namespace="p-4", deployment="app-4"}'
+        values: '1x30'
+      - series: 'kube_deployment_spec_replicas{namespace="p-5", deployment="app-5"}'
+        values: '1x30'
+      - series: 'kube_deployment_spec_replicas{namespace="p-6", deployment="app-6"}'
+        values: '1x30'
+      - series: 'kube_deployment_spec_replicas{namespace="p-7", deployment="app-7"}'
+        values: '1x30'
+      - series: 'kube_deployment_status_replicas_unavailable{namespace="p-1", deployment="app-1"}'
+        values: '1x30'
+      - series: 'kube_deployment_status_replicas_unavailable{namespace="p-2", deployment="app-2"}'
+        values: '1x30'
+      - series: 'kube_deployment_status_replicas_unavailable{namespace="p-3", deployment="app-3"}'
+        values: '1x30'
+      - series: 'kube_deployment_status_replicas_unavailable{namespace="p-4", deployment="app-4"}'
+        values: '0 1 0x28'
+      - series: 'kube_deployment_status_replicas_unavailable{namespace="p-5", deployment="app-5"}'
+        values: '0 0 1 0x27'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: CloudAppsFailingAcrossProjects
+        exp_alerts: []
+
+  # Four reconcile jobs failed after all their attempts within an hour:
+  # fires. Two in an hour stay with CloudReconcileFailing alone.
+  - interval: 2m
+    input_series:
+      - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="failed"}'
+        values: '0x5 1 2 3 4 4x30'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: CloudAppsFailingAcrossProjects
+        exp_alerts: []
+      - eval_time: 32m
+        alertname: CloudAppsFailingAcrossProjects
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, signal: applies_failing}
+  - interval: 2m
+    input_series:
+      - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="failed"}'
+        values: '0x5 1 2 2x40'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: CloudAppsFailingAcrossProjects
+        exp_alerts: []
