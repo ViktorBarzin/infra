@@ -1,11 +1,15 @@
 #!/bin/sh
-# London device roles on the Flint (docs/plans/2026-11-22-london-network-roles-design.md).
+# London device roles and names on the Flint (docs/plans/2026-11-22-london-network-roles-design.md).
 #
 # Every London device is a guest unless the wifi app (stacks/wifi,
 # wifi.viktorbarzin.me) gives its MAC a role. This agent keeps one ipset per
 # role, and the london_roles chain decides which NEW connections from London
 # may enter the tunnel to Sofia. Replies to connections Sofia opens are
 # ESTABLISHED and never reach the chain, so Sofia can still reach every device.
+#
+# A device the app names gets a uci dhcp host section lr_<mac hex> with its
+# name and, when the app fixes one, its address. dnsmasq gives the address,
+# and the DNS import (stacks/phpipam) publishes <name>.viktorbarzin.lan.
 #
 #   london-roles run           long-poll loop (procd service london-roles)
 #   london-roles once          one poll; for tests and by hand
@@ -27,6 +31,7 @@ LR_RUN=${LR_RUN:-/tmp/london-roles}
 # Tests point this at a stand-in: busybox sh runs its own ip applet first.
 LR_IP=${LR_IP:-ip}
 LR_UCI=${LR_UCI:-uci}
+LR_DNSMASQ=${LR_DNSMASQ:-/etc/init.d/dnsmasq}
 LR_URL=https://wifi.viktorbarzin.me
 LR_MODE=log
 # shellcheck disable=SC1090 # the config file is the router's own
@@ -74,8 +79,8 @@ push_leases() {
 
 version_of() { [ -f "$1" ] && sed -n 's/^version \([0-9][0-9]*\)$/\1/p' "$1" | head -n 1; }
 
-role_of() { # file mac
-	awk -v m="$2" 'NR > 1 && $1 == m { print $2 }' "$1"
+role_of() { # file mac; a guest has no role
+	awk -v m="$2" 'NR > 1 && $1 == m && $2 != "guest" { print $2 }' "$1"
 }
 
 ip_of() { # mac
@@ -112,20 +117,82 @@ drop_changed() { # old new
 	done
 }
 
-valid_list() { # file: header plus "mac role" lines with known roles
+# A header, then "mac role" lines (format 1) or "mac role|guest name|- address|-"
+# lines (format 2). A name is one lowercase DNS label; an address is a host on
+# 192.168.8.0/24 other than the router.
+valid_list() { # file
 	awk -v roles=" $ROLES " '
 		NR == 1 { if ($0 !~ /^version [0-9]+$/) bad = 1; next }
-		NF != 2 || $1 !~ /^([0-9a-f][0-9a-f]:){5}[0-9a-f][0-9a-f]$/ || index(roles, " " $2 " ") == 0 { bad = 1 }
+		$1 !~ /^([0-9a-f][0-9a-f]:){5}[0-9a-f][0-9a-f]$/ { bad = 1 }
+		NF == 2 { if (index(roles, " " $2 " ") == 0) bad = 1; next }
+		NF != 4 { bad = 1; next }
+		$2 != "guest" && index(roles, " " $2 " ") == 0 { bad = 1 }
+		$3 != "-" && ($3 !~ /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/ || length($3) > 63) { bad = 1 }
+		$4 != "-" {
+			n = split($4, o, ".")
+			if (n != 4 || o[1] != 192 || o[2] != 168 || o[3] != 8 || o[4] !~ /^[1-9][0-9]*$/ || o[4] < 2 || o[4] > 254) bad = 1
+		}
 		END { exit bad }
 	' "$1"
+}
+
+# The lr_* dhcp host sections as "section name mac address|-" lines, sorted:
+# wanted from a list file, or as uci has them now. dnsmasq refuses to start
+# on two reservations of one address, so a wanted address that another host
+# section (the GL.iNet UI's, provision.sh's) reserves is left out.
+names_wanted() { # file
+	{
+		"$LR_UCI" -q show dhcp | awk -F= '
+			{ split($1, k, "."); v = $2; gsub(/\047/, "", v) }
+			k[2] !~ /^lr_/ && k[3] == "ip" { print "reserved", v }
+		'
+		awk 'NR > 1 && NF == 4 && $3 != "-" { print "want", $1, $3, $4 }' "$1"
+	} | awk '
+		$1 == "reserved" { reserved[$2] = 1; next }
+		{ s = $2; gsub(/:/, "", s); ip = $4 in reserved ? "-" : $4; print "lr_" s, $3, $2, ip }
+	' | sort
+}
+
+names_have() {
+	"$LR_UCI" -q show dhcp | awk -F= '
+		{ split($1, k, "."); v = $2; gsub(/\047/, "", v) }
+		k[2] !~ /^lr_/ { next }
+		k[3] == "" { sec[k[2]] = 1 }
+		k[3] == "name" { name[k[2]] = v }
+		k[3] == "mac" { mac[k[2]] = v }
+		k[3] == "ip" { ip[k[2]] = v }
+		END { for (s in sec) print s, name[s], mac[s], (s in ip ? ip[s] : "-") }
+	' | sort
+}
+
+# Make the lr_* sections match the list; dnsmasq reloads only on a change.
+apply_names() { # file
+	want=$(names_wanted "$1")
+	have=$(names_have)
+	[ "$want" = "$have" ] && return 0
+	for sec in $(printf '%s\n' "$have" | cut -d' ' -f1); do
+		"$LR_UCI" -q delete "dhcp.$sec"
+	done
+	printf '%s\n' "$want" | while read -r sec name mac ip; do
+		[ -n "$sec" ] || continue
+		"$LR_UCI" set "dhcp.$sec=host"
+		"$LR_UCI" set "dhcp.$sec.name=$name"
+		"$LR_UCI" set "dhcp.$sec.mac=$mac"
+		[ "$ip" = - ] || "$LR_UCI" set "dhcp.$sec.ip=$ip"
+	done
+	"$LR_UCI" commit dhcp
+	"$LR_DNSMASQ" reload
+	log "device names updated"
 }
 
 poll_once() {
 	mkdir -p "$LR_RUN"
 	since=$(version_of "$LR_LIST")
+	# A list saved in format 1 (before names) is fetched again in full.
+	awk 'NR > 1 && NF == 4 { found = 1 } END { exit !found }' "$LR_LIST" 2>/dev/null || since=0
 	since=${since:-0}
 	out=$(curl -sS --max-time 65 -H "Authorization: Bearer $(token)" \
-		-w '\n%{http_code}' "$LR_URL/api/router/roles?since=$since&leases=$(leases_hash)" 2>&1)
+		-w '\n%{http_code}' "$LR_URL/api/router/roles?since=$since&leases=$(leases_hash)&format=2" 2>&1)
 	code=$(printf '%s' "$out" | tail -n 1)
 	body=$(printf '%s' "$out" | sed '$d')
 	if [ "$code" != 200 ]; then
@@ -148,6 +215,7 @@ poll_once() {
 		if ! cmp -s "$LR_RUN/list.new" "$LR_LIST"; then
 			drop_changed "$LR_LIST" "$LR_RUN/list.new"
 			apply_list "$LR_RUN/list.new"
+			apply_names "$LR_RUN/list.new"
 			mv "$LR_RUN/list.new" "$LR_LIST"
 			log "roles now at $head1"
 		fi
