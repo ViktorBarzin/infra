@@ -23,6 +23,7 @@ import patterns
 
 PATTERNS = tuple(patterns.PATTERNS)
 COLOUR_PATTERNS = tuple(p.name for p in patterns.PATTERNS.values() if p.colour)
+PALETTES = patterns.PALETTES
 DEFAULT_COUNT = 150
 DEFAULT_MUSIC_DELAY_MS = 0  # tuned by ear on 2026-11-22: 0 is in sync
 STATE_FILE = Path("/data/state.json")
@@ -39,6 +40,7 @@ class State(TypedDict):
     pattern: str
     brightness: int
     rgb: list[int]
+    palette: str  # colours of the music patterns, one of patterns.PALETTES
 
 
 DEFAULT_STATE: State = {
@@ -46,6 +48,7 @@ DEFAULT_STATE: State = {
     "pattern": "rainbow",
     "brightness": 102,
     "rgb": [176, 143, 18],
+    "palette": "rainbow",
 }
 
 
@@ -53,7 +56,7 @@ def merge(state: State, change: object) -> State:
     """Apply a change to a state. Any change without "on" turns the light on."""
     if not isinstance(change, dict):
         raise ValueError("body must be a JSON object")
-    unknown = set(change) - {"on", "pattern", "brightness", "rgb"}
+    unknown = set(change) - {"on", "pattern", "brightness", "rgb", "palette"}
     if unknown:
         raise ValueError(f"unknown keys: {sorted(unknown)}")
     new: State = {**state, "rgb": list(state["rgb"])}
@@ -67,6 +70,10 @@ def merge(state: State, change: object) -> State:
         if change["pattern"] not in PATTERNS:
             raise ValueError(f"pattern must be one of {list(PATTERNS)}")
         new["pattern"] = change["pattern"]
+    if "palette" in change:
+        if change["palette"] not in PALETTES:
+            raise ValueError(f"palette must be one of {list(PALETTES)}")
+        new["palette"] = change["palette"]
     if "brightness" in change:
         b = change["brightness"]
         if not isinstance(b, int) or isinstance(b, bool) or not 1 <= b <= 255:
@@ -111,6 +118,7 @@ def command(state: State, count: int = DEFAULT_COUNT,
         "--brightness", str(state["brightness"]),
         "--count", str(count),
         "--music-delay-ms", str(music_delay_ms),
+        "--palette", state["palette"],
     ]
 
 

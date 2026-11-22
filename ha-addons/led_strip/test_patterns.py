@@ -58,11 +58,15 @@ class EveryPatternTest(unittest.TestCase):
                 self.assertNotIn(None, [delay for _, delay in frames[:-1]])
 
     def test_colour_patterns_use_the_colour(self):
+        # The music patterns use the colour when their palette is "colour".
+        self.addCleanup(setattr, patterns, "palette", patterns.palette)
+        patterns.palette = "colour"
         for p in patterns.PATTERNS.values():
             if p.colour:
                 with self.subTest(pattern=p.name):
                     colours = {rgb for pixels, _ in take(p.name, 150, colour=(0, 0, 200)) for rgb in pixels}
-                    self.assertIn((0, 0, 200), colours)
+                    if not p.music:  # music patterns show shades of it
+                        self.assertIn((0, 0, 200), colours)
                     self.assertTrue(all(r == 0 and g == 0 for r, g, _ in colours))
 
     def test_every_pattern_has_a_title_and_a_group(self):

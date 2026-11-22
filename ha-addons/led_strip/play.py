@@ -90,6 +90,8 @@ def main() -> None:
     parser.add_argument("--count", type=int, default=150, help="LEDs on the strip")
     parser.add_argument("--music-delay-ms", type=int, default=0,
                         help="how long music patterns wait for the Bluetooth speaker")
+    parser.add_argument("--palette", choices=patterns.PALETTES, default="rainbow",
+                        help="colours of the music patterns")
     args = parser.parse_args()
 
     from rpi_ws281x import Adafruit_NeoPixel  # only on the Pi
@@ -98,6 +100,7 @@ def main() -> None:
                               args.brightness, LED_CHANNEL)
     strip.begin()
     pattern = patterns.PATTERNS[args.pattern]
+    patterns.palette = args.palette
     if pattern.music:
         import music  # numpy and parec, only for the music patterns
 

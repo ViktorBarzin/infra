@@ -57,7 +57,8 @@ class CommandTest(unittest.TestCase):
         self.assertIn("aurora", server.PATTERNS)
         self.assertIn("weather_storm", server.PATTERNS)
         self.assertEqual(set(server.COLOUR_PATTERNS),
-                         {"color_wipe", "theater_chase", "comet", "scanner", "breathe", "twinkle", "morse"})
+                         {"color_wipe", "theater_chase", "comet", "scanner", "breathe", "twinkle", "morse",
+                          "music_spectrum", "music_meter", "music_pulse"})
 
 
 class NewPatternTest(unittest.TestCase):
@@ -83,6 +84,21 @@ class NewPatternTest(unittest.TestCase):
         state = server.merge(server.DEFAULT_STATE, {"on": True, "pattern": "music_spectrum"})
         argv = server.command(state, music_delay_ms=250)
         self.assertEqual(argv[argv.index("--music-delay-ms") + 1], "250")
+
+    def test_palette_is_kept_and_passed_to_play(self):
+        state = server.merge(server.DEFAULT_STATE, {"pattern": "music_spectrum", "palette": "warm"})
+        self.assertEqual(state["palette"], "warm")
+        argv = server.command(state)
+        self.assertEqual(argv[argv.index("--palette") + 1], "warm")
+        self.assertEqual(server.DEFAULT_STATE["palette"], "rainbow")
+
+    def test_unknown_palette_is_refused(self):
+        with self.assertRaises(ValueError):
+            server.merge(server.DEFAULT_STATE, {"palette": "neon"})
+
+    def test_a_colour_keeps_a_music_pattern(self):
+        state = server.merge(server.DEFAULT_STATE, {"pattern": "music_pulse"})
+        self.assertEqual(server.merge(state, {"rgb": [0, 0, 255]})["pattern"], "music_pulse")
 
     def test_music_delay_from_options_with_fallback(self):
         with tempfile.TemporaryDirectory() as d:

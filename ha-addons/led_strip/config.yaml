@@ -1,5 +1,5 @@
 name: LED strip
-version: "1.6.0"
+version: "1.7.0"
 slug: led_strip
 description: >-
   Plays light patterns on the WS2812 strip wired to GPIO10 (SPI) and lets

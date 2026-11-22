@@ -96,18 +96,57 @@ class DelayTest(unittest.TestCase):
         self.assertEqual(delayed.get(), second)
 
 
-def music_frames(name: str, levels: patterns.Levels, n: int = 150, count: int = 40) -> list:
-    old = patterns.listen
+def music_frames(name: str, levels: patterns.Levels, n: int = 150, count: int = 40,
+                 palette: str = "rainbow", colour: patterns.RGB = (0, 255, 0)) -> list:
+    old, old_palette = patterns.listen, patterns.palette
     patterns.listen = lambda t: levels
+    patterns.palette = palette
     try:
-        gen = patterns.PATTERNS[name].frames(n, (0, 255, 0), random.Random(1))
+        gen = patterns.PATTERNS[name].frames(n, colour, random.Random(1))
         return list(itertools.islice(gen, count))
     finally:
-        patterns.listen = old
+        patterns.listen, patterns.palette = old, old_palette
 
 
 def lit(rgb: patterns.RGB) -> int:
     return sum(rgb)
+
+
+LOUD = patterns.Levels((1.0,) * patterns.BANDS, 1.0, 1.0)
+MUSIC = ("music_spectrum", "music_meter", "music_pulse")
+
+
+class PaletteTest(unittest.TestCase):
+    def lit_pixels(self, name, palette, colour=(0, 255, 0)):
+        pixels, _ = music_frames(name, LOUD, palette=palette, colour=colour)[-1]
+        return [p for p in pixels if lit(p) > 120]
+
+    def test_palettes_are_listed(self):
+        self.assertEqual(patterns.PALETTES, ("rainbow", "colour", "warm", "cool"))
+
+    def test_warm_is_red_to_gold(self):
+        for name in MUSIC:
+            with self.subTest(pattern=name):
+                px = self.lit_pixels(name, "warm")
+                self.assertTrue(px)
+                self.assertTrue(all(r >= g >= b for r, g, b in px))
+
+    def test_cool_is_teal_to_violet(self):
+        for name in MUSIC:
+            with self.subTest(pattern=name):
+                px = self.lit_pixels(name, "cool")
+                self.assertTrue(px)
+                self.assertTrue(all(b >= r for r, g, b in px))
+
+    def test_your_colour_uses_only_that_colour(self):
+        for name in MUSIC:
+            with self.subTest(pattern=name):
+                px = self.lit_pixels(name, "colour", colour=(0, 0, 255))
+                self.assertTrue(px)
+                self.assertTrue(all(r == 0 and g == 0 for r, g, b in px))
+
+    def test_the_patterns_take_a_colour(self):
+        self.assertTrue(all(patterns.PATTERNS[n].colour for n in MUSIC))
 
 
 class MusicPatternTest(unittest.TestCase):

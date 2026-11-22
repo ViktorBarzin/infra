@@ -684,6 +684,38 @@ MUSIC_FRAME = 1 / 30
 SPECTRUM: list[RGB] = [(255, 0, 0), (255, 70, 0), (255, 140, 0), (230, 210, 0), (120, 255, 0),
                        (0, 255, 40), (0, 200, 160), (0, 90, 255), (70, 0, 255), (170, 0, 255)]
 GLOW = 0.04  # what an unlit part of a music pattern keeps, so the strip never looks dead
+# Colour schemes for the music patterns, picked on the Radio dashboard.
+# "rainbow" is each pattern's own look; "colour" is shades of Livia's colour.
+PALETTES = ("rainbow", "colour", "warm", "cool")
+WARM: list[RGB] = [(170, 0, 0), (255, 50, 0), (255, 130, 0), (255, 200, 40)]
+COOL: list[RGB] = [(0, 200, 160), (0, 120, 255), (60, 0, 255), (160, 0, 255)]
+palette = "rainbow"  # play.py sets it from --palette
+
+
+def gradient(stops: list[RGB], x: float) -> RGB:
+    """The colour x of the way along a list of colours, x from 0 to 1."""
+    x = max(0.0, min(1.0, x)) * (len(stops) - 1)
+    i = min(len(stops) - 2, int(x))
+    return mix(stops[i], stops[i + 1], x - i)
+
+
+def music_colour(x: float, colour: RGB, rainbow: Callable[[float], RGB]) -> RGB:
+    """The palette's colour at x (0 to 1); `rainbow` is the pattern's own look."""
+    if palette == "colour":
+        return scale(colour, 0.35 + 0.65 * x)
+    if palette == "warm":
+        return gradient(WARM, x)
+    if palette == "cool":
+        return gradient(COOL, x)
+    return rainbow(x)
+
+
+def spectrum_rainbow(x: float) -> RGB:
+    return SPECTRUM[min(BANDS - 1, int(x * (BANDS - 1) + 0.5))]
+
+
+def meter_rainbow(x: float) -> RGB:
+    return gradient([(0, 255, 0), (255, 220, 0), (255, 0, 0)], x)
 
 
 @dataclass(frozen=True)
@@ -722,11 +754,11 @@ def music_spectrum(n: int, colour: RGB, rng: random.Random) -> Frames:
             b = min(BANDS - 1, int(pos))
             f = pos - b  # where this LED sits inside its band, 0 to 1
             step = BANDS / n
-            base = SPECTRUM[b]
+            base = music_colour(b / (BANDS - 1), colour, spectrum_rainbow)
             if f < shown[b] or (f == 0 and shown[b] > 0.05):
                 pixels.append(base)
             elif peaks[b] > 0.05 and f <= peaks[b] < f + step:
-                pixels.append(mix(base, WHITE, 0.6))
+                pixels.append(base if palette == "colour" else mix(base, WHITE, 0.6))
             else:
                 pixels.append(scale(base, GLOW))
         yield pixels, MUSIC_FRAME
@@ -743,7 +775,7 @@ def music_meter(n: int, colour: RGB, rng: random.Random) -> Frames:
         pixels: Pixels = []
         for j in range(n):
             d = abs(j - centre) / half  # 0 in the middle, 1 at the ends
-            colour_here = mix((0, 255, 0), (255, 220, 0), d * 2) if d < 0.5 else mix((255, 220, 0), (255, 0, 0), d * 2 - 1)
+            colour_here = music_colour(d, colour, meter_rainbow)
             pixels.append(colour_here if d <= shown else scale(colour_here, GLOW))
         yield pixels, MUSIC_FRAME
         t += MUSIC_FRAME
@@ -756,7 +788,8 @@ def music_pulse(n: int, colour: RGB, rng: random.Random) -> Frames:
         now = listen(t)
         flash = max(now.beat, flash * 0.8)
         k = GLOW * 2 + (1 - GLOW * 2) * max(flash, now.level * 0.3)
-        yield solid(n, scale(hue(t / 40), k)), MUSIC_FRAME
+        drift = 0.5 + 0.5 * math.sin(t / 7)  # wanders along the palette
+        yield solid(n, scale(music_colour(drift, colour, lambda x: hue(t / 40)), k)), MUSIC_FRAME
         t += MUSIC_FRAME
 
 
@@ -811,8 +844,8 @@ PATTERNS: dict[str, Pattern] = {p.name: p for p in [
     Pattern("comet", "Comet", "Your colour", "A head with a fading tail runs along", comet, colour=True),
     Pattern("scanner", "Scanner", "Your colour", "An eye sweeps back and forth", scanner, colour=True),
     Pattern("theater_chase", "Chase", "Your colour", "Dots marching like cinema lights", theater_chase, colour=True),
-    Pattern("music_spectrum", "Spectrum bars", "Music", "Ten bands from bass to treble, following the radio", music_spectrum, music=True),
-    Pattern("music_meter", "Level meter", "Music", "Grows from the middle with the radio's loudness", music_meter, music=True),
-    Pattern("music_pulse", "Beat pulse", "Music", "The whole strip flashes on the bass beat", music_pulse, music=True),
+    Pattern("music_spectrum", "Spectrum bars", "Music", "Ten bands from bass to treble, following the radio", music_spectrum, colour=True, music=True),
+    Pattern("music_meter", "Level meter", "Music", "Grows from the middle with the radio's loudness", music_meter, colour=True, music=True),
+    Pattern("music_pulse", "Beat pulse", "Music", "The whole strip flashes on the bass beat", music_pulse, colour=True, music=True),
     Pattern("ruler", "Ruler", "Setup", "LED 1 blue, every 10th red, every 50th green", ruler),
 ]}
