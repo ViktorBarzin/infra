@@ -38,3 +38,7 @@ Kubernetes (v0.2): `homelab k8s status|get|logs|describe|debug|pf|rollout-status
 
 `homelab reflect` now measures the last 7 days (`--days N`) from the claude-sessions store in about 15 seconds: spend, `tool_choice` (`kubectl` edits, `sleep`, manual pushes beside `work land`, `homelab logs query`), guard blocks, question waits, friction and grilling overrides. `homelab reflect diff` compares the last two runs, so the way to check whether a rule or skill change helped is: run, change, use it for a few days, run, diff. The original transcript detectors are opt-in with `--with-transcripts`. Details: `scripts/session-reflection/README.md`.
 
+
+## 3D prints in Bambuddy (v0.48, 2026-11-22)
+
+`homelab print publish --project "<name>" <file|dir>...` puts a designed part into Bambuddy (`bambuddy.viktorbarzin.me`): the project, a library folder of the same name, and the files (model, design source, `README.md`, renders). A file with the same name replaces the earlier revision. People slice and print it in the web app; the agent key cannot start a print. `homelab print projects` lists the projects. Details: `docs/architecture/bambuddy.md`.

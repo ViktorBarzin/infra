@@ -34,6 +34,9 @@ locals {
     # GlitchTip error tracker (stacks/glitchtip, ADR-0041). Migrations run
     # from the deployment's `migrate` init container.
     glitchtip = {}
+    # Bambuddy, the 3D-print workshop (stacks/bambuddy). Bambuddy creates and
+    # migrates its own schema at start.
+    bambuddy = {}
     # learning (Python, ~/code/learning). Tables come from SQLAlchemy
     # create_all at app start. Moved off SQLite on a block volume 2026-11-09.
     learning = {}

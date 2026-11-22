@@ -432,6 +432,23 @@ func capabilities() []capability {
 			},
 		},
 		{
+			Intent:  "share a 3D model or part you designed so people can preview, slice and print it",
+			Use:     "homelab print publish --project \"<name>\" [--description D] [--cover render.png] <file|dir>...",
+			Instead: "a three.js page on the pages site, NAS folders and Nextcloud share links",
+			Synonyms: []string{"3d print", "3d printer", "print", "printer", "stl", "3mf", "step",
+				"scad", "openscad", "cad", "model", "part", "bambu", "p2s", "slice", "slicer",
+				"bambuddy", "makerworld", "printables", "enclosure", "bracket", "adapter"},
+			Detail: []string{
+				"Bambuddy: https://bambuddy.viktorbarzin.me (Authentik sign-in, Viktor and Emo).",
+				"        One project per part, its library folder holds the files: .stl/.3mf,",
+				"        the design source (.py/.scad), README.md (notes, sizes, what changed),",
+				"        renders and test-fit photos. A file with the same name replaces the",
+				"        previous revision. People slice and press Print in the web app;",
+				"        agents never start a print. List: homelab print projects.",
+				"key:    BAMBUDDY_API_KEY, else Vault secret/bambuddy-agent (admins, emo).",
+			},
+		},
+		{
 			Intent:   "publish a finished design doc, plan, or report",
 			Use:      "homelab pages publish <doc.md>",
 			Synonyms: []string{"publish", "page", "plan", "design doc", "report", "pages"},

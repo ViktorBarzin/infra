@@ -1559,6 +1559,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
 #   10:18 mysql-wrongmove   10:19 pg-vermont-access (app_db_roles.tf)
 #   10:21 Infra: pg-infra-map (app_db_roles.tf) and pg-goldmane-edges-read
 #   10:23 pg-datenight (app_db_roles.tf)
+#   10:25 pg-bambuddy (app_db_roles.tf)
 #
 # rotation_window = 3600 lets Vault retry a failed slot for an hour, and means a
 # role switched to a schedule outside its window does not rotate at apply.
@@ -2369,6 +2370,13 @@ resource "vault_policy" "projects_emo" {
     # the Vermont complex access events. Viktor decided the role is readable
     # only through emo's Vault access; cluster admins keep theirs.
     path "database/static-creds/pg-vermont-access" {
+      capabilities = ["read"]
+    }
+    # Read the Bambuddy agent API key (2026-11-22, Viktor), so emo's agent can
+    # publish designed parts into Bambuddy with `homelab print`. The key
+    # belongs to Bambuddy's local `agent` user: library and projects only, no
+    # printer control.
+    path "secret/data/bambuddy-agent" {
       capabilities = ["read"]
     }
   EOT

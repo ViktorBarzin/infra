@@ -621,6 +621,15 @@ original flag-based path unchanged, so the webhook handler is unaffected.
 
 See `infra/docs/adr/0004`–`0013` for the architecture decisions.
 
+### v0.48 verbs — print (publish designed parts into Bambuddy)
+
+| Command | Tier | What it does |
+|---|---|---|
+| `print projects` | read | list the projects in Bambuddy (`bambuddy.viktorbarzin.me`) with their page URLs |
+| `print publish --project NAME [--description D] [--url U] [--cover IMG] <file\|dir>...` | write | find or create the project and its same-named library folder, upload the files (a directory means its visible top-level files), replace a file of the same name, set the cover; prints the project URL |
+
+The key is `BAMBUDDY_API_KEY`, else `vault kv get -field=api_key secret/bambuddy-agent` (admins and emo). It belongs to Bambuddy's local `agent` account, which has the library and projects scopes and cannot start a print. `BAMBUDDY_URL` overrides the base URL for tests. Doc: `docs/architecture/bambuddy.md`.
+
 ### v0.42 — ha yiko guardrails
 
 So that driving cannot strain the robot or get the Ecovacs account flagged:
