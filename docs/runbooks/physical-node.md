@@ -22,6 +22,7 @@ The first Physical node is `dell-worker`, the Dell Precision 5530 in London. It 
 - `containerd.service` and `kubelet.service` have `RequiresMountsFor=` on all the bind mounts. They do not start while the volume is closed.
 - journald keeps logs in memory. rsyslog and apport are removed. Core dumps, swap, suspend and hibernate are off. The lid switch does nothing. `/tmp` is a tmpfs.
 - The node has the taint `node-role.viktorbarzin.me/opportunistic=true:NoSchedule`. Only pods that tolerate it run there.
+- A laptop with `battery_charge` in its host_vars holds its battery between `start` and `stop` percent: the BIOS "Custom" charge setting, through Dell's `dell-wmi-sysman`. It is a BIOS setting, so it applies under every OS on the disk. The BIOS admin password is in Vault `secret/physical-node-bios-<node>`, key `admin_password`; the playbook reads it only when the BIOS differs.
 - `/etc/modules-load.d/physical-node-k8s.conf` loads `overlay`, `br_netfilter` and `nf_conntrack` at boot. kube-proxy exits at start without `nf_conntrack`.
 - A node away from VLAN 20 sets `calico_ipv6_address` in its host_vars. The playbook puts that address on the dummy interface `k8s-v6` (`/etc/netplan/61-physical-node-calico-ipv6.yaml`, `optional: true` so the boot does not wait for it). calico-node does not start without an IPv6 address inside VLAN 20's /64. No route leads to the address.
 

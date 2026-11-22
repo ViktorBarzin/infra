@@ -536,6 +536,57 @@
           HandleLidSwitchDocked=ignore
       tags: hardening
 
+    # A laptop on AC all day keeps its battery full, which wears it fastest
+    # (and swells the Precision 5530's). battery_charge holds it in a narrow
+    # window. The setting is in the BIOS (Dell's dell-wmi-sysman), so it
+    # survives reboots and applies under every OS on the disk. A BIOS admin
+    # password guards it: Vault secret/physical-node-bios-<node>, key
+    # admin_password, read only when the BIOS differs from the declaration.
+    - name: Battery charge window
+      when: battery_charge is defined
+      tags: [base, battery]
+      block:
+        - name: Read the battery charge settings
+          ansible.builtin.shell:
+            cmd: |
+              A=/sys/class/firmware-attributes/dell-wmi-sysman/attributes
+              echo "$(cat $A/PrimaryBattChargeCfg/current_value) $(cat $A/CustomChargeStart/current_value) $(cat $A/CustomChargeStop/current_value)"
+            executable: /bin/bash
+          register: battery_now
+          changed_when: false
+          check_mode: false
+
+        - name: Keep the declared window
+          ansible.builtin.set_fact:
+            battery_wanted: "Custom {{ battery_charge.start }} {{ battery_charge.stop }}"
+
+        - name: Read the BIOS admin password from Vault
+          ansible.builtin.command: "vault kv get -field=admin_password secret/physical-node-bios-{{ inventory_hostname }}"
+          delegate_to: localhost
+          become: false
+          register: bios_password
+          changed_when: false
+          check_mode: false
+          no_log: true
+          when: battery_now.stdout != battery_wanted
+
+        - name: Set the charge window in the BIOS
+          ansible.builtin.shell:
+            cmd: |
+              set -e
+              D=/sys/class/firmware-attributes/dell-wmi-sysman
+              A=$D/attributes
+              trap 'printf "" > $D/authentication/Admin/current_password' EXIT
+              cat > $D/authentication/Admin/current_password
+              printf %s {{ battery_charge.start | int }} > $A/CustomChargeStart/current_value
+              printf %s {{ battery_charge.stop | int }} > $A/CustomChargeStop/current_value
+              printf Custom > $A/PrimaryBattChargeCfg/current_value
+            executable: /bin/bash
+            stdin: "{{ bios_password.stdout }}"
+            stdin_add_newline: false
+          no_log: true
+          when: battery_now.stdout != battery_wanted
+
     - name: /tmp is in memory (from the next boot)
       ansible.posix.mount:
         path: /tmp

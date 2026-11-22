@@ -37,5 +37,11 @@ node_taints:
 wifi:
   vault_path: secret/wifi-london
 
+# Always on AC: hold the battery between 50% and 60% (BIOS Custom charge;
+# the battery had 39% of its design capacity left on 2026-11-22).
+battery_charge:
+  start: 50
+  stop: 60
+
 # Quadro P2000 (Pascal): the proprietary 580 branch, not the cluster's 595 open.
 gpu_driver: 580
