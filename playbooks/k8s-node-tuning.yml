@@ -1060,6 +1060,15 @@
     # while the certificate is for the hostname. The registry itself is frozen
     # (break-glass only, ADR-0002), but the redirect stays so a break-glass pull
     # does not hairpin out through the WAN and back.
+    - name: certs.d directory for the forgejo redirect
+      ansible.builtin.file:
+        path: /etc/containerd/certs.d/forgejo.viktorbarzin.me
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      tags: [containerd, mirrors]
+
     - name: The forgejo redirect, which is not a cache
       ansible.builtin.copy:
         dest: /etc/containerd/certs.d/forgejo.viktorbarzin.me/hosts.toml

@@ -417,6 +417,17 @@
     # =======================================================================
     # The same drop-in the VM nodes carry (cloud_init.yaml, code-oflt). Here it
     # is about secrets rather than disk writes: kubelet and pod logs stay in RAM.
+    # A cloud image ships these drop-in directories; a minimal install does not.
+    - name: systemd drop-in directories
+      ansible.builtin.file:
+        path: "/etc/systemd/{{ item }}.conf.d"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop: [journald, coredump, logind]
+      tags: hardening
+
     - name: journald keeps logs in memory
       ansible.builtin.copy:
         dest: /etc/systemd/journald.conf.d/90-oflt-volatile.conf
@@ -534,6 +545,28 @@
         state: present
       tags: hardening
 
+    # kube-proxy writes nf_conntrack_max as it starts and exits if the module is
+    # not loaded yet, which on a fresh boot it is not.
+    - name: Kernel modules for containerd and kube-proxy load at boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/physical-node-k8s.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by playbooks/physical-node.yml.
+          overlay
+          br_netfilter
+          nf_conntrack
+      tags: hardening
+
+    - name: Kernel modules for containerd and kube-proxy are loaded now
+      community.general.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop: [overlay, br_netfilter, nf_conntrack]
+      tags: hardening
+
     - name: The kernel forwards packets, which kubeadm requires
       ansible.posix.sysctl:
         name: net.ipv4.ip_forward
@@ -541,6 +574,50 @@
         sysctl_file: /etc/sysctl.d/90-physical-node.conf
         sysctl_set: true
       tags: hardening
+
+    # The cluster is dual-stack, and calico-node will not start on a node with
+    # no IPv6 address inside nodeAddressAutodetectionV6 (stacks/calico, VLAN
+    # 20's /64). A node away from VLAN 20 carries calico_ipv6_address on a
+    # dummy interface: it satisfies the check, but no route leads to it, so
+    # IPv6 pod traffic to this node does not cross sites. Only Traefik's
+    # Services are dual-stack, and Traefik does not tolerate the taint.
+    - name: Calico's IPv6 node address
+      when: calico_ipv6_address is defined
+      tags: [base, network]
+      block:
+        - name: IPv6 forwarding, which Calico needs for the IPv6 pool
+          ansible.posix.sysctl:
+            name: net.ipv6.conf.all.forwarding
+            value: "1"
+            sysctl_file: /etc/sysctl.d/90-physical-node.conf
+            sysctl_set: true
+
+        - name: A dummy interface holds the address
+          ansible.builtin.copy:
+            dest: /etc/netplan/61-physical-node-calico-ipv6.yaml
+            owner: root
+            group: root
+            mode: "0600"
+            content: |
+              # Managed by playbooks/physical-node.yml. Edits here are overwritten.
+              network:
+                version: 2
+                dummy-devices:
+                  k8s-v6:
+                    # Without this, boot waits for it to have DNS, which it never will.
+                    optional: true
+                    addresses: ["{{ calico_ipv6_address }}/128"]
+          register: calico_v6_netplan
+
+        - name: netplan accepts it
+          ansible.builtin.command: netplan generate
+          changed_when: false
+          when: calico_v6_netplan.changed and not ansible_check_mode
+
+        # networkd creates a new netdev on reload without touching the Wi-Fi link.
+        - name: The interface is up now
+          ansible.builtin.command: networkctl reload
+          when: calico_v6_netplan.changed and not ansible_check_mode
 
     # =======================================================================
     # c. The State volume
@@ -618,7 +695,7 @@
         that: state_is_bound or 'tang' not in (state_bindings.stdout | default(''))
         fail_msg: >-
           {{ state_device }} is bound to a Tang other than {{ tang_url }}:
-          {{ state_bindings.stdout }}. Change the binding by hand
+          {{ state_bindings.stdout | default('') }}. Change the binding by hand
           (docs/runbooks/physical-node.md, "Rotate the Tang keys").
       tags: state
 

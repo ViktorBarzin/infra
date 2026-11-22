@@ -22,6 +22,8 @@ The first Physical node is `dell-worker`, the Dell Precision 5530 in London. It 
 - `containerd.service` and `kubelet.service` have `RequiresMountsFor=` on all the bind mounts. They do not start while the volume is closed.
 - journald keeps logs in memory. rsyslog and apport are removed. Core dumps, swap, suspend and hibernate are off. The lid switch does nothing. `/tmp` is a tmpfs.
 - The node has the taint `node-role.viktorbarzin.me/opportunistic=true:NoSchedule`. Only pods that tolerate it run there.
+- `/etc/modules-load.d/physical-node-k8s.conf` loads `overlay`, `br_netfilter` and `nf_conntrack` at boot. kube-proxy exits at start without `nf_conntrack`.
+- A node away from VLAN 20 sets `calico_ipv6_address` in its host_vars. The playbook puts that address on the dummy interface `k8s-v6` (`/etc/netplan/61-physical-node-calico-ipv6.yaml`, `optional: true` so the boot does not wait for it). calico-node does not start without an IPv6 address inside VLAN 20's /64. No route leads to the address.
 
 ## How the unlock works
 
@@ -58,7 +60,7 @@ The Tether starts a unit only when it has just opened or mounted the volume. A k
 
 PXE provisioning comes later (ADR-0045). For now, install by hand.
 
-1. **Install Ubuntu 26.04.** Make a separate partition for the State volume. Give it the GPT name `<node>-state`, for example `sgdisk -c 10:dell-state /dev/nvme0n1`. Do not put a filesystem on it. Make the user `wizard` with your SSH key. A machine with no wired port gets Ubuntu by `debootstrap`.
+1. **Install Ubuntu 26.04.** Make a separate partition for the State volume. Give it the GPT name `<node>-state`, for example `sgdisk -c 10:dell-state /dev/nvme0n1`. Do not put a filesystem on it. Make the user `wizard` with your SSH key. A machine with no wired port gets Ubuntu by `debootstrap`. A `debootstrap` older than 26.04 has no `resolute` script: give `/usr/share/debootstrap/scripts/gutsy` as the fourth argument, the script every Ubuntu release uses. Write the Wi-Fi file as `/etc/netplan/60-physical-node-wifi.yaml`, the name the playbook manages, so it replaces the file.
 2. **Give the machine a fixed address.** Add a static DHCP lease on the Site router.
 3. **Make the Tang keys.** Run this on the devvm. The keys stay in memory until Vault has them.
 
@@ -74,7 +76,8 @@ PXE provisioning comes later (ADR-0045). For now, install by hand.
 
 4. **Add the Tang server.** Add the node to `local.nodes` in `stacks/tang/main.tf`, with a free MetalLB IP and the Site LAN in `source_ranges`. Commit, then `homelab tf apply tang`. From the new machine, `curl -sf http://<lb_ip>/adv` must return JSON.
 5. **Store the Wi-Fi network**, once per Site. Write `{"ssid": "...", "psk": "..."}` to a file in `$XDG_RUNTIME_DIR`. Then run `vault kv put secret/wifi-<site> @<file>` and remove the file.
-6. **Declare the node.** Add it to `[physical_nodes]` in `playbooks/inventory.ini`. Copy `playbooks/host_vars/dell-worker.yml` to `<node>.yml` and change the values. `state_device` is `/dev/disk/by-partlabel/<node>-state`.
+6. **Declare the node.** Add it to `[physical_nodes]` in `playbooks/inventory.ini`. Copy `playbooks/host_vars/dell-worker.yml` to `<node>.yml` and change the values. `state_device` is `/dev/disk/by-partlabel/<node>-state`. Give a node away from VLAN 20 an unused `calico_ipv6_address` in `2001:470:5a7f:20::/64`.
+   A node behind the WireGuard tunnel also needs a per-node pod MTU: a FelixConfiguration `node.<node>` in `stacks/calico/main.tf` with `vxlanMTU` and `vxlanMTUV6` at 1280. Below 1280, Linux turns IPv6 off on the pod interface and no pod starts ("failed to disable DAD for eth0").
 7. **Claim the node:** `presence claim node:<node> --purpose "provision Physical node"`.
 8. **Run the playbook as a dry run, then for real.** Run from the main checkout of the infra repo.
 
@@ -174,5 +177,8 @@ If the machine comes back, do not trust its OS. Install Ubuntu again and follow 
 - **Versions.** The playbook installs containerd and kubeadm at the cluster's versions only on a new node. It does not upgrade a node. A node that was off during a `k8s-version-upgrade` run keeps its old kubelet; the playbook reports it.
 - **Labels and taints** apply at registration. The playbook reports a difference and changes nothing.
 - **GPU.** The node keeps a host NVIDIA driver (`gpu_driver`) and the labels `nvidia.com/gpu.deploy.driver=false` and `nvidia.com/gpu.deploy.container-toolkit=false`. The GPU Operator's DaemonSets tolerate only `nvidia.com/gpu`, so its device plugin does not run on a node with the Opportunistic worker taint.
-- **Gates that wait for every node.** `kured-sentinel-gate` and the `k8s-version-upgrade` preflight both require all nodes Ready (`docs/runbooks/k8s-node-auto-upgrades.md`, `docs/runbooks/k8s-version-upgrade.md`). An Opportunistic worker that is off blocks them.
+- **Gates that wait for every node.** `kured-sentinel-gate` and the `k8s-version-upgrade` preflight skip nodes with the label `node-role.viktorbarzin.me/opportunistic`, so an Opportunistic worker that is off blocks neither (`docs/agents/nodes.md`).
+- **IPv6 pods across Sites.** The pods on a node away from VLAN 20 get IPv6 addresses, but no route leads to `calico_ipv6_address`, so IPv6 pod traffic does not reach them from Sofia. IPv4 works. Only Traefik's Services are dual-stack, and Traefik does not tolerate the taint.
+- **Fragmentation.** The tunnel's path MTU is 1200 and the pod MTU is 1280, so pod packets over 1150 bytes are fragmented in the tunnel. They arrive; throughput is lower than with unfragmented packets.
+- **Tang through the pod network.** Once kube-proxy runs on the node, the Tether reaches Tang's LoadBalancer IP through kube-proxy's rules and Calico, not straight through the tunnel. If calico-node fails on the node, the Tether sees no Tang, closes the volume after 10 minutes, and cannot reopen it while the old kube-proxy rules stay. A reboot clears the rules; the boot unlock runs before kube-proxy.
 - **Other hostPath writers.** `calico-node` writes `/var/log/calico` and `tetragon` writes `/var/log/tetragon` on the plain root. Add a path to `state_binds` in the playbook if it holds secrets.

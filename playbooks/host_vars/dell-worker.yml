@@ -16,6 +16,10 @@ node_ip: 192.168.8.20
 # made: sgdisk -c <n>:dell-state /dev/nvme0n1
 state_device: /dev/disk/by-partlabel/dell-state
 
+# calico-node needs an IPv6 address inside VLAN 20's /64 (physical-node.yml,
+# "Calico's IPv6 node address"). Unrouted; ::8:20 echoes 192.168.8.20.
+calico_ipv6_address: "2001:470:5a7f:20::8:20"
+
 # stacks/tang, tang-dell-worker; reachable only through the WireGuard tunnel.
 tang_url: http://10.0.20.214
 

@@ -332,22 +332,27 @@ resource "kubectl_manifest" "installation_dual_stack" {
 # Pod MTU on dell-worker, the first Opportunistic worker (ADR-0045). It
 # reaches the cluster from London through the WireGuard tunnel, whose path MTU
 # is 1200 bytes. Felix auto-detects the MTU from the host's own interfaces
-# (Wi-Fi, 1500), so without this its pods would get 1450 and any packet over
-# 1150 would be dropped or fragmented in the tunnel. VXLAN adds 50 bytes over
-# IPv4 and 70 over IPv6, so 1150 and 1130.
+# (Wi-Fi, 1500), so without this its pods would get 1450 and every large
+# packet would be fragmented in the tunnel.
+#
+# The pod MTU is 1280, not the 1150 the tunnel fits without fragmenting
+# (1200 less 50 bytes of VXLAN): every pod in this cluster has an IPv6
+# address, and Linux turns IPv6 off on an interface below 1280, so at 1150
+# the Calico CNI cannot set up a pod at all ("failed to disable DAD for
+# eth0"). Calico's VXLAN device leaves DF unset, so a 1280-byte pod packet
+# (1330 with VXLAN) is fragmented at the tunnel and arrives; checked from the
+# Dell with 20 pings each at 1200, 1330 and 1430 bytes, no loss.
 #
 # The Installation's calicoNetwork.mtu is cluster-wide and stays unset here, so
 # the cni-config carries mtu 0 and each node takes its pod MTU from the file
 # Felix writes, /var/lib/calico/mtu (1430 on the Sofia nodes: 1500 less the
 # IPv6 VXLAN header). Felix writes the smallest MTU of the encapsulations in
-# use, so dell-worker's pods get 1130 while IPv6 VXLAN is on and 1150 without
-# it. A FelixConfiguration named node.<node> is Felix's per-node override of
-# the `default` one, and calico-node sets no MTU environment variable that
-# would take precedence. This is keyed on the node name, not on the
-# opportunistic label, because the MTU belongs to the path to London, not to
-# the role. It only changes pods on dell-worker: Sofia pods keep 1430, so a
-# large UDP packet from Sofia to a Dell pod may be fragmented or dropped in the
-# tunnel, while TCP settles on the smaller MSS that the Dell side announces.
+# use, so both are 1280. A FelixConfiguration named node.<node> is Felix's
+# per-node override of the `default` one, and calico-node sets no MTU
+# environment variable that would take precedence. This is keyed on the node
+# name, not on the opportunistic label, because the MTU belongs to the path
+# to London, not to the role. It only changes pods on dell-worker: Sofia pods
+# keep 1430, and TCP settles on the smaller MSS that the Dell side announces.
 resource "kubectl_manifest" "felix_dell_worker_mtu" {
   depends_on = [helm_release.tigera_operator]
   yaml_body = yamlencode({
@@ -355,8 +360,8 @@ resource "kubectl_manifest" "felix_dell_worker_mtu" {
     kind       = "FelixConfiguration"
     metadata   = { name = "node.dell-worker" }
     spec = {
-      vxlanMTU   = 1150
-      vxlanMTUV6 = 1130
+      vxlanMTU   = 1280
+      vxlanMTUV6 = 1280
     }
   })
 }
