@@ -140,7 +140,7 @@ resource "kubernetes_deployment" "ytdlp" {
       }
       spec {
         container {
-          image = "ghcr.io/alexta69/metube:2026.11.14@sha256:55ce41ab9a78069dc42bd808b20a96aeef4199560a02698a2205ea8a2bc4fef1"
+          image = "ghcr.io/alexta69/metube:2026.11.22@sha256:be802dfc2c7ac250a0b49c378d0aa5b154241a670864159183af0e0c26b89dd7"
           name  = "metube"
           env {
             name  = "PUID"
