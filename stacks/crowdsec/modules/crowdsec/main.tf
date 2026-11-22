@@ -1990,7 +1990,7 @@ resource "kubernetes_cron_job_v1" "crowdsec_ipv6_ban_widen" {
 
             container {
               name    = "widen"
-              image   = "bitnami/kubectl:latest@sha256:8919c149c2e3d6860e0143c117900e64d71395172aaef0e01e604bb98c8e7ce0"
+              image   = "bitnami/kubectl:latest@sha256:ae71f848f057a71029d092e98548cabf7cd17b11da0adad0a8f4145a9c87c830"
               command = ["/bin/bash", "-c"]
               args = [
                 <<-EOF
@@ -2210,7 +2210,7 @@ resource "kubernetes_cron_job_v1" "crowdsec_lapi_reconcile" {
 
             container {
               name    = "reconcile"
-              image   = "bitnami/kubectl:latest@sha256:8919c149c2e3d6860e0143c117900e64d71395172aaef0e01e604bb98c8e7ce0"
+              image   = "bitnami/kubectl:latest@sha256:ae71f848f057a71029d092e98548cabf7cd17b11da0adad0a8f4145a9c87c830"
               command = ["/bin/bash", "-c"]
               args = [
                 <<-EOF
