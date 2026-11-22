@@ -1,0 +1,11 @@
+#!/bin/sh
+# /etc/hotplug.d/dhcp/90-london-roles: send the lease table to the wifi app
+# when a lease starts, changes or ends, so a device that just joined can sign
+# in at once (scripts/london-flint/london-roles.sh, push-leases). dnsmasq
+# rewrites /tmp/dhcp.leases after the event, hence the short wait.
+case "$ACTION" in
+add | update | remove) ;;
+*) exit 0 ;;
+esac
+[ -x /usr/bin/london-roles ] || exit 0
+(sleep 2; /usr/bin/london-roles push-leases) >/dev/null 2>&1 &

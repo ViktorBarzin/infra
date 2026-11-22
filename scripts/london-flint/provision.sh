@@ -348,6 +348,61 @@ else
 fi
 EOF
 
+# London device roles (docs/plans/2026-11-22-london-network-roles-design.md):
+# the agent, its procd service, the DHCP hook that sends leases, and the
+# firewall include that rebuilds the london_roles chain. The bearer token for
+# the wifi app comes from Vault and lives only on the router. ROLES_MODE is
+# "log" (log what enforce would block) or "enforce".
+ROLES_MODE=log
+for f in london-roles.sh:london-roles london-roles.init:london-roles.init london-roles.hotplug:london-roles.hotplug london-roles.firewall:london-roles.firewall; do
+	# shellcheck disable=SC2086
+	ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" "cat > /tmp/${f#*:}.new" <"$HERE/${f%%:*}"
+done
+# shellcheck disable=SC2086
+vault kv get -field=router_token secret/wifi | ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'umask 077; cat > /tmp/london-roles.token.new'
+# shellcheck disable=SC2086
+ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" "sh -s -- '$ROLES_MODE'" <<'EOF'
+set -eu
+mode=$1
+changed=0
+place() { # new-file target mode
+	if ! cmp -s "$1" "$2"; then
+		mv "$1" "$2"
+		changed=1
+		echo "london-roles: installed $2"
+	else
+		rm -f "$1"
+	fi
+	chmod "$3" "$2"
+	grep -qxF "$2" /etc/sysupgrade.conf || echo "$2" >>/etc/sysupgrade.conf
+}
+mkdir -p /etc/hotplug.d/dhcp
+place /tmp/london-roles.new /usr/bin/london-roles 755
+place /tmp/london-roles.init.new /etc/init.d/london-roles 755
+place /tmp/london-roles.hotplug.new /etc/hotplug.d/dhcp/90-london-roles 644
+place /tmp/london-roles.firewall.new /etc/firewall.london-roles 755
+place /tmp/london-roles.token.new /etc/london-roles.token 600
+printf 'LR_URL=https://wifi.viktorbarzin.me\nLR_MODE=%s\n' "$mode" >/tmp/london-roles.conf.new
+place /tmp/london-roles.conf.new /etc/london-roles.conf 644
+grep -qxF /etc/london-roles.list /etc/sysupgrade.conf || echo /etc/london-roles.list >>/etc/sysupgrade.conf
+if [ "$(uci -q get firewall.london_roles.path)" != /etc/firewall.london-roles ]; then
+	uci set firewall.london_roles=include
+	uci set firewall.london_roles.type='script'
+	uci set firewall.london_roles.path='/etc/firewall.london-roles'
+	uci set firewall.london_roles.reload='1'
+	uci commit firewall
+	echo "firewall: include /etc/firewall.london-roles"
+fi
+/usr/bin/london-roles firewall
+/etc/init.d/london-roles enable
+if [ "$changed" = 1 ] || ! pgrep -f '/usr/bin/london-roles run' >/dev/null; then
+	/etc/init.d/london-roles restart
+	echo "london-roles: service (re)started, mode $mode"
+else
+	echo "london-roles: service running, mode $mode"
+fi
+EOF
+
 # Verify from this side of the tunnel, the same path Prometheus uses.
 metrics=$(curl -s -m 10 http://10.3.2.6:9100/metrics | grep -c '^node_' || true)
 # shellcheck disable=SC2086
@@ -364,4 +419,7 @@ echo "drop probe: $probe"
 echo "log ring: ${ring} KB"
 echo "ssh login methods: $auth"
 echo "WAN brute-force bans: $bans"
-[ "$metrics" -gt 0 ] && [ "$probe" = running ] && [ "$ring" = 8192 ] && [ "$auth" = publickey ] && [ "$bans" = loaded ]
+# shellcheck disable=SC2086
+roles=$(ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'pgrep -f "/usr/bin/london-roles run" >/dev/null && iptables -C forwarding_lan_rule -o wgclient1 -j london_roles 2>/dev/null && echo running || echo missing')
+echo "london-roles: $roles"
+[ "$metrics" -gt 0 ] && [ "$probe" = running ] && [ "$ring" = 8192 ] && [ "$auth" = publickey ] && [ "$bans" = loaded ] && [ "$roles" = running ]

@@ -1,0 +1,5 @@
+#!/bin/sh
+# /etc/firewall.london-roles: firewall include that rebuilds the london_roles
+# chain after every firewall reload (scripts/london-flint/london-roles.sh).
+[ -x /usr/bin/london-roles ] && /usr/bin/london-roles firewall
+exit 0
