@@ -24,6 +24,8 @@ LR_TOKEN_FILE=${LR_TOKEN_FILE:-/etc/london-roles.token}
 LR_LIST=${LR_LIST:-/etc/london-roles.list}
 LR_LEASES=${LR_LEASES:-/tmp/dhcp.leases}
 LR_RUN=${LR_RUN:-/tmp/london-roles}
+# Tests point this at a stand-in: busybox sh runs its own ip applet first.
+LR_IP=${LR_IP:-ip}
 LR_URL=https://wifi.viktorbarzin.me
 LR_MODE=log
 # shellcheck disable=SC1090 # the config file is the router's own
@@ -38,10 +40,14 @@ set_name() { echo "lr_$(echo "$1" | tr - _)"; }
 
 token() { tr -d '\n' <"$LR_TOKEN_FILE"; }
 
-# The lease table as the app receives it: "mac ip hostname", sorted.
+# The device table as the app receives it: "mac ip hostname", sorted. DHCP
+# leases first; then the London neighbour entries, for devices with a fixed
+# address and no lease (ha-london). A MAC with a lease keeps the lease's line.
 leases_body() {
-	[ -f "$LR_LEASES" ] || return 0
-	awk 'NF >= 4 { print tolower($2), $3, $4 }' "$LR_LEASES" | sort
+	{
+		[ -f "$LR_LEASES" ] && awk 'NF >= 4 { print "L", tolower($2), $3, $4 }' "$LR_LEASES"
+		"$LR_IP" -4 neigh show | awk '$1 ~ /^192\.168\.(8|9)\./ { for (i = 2; i < NF; i++) if ($i == "lladdr") print "N", tolower($(i + 1)), $1, "*" }'
+	} | awk '$1 == "L" { seen[$2] = 1; print $2, $3, $4; next } !($2 in seen) { seen[$2] = 1; print $2, $3, $4 }' | sort
 }
 
 leases_hash() { leases_body | sha256sum | cut -d' ' -f1; }

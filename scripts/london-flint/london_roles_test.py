@@ -30,7 +30,19 @@ LEASES = (
     "43200 aa:aa:aa:aa:aa:01 192.168.8.126 mbp-london 01:aa\n"
     "43200 AA:AA:AA:AA:AA:02 192.168.8.118 * *\n"
 )
-LEASE_BODY = "aa:aa:aa:aa:aa:01 192.168.8.126 mbp-london\naa:aa:aa:aa:aa:02 192.168.8.118 *\n"
+# The neighbour table adds devices with a fixed address and no lease (ha-london);
+# a MAC that has a lease keeps the lease's line, and FAILED entries carry no MAC.
+NEIGH = (
+    "192.168.8.103 dev br-lan lladdr c4:e9:84:10:52:c8 REACHABLE\n"
+    "192.168.8.126 dev br-lan lladdr aa:aa:aa:aa:aa:01 STALE\n"
+    "192.168.8.20 dev br-lan FAILED\n"
+    "10.3.2.1 dev wgclient1 lladdr 00:00:00:00:00:09 REACHABLE\n"
+)
+LEASE_BODY = (
+    "aa:aa:aa:aa:aa:01 192.168.8.126 mbp-london\n"
+    "aa:aa:aa:aa:aa:02 192.168.8.118 *\n"
+    "c4:e9:84:10:52:c8 192.168.8.103 *\n"
+)
 
 
 @dataclass
@@ -73,6 +85,9 @@ def env(tmp_path: Path) -> Env:
     log = tmp_path / "calls.log"
     for tool in ("ipset", "conntrack", "logger"):
         _stub(bin_dir, tool, f'echo "{tool} $*" >> "{log}"\n')
+    neigh = tmp_path / "neigh"
+    neigh.write_text(NEIGH)
+    _stub(bin_dir, "ip", f'cat "{neigh}"\n')
     # iptables: -C (check) finds nothing, so the hooks get inserted.
     _stub(bin_dir, "iptables", f'echo "iptables $*" >> "{log}"\n[ "$1" = -C ] && exit 1\nexit 0\n')
     # curl: record the call; answer from $CURL_REPLY (body) with $CURL_CODE.
@@ -104,6 +119,7 @@ def env(tmp_path: Path) -> Env:
         "LR_LEASES": str(leases),
         "LR_RUN": str(run_dir),
         "CURL_SENT": str(tmp_path / "sent"),
+        "LR_IP": str(bin_dir / "ip"),
     }
     return Env(root=tmp_path, log=log, list_file=list_file, env=e)
 

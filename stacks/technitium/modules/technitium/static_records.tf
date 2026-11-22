@@ -39,11 +39,17 @@ locals {
   #
   # terminal-api: Terminal Lobby's machine API (stacks/terminal/terminal_api.tf),
   # also IngressRoute-only, so the same reasoning applies.
+  #
+  # wifi: the London Wi-Fi sign-in proxy's DEDICATED MetalLB address
+  # (stacks/wifi local.lb_ip). The app also has a Traefik ingress, so the
+  # ingress sync would give it the usual CNAME to the apex; this record wins
+  # because the sync skips names that exist. Public DNS answers the same IP.
   static_a_records = {
     turn           = "10.0.20.205"
     rustdesk       = "10.0.20.209"
     ssh            = "10.0.20.203"
     "terminal-api" = "10.0.20.203"
+    wifi           = "10.0.20.215"
   }
 
   # Same, for the internal-only viktorbarzin.lan zone: devices that live behind
