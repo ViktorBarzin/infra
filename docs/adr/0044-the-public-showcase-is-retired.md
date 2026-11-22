@@ -27,3 +27,7 @@ The `/publish-bundle` endpoint of pages-publish stays, because user API tokens u
 - Until Infra ships, no page shows the homelab as a whole. `home.viktorbarzin.me` (Homepage) still lists the services.
 - The long-lived Home Assistant token named `showcase` on ha-sofia is no longer used. It must be revoked in Home Assistant. Vault `secret/showcase` is soft-deleted, so its versions stay recoverable.
 - Rollback: revert the removal commit, apply `learn` and `turnstile-gate`, restore the bundle key and the cron, and run the pipeline once.
+
+## Amendment, 2026-11-22: Infra has a Guest view
+
+Viktor asked that a signed-out visitor can use the diagrams. Infra now shows them a Guest view from the open route `/api/guest-snapshot`. It has every drawing and no personal text: no notes, photos, camera feeds, IP or MAC addresses, apartment numbers or alert text. The full Snapshot, photos and camera snapshots stay signed-in only. The `/homelab/` path and the Showcase stay retired. Details are in the design doc in `viktor/infra-map`.
