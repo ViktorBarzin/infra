@@ -126,7 +126,7 @@ Two consequences worth carrying:
 
 ## CCTV Segment (dCCTV) — as-built 2026-07-03 (ADR-0017 rev 4)
 
-Isolated camera segment for owned cameras at the Sofia site (first: `vermont-garage`, HiLook IPC-T241H-C at the garage entrance). Decision + rejected alternatives + diagrams: `docs/adr/0017-cctv-segment-dedicated-pfsense-leg.md`.
+Isolated camera segment for owned cameras at the Sofia site (first: `vermont-garage`, HiLook IPC-T241H-C inside the section V underground parking, on the front of garage 2.G03, looking along the aisle; its still shows this, while ADR-0017 says "garage entrance"). Decision + rejected alternatives + diagrams: `docs/adr/0017-cctv-segment-dedicated-pfsense-leg.md`.
 
 **Physical path (as-built 2026-10-26, ADR-0017 rev 5)**: camera → TL-SG105PE **P4** (untagged VLAN 30, PoE) → **P1** (VLAN 1 untagged + VLAN 30 tagged) → AX6000 port 2 → AX6000 port 1 → R730 `eno1` → `bond0` → `vmbr0` (vlan-aware) → OPNsense `net3`/vtnet3 = `vmbr0 tag=30` = interface **dCCTV `10.0.30.1/24`**. When `bond0` fails over to `eno2`, the camera path is P4 → **P5** (VLAN 30 tagged) → `eno2` and stays on the switch. Switch ports: **P1 = uplink to AX6000 port 2, P2 = MR200 `192.168.1.7`, P3 = UPS, P4 = camera, P5 = R730 `eno2`**. The iDRAC (`192.168.1.4`) is on MR200 port 2. 802.1Q (read live 2026-10-26): `tagMbrs [0x0,0x11]` (VLAN 30 tagged = P1 and P5), `untagMbrs [0x17,0x08]`, `pvids [1,1,1,30,1]`. Because `eno1` now reaches the switch through the AX6000, VLAN 30 also crosses the AX6000; ADR-0017 rev 5 records the isolation question this raises. The rev 4 map (P1 = R730 eno1 trunk, P5 = apartment uplink) and the `eno2`/`vmbr2` fallback leg are superseded.
 
