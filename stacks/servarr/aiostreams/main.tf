@@ -33,6 +33,33 @@ resource "kubernetes_config_map" "rd_blocked_names" {
   }
 }
 
+# The download-row addon's install URL is https://aiostreams-download.viktorbarzin.me/<token>/manifest.json.
+# The token is its only gate, as AIOStreams' encryptedPassword is for its own
+# install URLs: whoever has it gets links that play through Real-Debrid.
+resource "random_id" "download_row_token" {
+  byte_length = 24
+}
+
+resource "kubernetes_secret" "download_row" {
+  metadata {
+    name      = "download-row"
+    namespace = kubernetes_namespace.aiostreams.metadata[0].name
+  }
+  data = {
+    DOWNLOAD_ROW_TOKEN = random_id.download_row_token.hex
+  }
+}
+
+resource "kubernetes_config_map" "download_row" {
+  metadata {
+    name      = "download-row"
+    namespace = kubernetes_namespace.aiostreams.metadata[0].name
+  }
+  data = {
+    "download_row.py" = file("${path.module}/files/download_row.py")
+  }
+}
+
 resource "kubernetes_deployment" "aiostreams" {
   metadata {
     name      = "aiostreams"
@@ -60,6 +87,7 @@ resource "kubernetes_deployment" "aiostreams" {
         annotations = {
           # Roll the pod when the sidecar script changes.
           "checksum/rd-blocked-names" = sha1(file("${path.module}/files/rd_blocked_names.py"))
+          "checksum/download-row"     = sha1(file("${path.module}/files/download_row.py"))
           # AIOSTREAMS_AUTH is read only at start: change this when the account
           # list in kubernetes_manifest.auth_secret changes, to roll the pod.
           "aiostreams-auth-users" = "proxy,viktor"
@@ -227,6 +255,60 @@ resource "kubernetes_deployment" "aiostreams" {
             }
           }
         }
+        container {
+          # A Stremio addon that adds one "Download" row per film or episode:
+          # it asks AIOStreams on localhost for Viktor's streams, picks one file
+          # (1080p first, up to 6 GB, English-only audio first) and returns its
+          # proxied link as an externalUrl row. The browser saves the file and
+          # VLC plays it offline on the London tablet. One row per film instead
+          # of AIOStreams' externalDownloads, which adds one under every stream.
+          # Standard library only, so nothing is installed at start.
+          # Tests: cd files && python3 -m unittest test_download_row
+          name    = "download-row"
+          image   = "docker.io/library/python:3.15.2-alpine"
+          command = ["python3", "-u", "/scripts/download_row.py"]
+          port {
+            container_port = 8082
+          }
+          env {
+            name  = "PORT"
+            value = "8082"
+          }
+          env_from {
+            # AIOSTREAMS_UUID and AIOSTREAMS_PASSWORD.
+            secret_ref { name = "aiostreams-probe-secrets" }
+          }
+          env_from {
+            secret_ref { name = kubernetes_secret.download_row.metadata[0].name }
+          }
+          readiness_probe {
+            http_get {
+              path = "/healthz"
+              port = 8082
+            }
+            period_seconds = 30
+          }
+          volume_mount {
+            name       = "download-row-script"
+            mount_path = "/scripts"
+            read_only  = true
+          }
+          resources {
+            requests = {
+              cpu    = "5m"
+              memory = "24Mi"
+            }
+            limits = {
+              memory = "64Mi"
+            }
+          }
+        }
+        volume {
+          name = "download-row-script"
+          config_map {
+            name = kubernetes_config_map.download_row.metadata[0].name
+          }
+        }
         volume {
           name = "rd-blocked-names-script"
           config_map {
@@ -250,7 +332,7 @@ resource "kubernetes_deployment" "aiostreams" {
       metadata[0].annotations["deployment.kubernetes.io/revision"],
     ]
   }
-  depends_on = [kubernetes_manifest.auth_secret]
+  depends_on = [kubernetes_manifest.auth_secret, kubernetes_manifest.probe_secrets]
 }
 
 # AIOStreams accounts: the built-in proxy's, and viktor's admin login for the
@@ -826,6 +908,43 @@ module "ingress_direct" {
   service_name = kubernetes_service.aiostreams.metadata[0].name
   # No Turnstile gate: Stremio players fetching video.
   turnstile        = false
+  homepage_enabled = false
+  tls_secret_name  = var.tls_secret_name
+}
+
+resource "kubernetes_service" "download_row" {
+  metadata {
+    name      = "aiostreams-download"
+    namespace = kubernetes_namespace.aiostreams.metadata[0].name
+    labels = {
+      "app" = "aiostreams"
+    }
+  }
+  spec {
+    selector = {
+      app = "aiostreams"
+    }
+    port {
+      name        = "http"
+      port        = 80
+      target_port = 8082
+    }
+  }
+}
+
+# The download-row addon (container download-row above). It serves only JSON;
+# the files themselves come from aiostreams-direct, so this host can sit
+# behind Cloudflare.
+module "ingress_download" {
+  source = "../../../modules/kubernetes/ingress_factory"
+  # auth = "app": the path token is the gate (see random_id.download_row_token).
+  # Stremio clients cannot follow a sign-in redirect.
+  auth             = "app"
+  dns_type         = "proxied"
+  namespace        = kubernetes_namespace.aiostreams.metadata[0].name
+  name             = "aiostreams-download"
+  service_name     = kubernetes_service.download_row.metadata[0].name
+  turnstile        = false # Stremio clients, not browsers
   homepage_enabled = false
   tls_secret_name  = var.tls_secret_name
 }
