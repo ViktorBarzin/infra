@@ -162,7 +162,7 @@ resource "kubernetes_deployment" "apprise" {
       spec {
         container {
           name  = "apprise"
-          image = "docker.io/caronc/apprise:2.1.0"
+          image = "docker.io/caronc/apprise:2.2.0"
           port {
             container_port = 8000
           }
