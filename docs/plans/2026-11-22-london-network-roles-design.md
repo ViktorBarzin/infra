@@ -199,4 +199,4 @@ The agent and the firewall changes go through `scripts/london-flint/provision.sh
 > This plan replaces the 2026-09-27 decision that the guest network keeps its path to Sofia.
 
 > [!IMPORTANT]
-> Status on 2026-11-22: steps 1 to 4 are done. The main 5 GHz SSID took the guest SSID's name and password. So no new interface had to come up, and the guest devices stayed connected. 5G-Tower Admin is gone. The role agent runs in log-only mode until the week's review.
+> Status on 2026-11-22: steps 1 to 5 are done (Viktor signed in from his two admin devices). The main 5 GHz SSID took the guest SSID's name and password. So no new interface had to come up, and the guest devices stayed connected. 5G-Tower Admin is gone. The role agent runs in log-only mode until the week's review.
