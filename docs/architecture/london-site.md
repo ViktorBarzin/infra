@@ -410,8 +410,10 @@ once, so it stays paired with the projector for films.
 **Follow music** couples the radio with the Livia LED strip. With
 `input_boolean.radio_follow_music` on, a station starting on VLC switches the
 strip to the Music pattern picked in `input_select.radio_music_pattern`
-(spectrum bars, level meter or beat pulse). It turns the strip and its plug
-on if they were off. When the radio has stopped for 10 seconds the strip goes
+(spectrum bars, level meter or beat pulse), in the colours picked in
+`input_select.radio_music_colours` (rainbow, Livia's own colour in shades, warm
+or cool). The Radio dashboard also has Livia's brightness and colour wheel.
+It turns the strip and its plug on if they were off. When the radio has stopped for 10 seconds the strip goes
 back to its earlier Pattern, or off again. A Pattern picked by hand while the
 radio plays stays until the next station starts. Both switches are on the
 Radio dashboard; the automations are `radio_lights_follow` and
