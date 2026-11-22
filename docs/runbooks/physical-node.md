@@ -7,7 +7,8 @@ A Physical node is a Kubernetes node on its own hardware. Its secrets are on an 
 | Playbook | `playbooks/physical-node.yml`, group `physical_nodes` in `playbooks/inventory.ini` |
 | Per-node settings | `playbooks/host_vars/<node>.yml` |
 | Tang servers | `stacks/tang/main.tf`, one per node |
-| Tang keys and recovery passphrase | Vault `secret/tang-<node>`: `sig.jwk`, `exc.jwk`, `recovery_passphrase` |
+| Tang keys | Vault `secret/tang-<node>`: `sig.jwk`, `exc.jwk` (ESO copies every key of this path into the Tang pod) |
+| Recovery passphrase | Vault `secret/physical-node-recovery-<node>`: `recovery_passphrase`, kept apart so it never reaches the Tang pod |
 | Wi-Fi network | Vault `secret/wifi-<site>`: `ssid`, `psk` |
 | Tether | `/usr/local/sbin/physical-node-tether`, source `playbooks/files/physical-node/` |
 
@@ -112,7 +113,7 @@ Do this on a node that runs nothing important. It stops all pods on the node.
 Use this when Tang is lost and the node must start.
 
 ```sh
-vault kv get -field=recovery_passphrase secret/tang-<node>     # on the devvm
+vault kv get -field=recovery_passphrase secret/physical-node-recovery-<node>     # on the devvm
 sudo cryptsetup open /dev/disk/by-partlabel/<node>-state state # on the node; type the passphrase
 sudo mount /var/lib/state && sudo mount -a
 sudo systemctl start containerd kubelet
@@ -126,7 +127,7 @@ Tang keeps a key whose file name starts with `.` for unlocks, but does not adver
 
 1. Read the secret into memory: `vault kv get -format=json secret/tang-<node> | jq .data.data > "$d/old.json"` (with `d` in `$XDG_RUNTIME_DIR`, as in "Add a machine").
 2. Make a new `sig.jwk` and `exc.jwk` with the `docker run` commands from "Add a machine".
-3. Write one secret with the new keys as `sig.jwk` and `exc.jwk`, the old keys as `.sig-old.jwk` and `.exc-old.jwk`, and the same `recovery_passphrase`. Use `vault kv put secret/tang-<node> @"$d/new.json"`.
+3. Write one secret with the new keys as `sig.jwk` and `exc.jwk`, the old keys as `.sig-old.jwk` and `.exc-old.jwk`. Use `vault kv put secret/tang-<node> @"$d/new.json"`.
 4. Make ESO copy it now, and restart Tang:
 
    ```sh
@@ -145,7 +146,7 @@ Tang keeps a key whose file name starts with `.` for unlocks, but does not adver
 Do these steps in this order. Steps 1 and 2 stop the stolen disk from opening.
 
 1. **Stop its Tang now.** `kubectl -n tang scale deployment tang-<node> --replicas=0`. This is a temporary step; step 3 makes it permanent.
-2. **Delete its keys and passphrase from Vault, with all versions:** `vault kv metadata delete secret/tang-<node>`. Deleting the Vault secret alone is not enough: the Kubernetes Secret stays and Tang keeps serving it.
+2. **Delete its keys from Vault, with all versions:** `vault kv metadata delete secret/tang-<node>`. Keep `secret/physical-node-recovery-<node>` until the disk is wiped or recovered. Deleting the Vault secret alone is not enough: the Kubernetes Secret stays and Tang keeps serving it.
 3. **Remove the node from `local.nodes` in `stacks/tang/main.tf`.** Commit, then `homelab tf apply tang`. This deletes the Deployment, the Service, the ExternalSecret and the Secret.
 4. **Remove the node from the cluster:**
 

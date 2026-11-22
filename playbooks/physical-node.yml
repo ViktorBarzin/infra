@@ -39,7 +39,7 @@
 #   gpu_driver     optional: the Ubuntu -server driver branch, for example 580
 #
 # SECRETS. Nothing secret is in this repository. The State volume's recovery
-# passphrase is `recovery_passphrase` in Vault secret/tang-<host>, next to the
+# passphrase is `recovery_passphrase` in Vault secret/physical-node-recovery-<host>, apart from the
 # Tang keys. The join token lives 30 minutes and only in /run on the node.
 #
 # WHAT A RUN DOES NOT DO
@@ -624,12 +624,13 @@
 
     # The recovery passphrase is needed to format and to bind; a node that is
     # already LUKS and bound never reads it.
-    - name: Read this node's Tang secret from Vault
-      ansible.builtin.command: "vault kv get -format=json secret/tang-{{ inventory_hostname }}"
+    - name: Read this node's recovery passphrase from Vault
+      ansible.builtin.command: "vault kv get -format=json secret/physical-node-recovery-{{ inventory_hostname }}"
       delegate_to: localhost
       become: false
       register: tang_secret
       changed_when: false
+      failed_when: false # a new node has no secret yet
       check_mode: false
       no_log: true
       when: not state_is_bound
@@ -638,10 +639,10 @@
     - name: Keep the recovery passphrase, or make one for a new volume
       ansible.builtin.set_fact:
         recovery_passphrase: >-
-          {{ (tang_secret.stdout | from_json).data.data.recovery_passphrase
+          {{ ((tang_secret.stdout | from_json).data.data.recovery_passphrase if tang_secret.rc == 0 else none)
              | default(lookup('ansible.builtin.password', '/dev/null',
-                              length=48, chars=['ascii_letters', 'digits'])) }}
-        recovery_passphrase_is_new: "{{ 'recovery_passphrase' not in (tang_secret.stdout | from_json).data.data }}"
+                              length=48, chars=['ascii_letters', 'digits']), true) }}
+        recovery_passphrase_is_new: "{{ tang_secret.rc != 0 or 'recovery_passphrase' not in (tang_secret.stdout | from_json).data.data }}"
       no_log: true
       when: not state_is_bound
       tags: state
@@ -651,17 +652,18 @@
         that: not (state_is_luks and recovery_passphrase_is_new)
         fail_msg: >-
           {{ state_device }} is LUKS but not bound to {{ tang_url }}, and Vault
-          secret/tang-{{ inventory_hostname }} has no recovery_passphrase. Put the
+          secret/physical-node-recovery-{{ inventory_hostname }} has no recovery_passphrase. Put the
           passphrase there, or wipe the volume with -e state_volume_wipe=true after
           luksErase.
       when: not state_is_bound
       tags: state
 
     # Stored BEFORE the format, so the volume never has a passphrase that Vault
-    # does not hold. `patch`, not `put`: the same secret holds the Tang keys.
+    # does not hold. Its own path, apart from secret/tang-<host>, because ESO
+    # copies every key of that path into the Tang pod.
     - name: Store the new recovery passphrase in Vault
       ansible.builtin.command:
-        argv: [vault, kv, patch, "secret/tang-{{ inventory_hostname }}", "recovery_passphrase=-"]
+        argv: [vault, kv, put, "secret/physical-node-recovery-{{ inventory_hostname }}", "recovery_passphrase=-"]
         stdin: "{{ recovery_passphrase }}"
         stdin_add_newline: false
       delegate_to: localhost
@@ -672,7 +674,7 @@
       tags: state
 
     - name: Read it back
-      ansible.builtin.command: "vault kv get -field=recovery_passphrase secret/tang-{{ inventory_hostname }}"
+      ansible.builtin.command: "vault kv get -field=recovery_passphrase secret/physical-node-recovery-{{ inventory_hostname }}"
       delegate_to: localhost
       become: false
       register: recovery_readback
