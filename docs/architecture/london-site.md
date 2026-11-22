@@ -392,25 +392,35 @@ with "Always allow from this computer".
 
 ### Radio
 
-The radio plays on the projector. The Logitech speaker is paired with the
-projector by Bluetooth, so the sound comes out of the speaker when it is on and
-connected, and out of the projector otherwise. ha-london's Google Cast
-integration (added 2026-11-22) sees the projector as
-`media_player.nebula_mars_3_air`. `script.radio_play` casts a station's MP3
-stream to it, and `script.radio_stop` stops it. Both are in
-`packages/radio.yaml` of the ha-london-config repo, with the station list and
-stream addresses. The Overview dashboard, Home tab, has a Radio section with one
-button per station: Radio Swiss Jazz, Smooth Jazz 24/7, Jazz London Radio, Smooth
-Christmas, Heart Xmas and SomaFM Christmas Lounge.
+The radio plays on the Logitech Z537 speaker in the living room, and nowhere
+else. ha-london (the Pi 3) sends it over Bluetooth, so the projector can stay
+off. The VLC add-on (`core_vlc`, about 12 MB of RAM, HA entity
+`media_player.vlc_telnet`) plays the stream into the Pi's sound system, whose
+default output is the Z537. The Z537 keeps two Bluetooth sources connected at
+once, so it stays paired with the projector for films.
 
-Casting replaces what is on screen with the Cast player. After Stop, the
-earlier app (ImmichFrame, for example) does not come back by itself. Whether a
-cast wakes the projector from standby was not tested. Cast volume is the
-projector's media volume, the same setting the remote changes for the speaker.
+| Piece | Where | Notes |
+|---|---|---|
+| Stations | `packages/radio.yaml` in the ha-london-config repo | `script.radio_play` (field `station`) connects the speaker, stores the name in `input_text.radio_station`, and plays the stream on VLC. `script.radio_stop` stops it. 20 stations, each a public stream checked on 2026-11-22. |
+| Radio dashboard | `london-radio`, in every user's sidebar | Groups: Jazz, Christmas (shown 15 November to 6 January by `binary_sensor.christmas_season`), UK, Bulgarian, Romanian, Sofia favourites. The Overview Home tab has the player, Stop and a link. |
+| Station directory | Radio Browser integration | Browse opens `/media-browser/media_player.vlc_telnet/app%2Cmedia-source%3A%2F%2Fradio_browser`, which selects VLC as the player. A new browser tab takes up to a minute to load this page on the Pi. |
+| Bluetooth link | `switch.radio_speaker_bluetooth` (command_line) | On means the Pi is connected to the Z537 (`40:EF:4C:C3:B2:1E`). The Z537 rejoins the device it used last, so `radio_play` turns this switch on first. |
 
-UK Jazz FM and Magic Christmas have no public stream address, so they are not
-in the list. Music Assistant does not fit on the Pi 3: on 2026-11-22 it had
-216 MB of RAM free and 664 MB in swap.
+HAOS has no screen for pairing a Bluetooth speaker. The Pi was paired on
+2026-11-22 with `bluetoothctl` from the SSH add-on: hold the Z537 Bluetooth
+button until it blinks fast, set the scan transport to `bredr` (`menu scan`,
+`transport bredr`), `scan on`, then `pair`, `trust` and `connect`. A plain scan
+finds only Bluetooth LE devices. The pairing is kept in
+`/mnt/overlay/var/lib/bluetooth`, so it survives reboots. After the first
+pairing, the Z537 became a sound output only after a restart of the audio
+plugin (Supervisor `/audio/restart`).
+
+The Echo and the projector are not radio speakers. UK Jazz FM and Magic
+Christmas play only through Alexa or their own apps, so they are not in the
+list. Music Assistant does not fit on the Pi 3: on 2026-11-22 it had 216 MB of
+RAM free and 664 MB in swap. The Google Cast integration that cast the first
+version of the radio to the projector is still installed
+(`media_player.nebula_mars_3_air`).
 
 ### Home screen
 

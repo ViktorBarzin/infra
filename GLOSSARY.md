@@ -1,6 +1,6 @@
 # Homelab infrastructure
 
-The language we use for the homelab's infrastructure. It covers network security monitoring, sites and backups, deal watches and notifications; add other areas as their terms settle.
+The language we use for the homelab's infrastructure. It covers network security monitoring, sites and backups, deal watches, notifications and the London radio; add other areas as their terms settle.
 
 ## Language
 
@@ -119,3 +119,17 @@ _Avoid_: follow, opt-in
 **Default channel**:
 The Channel that receives the Notifications sent to a Recipient by name instead of through a Subscription.
 _Avoid_: primary channel, fallback
+
+### London radio
+
+**Station**:
+A radio programme in the London flat's radio, played from its public stream address. Each Station has a button, grouped by genre or country.
+_Avoid_: channel, source, preset
+
+**Radio speaker**:
+The Logitech Z537 speaker in the London living room, the only place the radio plays.
+_Avoid_: player, Echo, projector speaker
+
+**Station directory**:
+The public list of internet radio stations from which any station can be found and played without a button.
+_Avoid_: catalogue, station list

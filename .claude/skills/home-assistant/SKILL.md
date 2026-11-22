@@ -463,7 +463,7 @@ Bike named **"Classic Performance"** → entities are `sensor.classic_performanc
 - Projector + debug bridge: unavailable (Tapo plug off)
 - Scripts: `script.start_netflix`, `script.start_stremio`
 - Scene: `scene.night` (turns off Livia + Michelle plugs)
-- Radio: `script.radio_play` (field `station`, e.g. "Radio Swiss Jazz") casts a station to the projector `media_player.nebula_mars_3_air` (Google Cast), which plays it on the Bluetooth Logitech speaker; `script.radio_stop`. Buttons in the Overview Home tab, Radio section. Details: `docs/architecture/london-site.md`, "Radio"
+- Radio: `script.radio_play` (field `station`, e.g. "Radio Swiss Jazz") plays a station on the Logitech Z537 through the VLC add-on (`media_player.vlc_telnet`) over the Pi's Bluetooth; `script.radio_stop`. Dashboard `london-radio`. Details: `docs/architecture/london-site.md`, "Radio"
 
 #### 8. Yiko robot vacuum (Ecovacs X8 Pro Omni) and its camera
 Control Yiko with `homelab ha yiko`. Do not drive the robot by hand:
@@ -512,7 +512,7 @@ homelab ha yiko stop                        # stop the wheels
 - **Mushroom** (`piitaya/lovelace-mushroom`), **mini-graph-card** (`kalkih/mini-graph-card`), **plotly-graph-card** (`dbuezas/lovelace-plotly-graph-card`) — used by the redesigned Overview. Install over WS `hacs/repository/download`; resources auto-register in storage mode.
 
 ### Integrations
-ESPHome, TP-Link Kasa, Tapo, UptimeRobot, **Cowboy** (elsbrock), Oral-B BLE, Ookla Speedtest (exposes only an `update` entity, no live speed sensors), HACS, OpenRouter (free LLMs), Piper (TTS), Whisper (STT), Android TV/ADB, Google Cast (projector, 2026-11-22).
+ESPHome, TP-Link Kasa, Tapo, UptimeRobot, **Cowboy** (elsbrock), Oral-B BLE, Ookla Speedtest (exposes only an `update` entity, no live speed sensors), HACS, OpenRouter (free LLMs), Piper (TTS), Whisper (STT), Android TV/ADB, Google Cast (projector, 2026-11-22), VLC (`core_vlc` add-on) and Radio Browser (radio, 2026-11-22).
 - **Disabled by user (NOT broken)**: `met` + `metoffice` (weather — so `weather.*` entities are ABSENT), `roomba` (Rumi vacuum), `hildebrandglow_dcc` (energy).
 - **Failing**: `tplink` **Tapo P100** projector plug — `setup_retry`, 403 KLAP handshake from 192.168.8.108 (plug off / firmware). Left as-is.
 
