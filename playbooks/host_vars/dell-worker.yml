@@ -1,0 +1,37 @@
+---
+# The Dell Precision 5530 in London: the first Physical node, an Opportunistic
+# worker (ADR-0045, docs/plans/2026-11-21-dell-opportunistic-worker-design.md).
+# Read by playbooks/physical-node.yml. No secrets here: the Wi-Fi SSID and PSK
+# and the State volume's recovery passphrase are in Vault.
+
+k8s_node_name: dell-worker
+node_role: opportunistic-worker
+
+# Registered by kubelet. The London LAN reaches the Kubernetes VLAN without
+# NAT; the Flint 2 gives the Dell this address by a static lease.
+node_ip: 192.168.8.20
+
+# The worker's State partition, by its GPT name, so a renumbered disk can never
+# point this at the Fedora or Windows partitions. Name it when the partition is
+# made: sgdisk -c <n>:dell-state /dev/nvme0n1
+state_device: /dev/disk/by-partlabel/dell-state
+
+# stacks/tang, tang-dell-worker; reachable only through the WireGuard tunnel.
+tang_url: http://10.0.20.214
+
+node_labels:
+  node-role.viktorbarzin.me/opportunistic: "true"
+  viktorbarzin.me/site: london
+
+node_taints:
+  - key: node-role.viktorbarzin.me/opportunistic
+    value: "true"
+    effect: NoSchedule
+
+# Wi-Fi only. Vault keys `ssid` and `psk` at this path; the playbook finds the
+# wireless interface itself (set `interface:` to name it).
+wifi:
+  vault_path: secret/wifi-london
+
+# Quadro P2000 (Pascal): the proprietary 580 branch, not the cluster's 595 open.
+gpu_driver: 580

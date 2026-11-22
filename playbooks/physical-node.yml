@@ -1,0 +1,1405 @@
+---
+# playbooks/physical-node.yml
+#
+# Turns a fresh Ubuntu 26.04 install into a Kubernetes Physical node
+# (ADR-0045, GLOSSARY.md). Runbook: docs/runbooks/physical-node.md.
+#
+#   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/physical-node.yml \
+#               --limit dell-worker --check --diff
+#   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/physical-node.yml \
+#               --limit dell-worker
+#   target  : -e physical_node_target=<group-or-host> (default: physical_nodes)
+#
+# Run it from the devvm with a Vault token (`vault login -method=oidc`) and a
+# kubeconfig that reaches the cluster. The controller reads the cluster's
+# versions with kubectl, reads and writes Vault, and asks k8s-master for a join
+# token over SSH.
+#
+# WHAT IT DOES, IN ORDER
+#   a. base        hostname, UTC, chrony, SSH keys only, security updates, Wi-Fi
+#   b. hardening   journald in memory, no core dumps, no swap, no sleep, lid
+#                  ignored, /tmp in memory, no rsyslog
+#   c. state       the LUKS2 State volume, bound to this node's Tang with Clevis
+#   d. binds       the secret paths bind-mounted from the State volume
+#   e. tether      the timer that closes the volume when Tang is gone
+#   f. kubernetes  containerd and kubeadm at the cluster's versions, then join
+#   g. gpu         a host NVIDIA driver and the container toolkit (gpu_driver)
+#   h. tuning      playbooks/k8s-node-tuning.yml, imported at the end
+#
+# PER-HOST VARIABLES (playbooks/host_vars/<host>.yml)
+#   k8s_node_name  the Kubernetes node name; also the hostname
+#   node_role      opportunistic-worker (the only role so far)
+#   node_ip        the address kubelet registers (--node-ip)
+#   state_device   the State partition; use /dev/disk/by-partlabel/<label>
+#   tang_url       this node's Tang (stacks/tang)
+#   node_labels    a map, applied by kubelet at registration
+#   node_taints    a list of {key, value, effect}, applied by kubeadm at join
+#   wifi           optional: {vault_path, interface}. The SSID and PSK are the
+#                  `ssid` and `psk` keys at vault_path, read at run time
+#   gpu_driver     optional: the Ubuntu -server driver branch, for example 580
+#
+# SECRETS. Nothing secret is in this repository. The State volume's recovery
+# passphrase is `recovery_passphrase` in Vault secret/physical-node-recovery-<host>, apart from the
+# Tang keys. The join token lives 30 minutes and only in /run on the node.
+#
+# WHAT A RUN DOES NOT DO
+#   * It restarts nothing on a node that has joined. containerd, kubelet,
+#     logind and the network pick up their files at the next boot, the same
+#     contract as k8s-node-tuning.yml. Reboot once after the first run.
+#   * It does not upgrade kubelet or containerd. A version that differs from the
+#     cluster's is reported; the k8s-version-upgrade chain owns upgrades.
+#   * It does not apply the Wi-Fi file live. Doing that over the same Wi-Fi link
+#     would cut this SSH session; `netplan generate` validates it instead.
+#
+# --check on a fresh machine skips the steps that depend on earlier ones (no
+# volume yet, no apt source yet), so it reports less than the real run does.
+# On a converged node --check is a no-op, and anything else is drift.
+
+- name: Physical node
+  hosts: "{{ physical_node_target | default('physical_nodes') }}"
+  become: true
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+
+  vars:
+    state_name: state
+    state_mount: /var/lib/state
+
+    # Every path that holds a secret or cluster state, bind-mounted from
+    # /var/lib/state/<name>. ADR-0045 lists them. A DaemonSet that tolerates
+    # the Opportunistic worker taint and writes another hostPath belongs here.
+    state_binds:
+      - {path: /etc/kubernetes, name: etc-kubernetes, mode: "0755"}
+      - {path: /var/lib/kubelet, name: kubelet, mode: "0755"}
+      - {path: /var/lib/containerd, name: containerd, mode: "0700"}
+      - {path: /etc/cni/net.d, name: cni-net.d, mode: "0755"}
+      - {path: /var/lib/calico, name: calico, mode: "0755"}
+      - {path: /var/log/pods, name: pod-logs, mode: "0750"}
+      - {path: /var/log/containers, name: container-logs, mode: "0755"}
+      - {path: /opt/actions-runner, name: actions-runner, mode: "0755"}
+
+    # The k8s-version-upgrade chain reaches every node in `kubectl get nodes`
+    # as wizard with this key (modules/create-template-vm/cloud_init.yaml).
+    # Public; the private half is Vault secret/k8s-upgrade/ssh_key.
+    k8s_upgrade_pipeline_pubkey: >-
+      ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIElH9x76UNA8UNxrxTjREYz4hz1fbCdRwAXbOkJ5FnSM
+      k8s-upgrade-pipeline
+
+    # The inventory host that runs `kubeadm token create`.
+    k8s_master_host: >-
+      {{ groups['k8s_nodes'] | map('extract', hostvars)
+         | selectattr('k8s_node_name', 'equalto', 'k8s-master')
+         | map(attribute='inventory_hostname') | first }}
+
+    # The same three values k8s-node-tuning.yml declares, and that playbook
+    # asserts them at the end. They are set here too because the NVIDIA
+    # toolkit copies the whole containerd config when it configures itself,
+    # and that copy must already carry them.
+    containerd_config_path: /etc/containerd/config.toml
+    containerd_sandbox_image: registry.k8s.io/pause:3.10.1
+    containerd_max_concurrent_downloads: 3
+
+    # GPU Operator opt-outs: this node keeps a host driver and a host toolkit.
+    # nvidia.com/gpu.deploy.driver=false is the documented per-node opt-out.
+    # The toolkit label stops the operator's toolkit from rewriting containerd
+    # on top of the host one, if its DaemonSets ever tolerate this node.
+    gpu_labels:
+      nvidia.com/gpu.deploy.driver: "false"
+      nvidia.com/gpu.deploy.container-toolkit: "false"
+    physical_node_labels: >-
+      {{ node_labels | default({})
+         | combine(gpu_labels if (gpu_driver | default('') | string | length > 0) else {}) }}
+    # kubelet's --node-labels form: k=v,k=v
+    node_labels_arg: >-
+      {% for k, v in physical_node_labels.items() %}{{ k }}={{ v }}{{ ',' if not loop.last else '' }}{% endfor %}
+
+    opportunistic_taint:
+      key: node-role.viktorbarzin.me/opportunistic
+      value: "true"
+      effect: NoSchedule
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: Restart journald
+      ansible.builtin.systemd_service:
+        name: systemd-journald
+        state: restarted
+
+    - name: Reload sshd
+      ansible.builtin.systemd_service:
+        name: ssh
+        state: reloaded
+
+  pre_tasks:
+    # ---- refuse early ------------------------------------------------------
+    - name: This is Ubuntu 26.04
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == 'Ubuntu'
+          - ansible_distribution_version == '26.04'
+        fail_msg: >-
+          {{ inventory_hostname }} runs {{ ansible_distribution }}
+          {{ ansible_distribution_version }}. Physical nodes are Ubuntu 26.04,
+          like the VM nodes.
+      tags: always
+
+    - name: The per-host variables are set
+      ansible.builtin.assert:
+        that:
+          - k8s_node_name is defined
+          - node_ip is defined
+          - state_device is defined
+          - tang_url is defined
+          - node_role | default('') == 'opportunistic-worker'
+          - node_taints is defined
+          - opportunistic_taint in node_taints
+        fail_msg: >-
+          Set k8s_node_name, node_ip, state_device, tang_url, node_role and
+          node_taints in playbooks/host_vars/{{ inventory_hostname }}.yml. An
+          opportunistic-worker carries the taint
+          node-role.viktorbarzin.me/opportunistic=true:NoSchedule.
+      tags: always
+
+    - name: Read the cluster's Kubernetes version
+      ansible.builtin.command: kubectl version -o json
+      delegate_to: localhost
+      become: false
+      register: cluster_version
+      changed_when: false
+      check_mode: false
+      tags: always
+
+    - name: Read the containerd version the control-plane node runs
+      ansible.builtin.command:
+        argv: [kubectl, get, node, k8s-master, -o, "jsonpath={.status.nodeInfo.containerRuntimeVersion}"]
+      delegate_to: localhost
+      become: false
+      register: cluster_containerd
+      changed_when: false
+      check_mode: false
+      tags: always
+
+    - name: Keep the versions this node must match
+      ansible.builtin.set_fact:
+        k8s_version: "{{ (cluster_version.stdout | from_json).serverVersion.gitVersion | regex_replace('^v', '') }}"
+        containerd_version: "{{ cluster_containerd.stdout | regex_replace('^containerd://', '') }}"
+      tags: always
+
+    - name: The versions look like versions
+      ansible.builtin.assert:
+        that:
+          - k8s_version is match('^\d+\.\d+\.\d+$')
+          - containerd_version is match('^\d+\.\d+\.\d+$')
+        fail_msg: "Read Kubernetes '{{ k8s_version }}' and containerd '{{ containerd_version }}'. Refusing to guess."
+      tags: always
+
+    - name: Tang answers from this node
+      ansible.builtin.command:
+        argv: [curl, -sf, --max-time, "10", -o, /dev/null, "{{ tang_url }}/adv"]
+      changed_when: false
+      check_mode: false
+      register: tang_check
+      failed_when: false
+      tags: always
+
+    - name: Refuse to run without Tang
+      ansible.builtin.assert:
+        that: tang_check.rc == 0
+        fail_msg: >-
+          {{ inventory_hostname }} cannot reach Tang at {{ tang_url }} (curl exit
+          {{ tang_check.rc }}). The State volume cannot be bound or opened. Check
+          the WireGuard tunnel and the tang-{{ inventory_hostname }} Service.
+      tags: always
+
+  tasks:
+    # =======================================================================
+    # a. Base
+    # =======================================================================
+    - name: The hostname is the Kubernetes node name
+      ansible.builtin.hostname:
+        name: "{{ k8s_node_name }}"
+      tags: base
+
+    - name: The hostname resolves locally
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1[ \t]'
+        line: "127.0.1.1 {{ k8s_node_name }}"
+      tags: base
+
+    - name: The clock is UTC
+      community.general.timezone:
+        name: UTC
+      tags: base
+
+    - name: Base packages
+      ansible.builtin.apt:
+        name:
+          - chrony
+          - openssh-server
+          - unattended-upgrades
+          - update-notifier-common
+          - clevis
+          - clevis-luks
+          - clevis-systemd
+          - cryptsetup
+          - jose
+          - curl
+          - jq
+          - gpg
+          - ca-certificates
+          - systemd-coredump
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      register: base_packages
+      tags: base
+
+    - name: chrony keeps the time
+      ansible.builtin.systemd_service:
+        name: chrony
+        enabled: true
+        state: started
+      when: not (ansible_check_mode and base_packages.changed)
+      tags: base
+
+    # ---- SSH: keys only ----------------------------------------------------
+    - name: The admin account has an authorized key, so key-only login cannot lock us out
+      ansible.builtin.stat:
+        path: "/home/{{ ansible_user }}/.ssh/authorized_keys"
+      register: admin_keys
+      tags: [base, ssh]
+
+    - name: Refuse to turn passwords off without a key in place
+      ansible.builtin.assert:
+        that:
+          - admin_keys.stat.exists
+          - admin_keys.stat.size > 0
+        fail_msg: "/home/{{ ansible_user }}/.ssh/authorized_keys is missing or empty."
+      tags: [base, ssh]
+
+    - name: The k8s-version-upgrade chain can log in
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user }}"
+        key: "{{ k8s_upgrade_pipeline_pubkey }}"
+        state: present
+      tags: [base, ssh]
+
+    # sshd takes the FIRST value it reads for each option, and Ubuntu's own
+    # drop-ins (50-cloud-init.conf) can say PasswordAuthentication yes. 00-
+    # sorts first, so these win.
+    - name: sshd accepts keys only
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/00-physical-node.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by playbooks/physical-node.yml. Edits here are overwritten.
+          PubkeyAuthentication yes
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          PermitRootLogin no
+      register: sshd_dropin
+      notify: Reload sshd
+      tags: [base, ssh]
+
+    - name: The sshd configuration parses
+      ansible.builtin.command: /usr/sbin/sshd -t
+      changed_when: false
+      when: sshd_dropin.changed and not ansible_check_mode
+      tags: [base, ssh]
+
+    # ---- security updates --------------------------------------------------
+    # The same two files the VM nodes run (k8s-node-tuning.yml, tag patching):
+    # security and -updates origins, the runtime packages blacklisted, no
+    # automatic reboot.
+    - name: apt runs the daily list refresh and the unattended upgrade
+      ansible.builtin.copy:
+        src: files/k8s-node/20auto-upgrades
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        owner: root
+        group: root
+        mode: "0644"
+      tags: base
+
+    - name: Allowed origins, runtime blacklist and no automatic reboot
+      ansible.builtin.copy:
+        src: files/k8s-node/52unattended-upgrades-k8s
+        dest: /etc/apt/apt.conf.d/52unattended-upgrades-k8s
+        owner: root
+        group: root
+        mode: "0644"
+      tags: base
+
+    # ---- Wi-Fi -------------------------------------------------------------
+    # The SSID and PSK come from Vault at run time and land only in a root-only
+    # netplan file. ADR-0045 accepts that the PSK is in plaintext on the root.
+    - name: Read the Wi-Fi network from Vault
+      ansible.builtin.command: "vault kv get -format=json {{ wifi.vault_path }}"
+      delegate_to: localhost
+      become: false
+      register: wifi_secret
+      changed_when: false
+      check_mode: false
+      no_log: true
+      when: wifi is defined
+      tags: [base, wifi]
+
+    - name: Find the wireless interface
+      ansible.builtin.shell:
+        cmd: |
+          for d in /sys/class/net/*; do
+            [ -d "$d/wireless" ] && basename "$d"
+          done
+          true
+        executable: /bin/bash
+      register: wifi_ifaces
+      changed_when: false
+      check_mode: false
+      when: wifi is defined and wifi.interface is not defined
+      tags: [base, wifi]
+
+    - name: Keep the interface name
+      ansible.builtin.set_fact:
+        wifi_interface: "{{ wifi.interface | default(wifi_ifaces.stdout_lines | default(['']) | first) }}"
+      when: wifi is defined
+      tags: [base, wifi]
+
+    - name: Exactly one wireless interface
+      ansible.builtin.assert:
+        that:
+          - wifi_interface | length > 0
+          - wifi.interface is defined or wifi_ifaces.stdout_lines | length == 1
+        fail_msg: >-
+          Found wireless interfaces {{ wifi_ifaces.stdout_lines | default([]) }}.
+          Set wifi.interface in host_vars.
+      when: wifi is defined
+      tags: [base, wifi]
+
+    # The ID is the interface name, so netplan merges this with a definition of
+    # the same interface that the install left behind instead of conflicting.
+    - name: The Wi-Fi network is configured
+      ansible.builtin.copy:
+        dest: /etc/netplan/60-physical-node-wifi.yaml
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # Managed by playbooks/physical-node.yml. Edits here are overwritten.
+          # The SSID and PSK come from Vault {{ wifi.vault_path }}.
+          network:
+            version: 2
+            wifis:
+              {{ wifi_interface }}:
+                dhcp4: true
+                access-points:
+                  {{ (wifi_secret.stdout | from_json).data.data.ssid | to_json }}:
+                    password: {{ (wifi_secret.stdout | from_json).data.data.psk | to_json }}
+      diff: false
+      no_log: true
+      register: wifi_netplan
+      when: wifi is defined
+      tags: [base, wifi]
+
+    - name: netplan accepts the file (applied at the next boot)
+      ansible.builtin.command: netplan generate
+      changed_when: false
+      when: wifi is defined and wifi_netplan.changed and not ansible_check_mode
+      tags: [base, wifi]
+
+    # =======================================================================
+    # b. Hardening for the model: nothing secret reaches the plain root
+    # =======================================================================
+    # The same drop-in the VM nodes carry (cloud_init.yaml, code-oflt). Here it
+    # is about secrets rather than disk writes: kubelet and pod logs stay in RAM.
+    - name: journald keeps logs in memory
+      ansible.builtin.copy:
+        dest: /etc/systemd/journald.conf.d/90-oflt-volatile.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Journal]
+          Storage=volatile
+          RuntimeMaxUse=200M
+          Compress=yes
+      notify: Restart journald
+      tags: hardening
+
+    - name: No journal on disk
+      ansible.builtin.file:
+        path: /var/log/journal
+        state: absent
+      tags: hardening
+
+    # rsyslog copies the journal to /var/log/syslog on the plain root, which
+    # would undo the line above.
+    - name: rsyslog is not installed
+      ansible.builtin.apt:
+        name: rsyslog
+        state: absent
+        purge: true
+      tags: hardening
+
+    - name: apport is not installed
+      ansible.builtin.apt:
+        name: apport
+        state: absent
+        purge: true
+      tags: hardening
+
+    - name: systemd-coredump keeps no core dumps
+      ansible.builtin.copy:
+        dest: /etc/systemd/coredump.conf.d/50-physical-node.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by playbooks/physical-node.yml. A core dump of kubelet or
+          # containerd holds cluster credentials.
+          [Coredump]
+          Storage=none
+          ProcessSizeMax=0
+      tags: hardening
+
+    - name: Is any swap active
+      ansible.builtin.command: swapon --show --noheadings
+      register: swap_active
+      changed_when: false
+      check_mode: false
+      tags: hardening
+
+    - name: Swap is off now
+      ansible.builtin.command: swapoff -a
+      when: swap_active.stdout | length > 0
+      changed_when: true
+      tags: hardening
+
+    - name: No swap in fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        # [ \t] and [^\n], never \s: \s matches a newline (k8s-node-tuning.yml).
+        regexp: '^([^#\n][^\n]*[ \t]swap[ \t][^\n]*)$'
+        replace: '# \1  # swap is off on Physical nodes'
+      tags: hardening
+
+    - name: No swap file
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: [/swap.img, /swapfile]
+      tags: hardening
+
+    - name: Swap, suspend and hibernate are masked
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        masked: true
+      loop:
+        - swap.target
+        - sleep.target
+        - suspend.target
+        - hibernate.target
+        - hybrid-sleep.target
+        - suspend-then-hibernate.target
+      tags: hardening
+
+    # No logind restart: that drops the inhibitor lock kubelet holds for its
+    # shutdown ladder (k8s-node-tuning.yml). Until the next boot, a closed lid
+    # still cannot suspend, because the sleep targets above are masked.
+    - name: Closing the lid does nothing
+      ansible.builtin.copy:
+        dest: /etc/systemd/logind.conf.d/50-physical-node-lid.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by playbooks/physical-node.yml.
+          [Login]
+          HandleLidSwitch=ignore
+          HandleLidSwitchExternalPower=ignore
+          HandleLidSwitchDocked=ignore
+      tags: hardening
+
+    - name: /tmp is in memory (from the next boot)
+      ansible.posix.mount:
+        path: /tmp
+        src: tmpfs
+        fstype: tmpfs
+        opts: mode=1777,nosuid,nodev,size=25%
+        state: present
+      tags: hardening
+
+    - name: The kernel forwards packets, which kubeadm requires
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        sysctl_file: /etc/sysctl.d/90-physical-node.conf
+        sysctl_set: true
+      tags: hardening
+
+    # =======================================================================
+    # c. The State volume
+    # =======================================================================
+    - name: The State device is a partition
+      ansible.builtin.shell:
+        cmd: lsblk -dno TYPE "$(readlink -f {{ state_device | quote }})"
+        executable: /bin/bash
+      register: state_dev_type
+      changed_when: false
+      check_mode: false
+      failed_when: state_dev_type.rc != 0 or state_dev_type.stdout | trim != 'part'
+      tags: state
+
+    - name: Is it a LUKS volume yet
+      ansible.builtin.command: cryptsetup isLuks {{ state_device | quote }}
+      register: state_luks
+      changed_when: false
+      check_mode: false
+      failed_when: state_luks.rc not in [0, 1]
+      tags: state
+
+    - name: What the partition holds now
+      ansible.builtin.command: blkid -p -o value -s TYPE {{ state_device | quote }}
+      register: state_signature
+      changed_when: false
+      check_mode: false
+      failed_when: state_signature.rc not in [0, 2]
+      when: state_luks.rc != 0
+      tags: state
+
+    - name: Is the partition mounted
+      ansible.builtin.command: findmnt -n -S {{ state_device | quote }}
+      register: state_mounted_raw
+      changed_when: false
+      check_mode: false
+      failed_when: false
+      when: state_luks.rc != 0
+      tags: state
+
+    # luksFormat destroys the partition. On a multi-boot laptop a wrong
+    # state_device is somebody's other operating system, so format only a
+    # partition with no signature at all, or with -e state_volume_wipe=true.
+    - name: Refuse to format a partition that holds something
+      ansible.builtin.assert:
+        that:
+          - state_mounted_raw.rc != 0
+          - state_signature.stdout | trim | length == 0 or (state_volume_wipe | default(false) | bool)
+        fail_msg: >-
+          {{ state_device }} is not LUKS and holds
+          '{{ state_signature.stdout | trim }}'{{ ' and is mounted' if state_mounted_raw.rc == 0 else '' }}.
+          Formatting it would destroy that. Check the device with lsblk -f. If it
+          is the right partition and its contents can go, run again with
+          -e state_volume_wipe=true.
+      when: state_luks.rc != 0
+      tags: state
+
+    - name: Which Clevis bindings it has
+      ansible.builtin.command: clevis luks list -d {{ state_device | quote }}
+      register: state_bindings
+      changed_when: false
+      check_mode: false
+      failed_when: false
+      when: state_luks.rc == 0
+      tags: state
+
+    - name: Keep what was found
+      ansible.builtin.set_fact:
+        state_is_luks: "{{ state_luks.rc == 0 }}"
+        state_is_bound: "{{ state_luks.rc == 0 and tang_url in (state_bindings.stdout | default('')) }}"
+      tags: state
+
+    - name: Refuse to bind a second Tang next to another one
+      ansible.builtin.assert:
+        that: state_is_bound or 'tang' not in (state_bindings.stdout | default(''))
+        fail_msg: >-
+          {{ state_device }} is bound to a Tang other than {{ tang_url }}:
+          {{ state_bindings.stdout }}. Change the binding by hand
+          (docs/runbooks/physical-node.md, "Rotate the Tang keys").
+      tags: state
+
+    # The recovery passphrase is needed to format and to bind; a node that is
+    # already LUKS and bound never reads it.
+    - name: Read this node's recovery passphrase from Vault
+      ansible.builtin.command: "vault kv get -format=json secret/physical-node-recovery-{{ inventory_hostname }}"
+      delegate_to: localhost
+      become: false
+      register: tang_secret
+      changed_when: false
+      failed_when: false # a new node has no secret yet
+      check_mode: false
+      no_log: true
+      when: not state_is_bound
+      tags: state
+
+    - name: Keep the recovery passphrase, or make one for a new volume
+      ansible.builtin.set_fact:
+        recovery_passphrase: >-
+          {{ ((tang_secret.stdout | from_json).data.data.recovery_passphrase if tang_secret.rc == 0 else none)
+             | default(lookup('ansible.builtin.password', '/dev/null',
+                              length=48, chars=['ascii_letters', 'digits']), true) }}
+        recovery_passphrase_is_new: "{{ tang_secret.rc != 0 or 'recovery_passphrase' not in (tang_secret.stdout | from_json).data.data }}"
+      no_log: true
+      when: not state_is_bound
+      tags: state
+
+    - name: An existing volume needs its passphrase from Vault
+      ansible.builtin.assert:
+        that: not (state_is_luks and recovery_passphrase_is_new)
+        fail_msg: >-
+          {{ state_device }} is LUKS but not bound to {{ tang_url }}, and Vault
+          secret/physical-node-recovery-{{ inventory_hostname }} has no recovery_passphrase. Put the
+          passphrase there, or wipe the volume with -e state_volume_wipe=true after
+          luksErase.
+      when: not state_is_bound
+      tags: state
+
+    # Stored BEFORE the format, so the volume never has a passphrase that Vault
+    # does not hold. Its own path, apart from secret/tang-<host>, because ESO
+    # copies every key of that path into the Tang pod.
+    - name: Store the new recovery passphrase in Vault
+      ansible.builtin.command:
+        argv: [vault, kv, put, "secret/physical-node-recovery-{{ inventory_hostname }}", "recovery_passphrase=-"]
+        stdin: "{{ recovery_passphrase }}"
+        stdin_add_newline: false
+      delegate_to: localhost
+      become: false
+      changed_when: true
+      no_log: true
+      when: not state_is_bound and recovery_passphrase_is_new
+      tags: state
+
+    - name: Read it back
+      ansible.builtin.command: "vault kv get -field=recovery_passphrase secret/physical-node-recovery-{{ inventory_hostname }}"
+      delegate_to: localhost
+      become: false
+      register: recovery_readback
+      changed_when: false
+      no_log: true
+      when: not state_is_bound and recovery_passphrase_is_new and not ansible_check_mode
+      tags: state
+
+    - name: Vault holds the passphrase that is about to be used
+      ansible.builtin.assert:
+        that: recovery_readback.stdout == recovery_passphrase
+        fail_msg: Vault did not return the passphrase just written. Refusing to format.
+      no_log: true
+      when: not state_is_bound and recovery_passphrase_is_new and not ansible_check_mode
+      tags: state
+
+    - name: Format the State volume as LUKS2
+      ansible.builtin.command:
+        argv: [cryptsetup, luksFormat, --type, luks2, --batch-mode, --key-file=-, "{{ state_device }}"]
+        stdin: "{{ recovery_passphrase }}"
+        stdin_add_newline: false
+      changed_when: true
+      no_log: true
+      when: not state_is_luks
+      tags: state
+
+    - name: Open it with the passphrase, the first time
+      ansible.builtin.command:
+        argv: [cryptsetup, open, --key-file=-, "{{ state_device }}", "{{ state_name }}"]
+        stdin: "{{ recovery_passphrase }}"
+        stdin_add_newline: false
+      changed_when: true
+      no_log: true
+      when: not state_is_luks
+      tags: state
+
+    - name: Bind it to this node's Tang
+      ansible.builtin.command:
+        argv:
+          - clevis
+          - luks
+          - bind
+          - -y
+          - -k
+          - "-"
+          - -d
+          - "{{ state_device }}"
+          - tang
+          - "{{ {'url': tang_url} | to_json }}"
+        stdin: "{{ recovery_passphrase }}"
+        stdin_add_newline: false
+      changed_when: true
+      no_log: true
+      when: not state_is_bound
+      tags: state
+
+    - name: Is the volume open
+      ansible.builtin.command: cryptsetup status {{ state_name }}
+      register: state_open
+      changed_when: false
+      check_mode: false
+      failed_when: false
+      tags: state
+
+    - name: Open it through Tang
+      ansible.builtin.command:
+        argv: [clevis, luks, unlock, -d, "{{ state_device }}", -n, "{{ state_name }}"]
+      changed_when: true
+      when: state_open.rc != 0 and state_is_luks
+      tags: state
+
+    - name: What the opened volume holds
+      ansible.builtin.command: blkid -p -o value -s TYPE /dev/mapper/{{ state_name }}
+      register: state_fs
+      changed_when: false
+      check_mode: false
+      failed_when: state_fs.rc not in [0, 2]
+      when: not ansible_check_mode or state_open.rc == 0
+      tags: state
+
+    # Only an empty volume gets a filesystem, so this cannot destroy one.
+    - name: An ext4 filesystem labelled state
+      ansible.builtin.command: mkfs.ext4 -q -L state /dev/mapper/{{ state_name }}
+      changed_when: true
+      when: state_fs is not skipped and state_fs.stdout | trim | length == 0
+      tags: state
+
+    - name: The LUKS UUID
+      ansible.builtin.command: cryptsetup luksUUID {{ state_device | quote }}
+      register: state_uuid
+      changed_when: false
+      check_mode: false
+      when: state_is_luks or not ansible_check_mode
+      tags: state
+
+    # _netdev puts the unlock after network-online.target, in
+    # remote-cryptsetup.target. clevis-luks-askpass.path watches
+    # /run/systemd/ask-password and answers systemd-cryptsetup's question from
+    # Tang, retrying while Tang is away (clevis-luks-unlockers(7), "late boot
+    # unlocking"). nofail lets the boot finish without the volume.
+    - name: crypttab opens the volume after the network is up
+      ansible.builtin.lineinfile:
+        path: /etc/crypttab
+        regexp: '^{{ state_name }}[ \t]'
+        line: "{{ state_name }} UUID={{ state_uuid.stdout | trim }} none luks,_netdev,nofail"
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+      when: state_uuid is not skipped
+      notify: Reload systemd
+      tags: state
+
+    - name: Clevis answers the unlock question, and the remote unlock runs at boot
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+      loop:
+        - clevis-luks-askpass.path
+        - remote-cryptsetup.target
+      when: not (ansible_check_mode and base_packages.changed)
+      tags: state
+
+    # =======================================================================
+    # d. Secret paths, bind-mounted from the State volume
+    # =======================================================================
+    # An empty, immutable mountpoint: while the volume is closed, nothing can
+    # write to the plain root at that path (chattr +i works only on the
+    # directory under the mount, so this runs only while it is unmounted).
+    - name: Mountpoints are empty and immutable on the plain root
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          p={{ item.path | quote }}
+          if mountpoint -q "$p"; then exit 0; fi
+          if [ ! -d "$p" ]; then install -d -m {{ item.mode }} "$p"; echo changed; fi
+          if [ -n "$(ls -A "$p")" ]; then
+            echo "$p holds files on the plain root. Move them away, then run again." >&2
+            exit 3
+          fi
+          case "$(lsattr -d "$p" | cut -d' ' -f1)" in
+            *i*) ;;
+            *) chattr +i "$p"; echo changed ;;
+          esac
+        executable: /bin/bash
+      loop: "{{ [{'path': state_mount, 'mode': '0700'}] + state_binds }}"
+      loop_control:
+        label: "{{ item.path }}"
+      register: mountpoints
+      changed_when: "'changed' in mountpoints.stdout"
+      tags: [state, binds]
+
+    - name: The State volume is mounted
+      ansible.posix.mount:
+        path: "{{ state_mount }}"
+        src: /dev/mapper/{{ state_name }}
+        fstype: ext4
+        opts: _netdev,nofail
+        dump: "0"
+        passno: "2"
+        state: mounted
+      tags: [state, binds]
+
+    - name: Only root reads the State volume
+      ansible.builtin.file:
+        path: "{{ state_mount }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      tags: [state, binds]
+
+    - name: A directory on the State volume for each secret path
+      ansible.builtin.file:
+        path: "{{ state_mount }}/{{ item.name }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop: "{{ state_binds }}"
+      loop_control:
+        label: "{{ item.path }}"
+      tags: binds
+
+    # _netdev on the binds too: without it they are local-fs.target mounts
+    # ordered after a remote one, which is an ordering cycle.
+    - name: Each secret path is a bind mount from the State volume
+      ansible.posix.mount:
+        path: "{{ item.path }}"
+        src: "{{ state_mount }}/{{ item.name }}"
+        fstype: none
+        opts: "bind,_netdev,nofail,x-systemd.requires-mounts-for={{ state_mount }}"
+        state: mounted
+      loop: "{{ state_binds }}"
+      loop_control:
+        label: "{{ item.path }}"
+      tags: binds
+
+    - name: Drop-in directories for containerd and kubelet
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}.service.d"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop: [containerd, kubelet]
+      tags: binds
+
+    # Neither starts before the volume is open and every bind is mounted. A
+    # start while the volume is closed waits for the device and then fails,
+    # so nothing writes to the plain root.
+    - name: containerd and kubelet require the State volume
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item }}.service.d/30-state-volume.conf"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by playbooks/physical-node.yml. Edits here are overwritten.
+          [Unit]
+          RequiresMountsFor={{ state_binds | map(attribute='path') | join(' ') }}
+      loop: [containerd, kubelet]
+      notify: Reload systemd
+      tags: binds
+
+    # =======================================================================
+    # e. The Tether
+    # =======================================================================
+    - name: The Tether script
+      ansible.builtin.copy:
+        src: files/physical-node/physical-node-tether
+        dest: /usr/local/sbin/physical-node-tether
+        owner: root
+        group: root
+        mode: "0755"
+      tags: tether
+
+    - name: The Tether settings
+      ansible.builtin.copy:
+        dest: /etc/physical-node-tether.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by playbooks/physical-node.yml. Edits here are overwritten.
+          TANG_URL={{ tang_url }}
+          STATE_DEVICE={{ state_device }}
+          STATE_NAME={{ state_name }}
+          STATE_MOUNT={{ state_mount }}
+          BIND_TARGETS="{{ state_binds | map(attribute='path') | join(' ') }}"
+          # Started in this order, stopped in reverse.
+          TETHER_UNITS="containerd.service kubelet.service"
+          TETHER_GRACE_SECONDS=600
+      tags: tether
+
+    - name: The Tether units
+      ansible.builtin.copy:
+        src: "files/physical-node/physical-node-tether.{{ item }}"
+        dest: "/etc/systemd/system/physical-node-tether.{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [service, timer]
+      register: tether_units
+      tags: tether
+
+    - name: The Tether runs every minute
+      ansible.builtin.systemd_service:
+        name: physical-node-tether.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ tether_units.changed }}"
+      when: not (ansible_check_mode and tether_units.changed)
+      tags: tether
+
+    # crypttab, fstab and the drop-ins above, before anything starts a unit.
+    - name: systemd reads the new units and drop-ins
+      ansible.builtin.meta: flush_handlers
+      tags: always
+
+    # =======================================================================
+    # f. Kubernetes
+    # =======================================================================
+    # ---- apt sources -------------------------------------------------------
+    # The suite comes from apt, as in k8s-node-tuning.yml (tag aptsource).
+    - name: Which Ubuntu suite apt is configured for
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          apt-get indextargets --format '$(RELEASE)' 2>/dev/null \
+            | grep -vE -- '-(updates|security|backports|proposed)$' \
+            | grep -vE '^$' | sort -u | head -1
+        executable: /bin/bash
+      register: apt_suite
+      changed_when: false
+      check_mode: false
+      tags: kubernetes
+
+    - name: Is Docker's apt signing key installed
+      ansible.builtin.stat:
+        path: /etc/apt/keyrings/docker.asc
+      register: docker_key_file
+      check_mode: false
+      tags: kubernetes
+
+    - name: Docker's apt signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        owner: root
+        group: root
+        mode: "0644"
+      register: docker_key
+      when: not docker_key_file.stat.exists
+      tags: kubernetes
+
+    # Byte for byte what k8s-node-tuning.yml writes, so that play finds it
+    # converged. containerd.io comes from here, as on the VM nodes.
+    - name: Docker's apt source, for containerd.io
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.sources
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by playbooks/k8s-node-tuning.yml. Edits here are overwritten.
+          Types: deb
+          URIs: https://download.docker.com/linux/ubuntu
+          Suites: {{ apt_suite.stdout | trim }}
+          Components: stable
+          Architectures: amd64
+          Signed-By: /etc/apt/keyrings/docker.asc
+          Enabled: yes
+      register: docker_source
+      tags: kubernetes
+
+    # The key and the one-line source file the k8s-version-upgrade chain writes
+    # (stacks/k8s-version-upgrade/scripts/upgrade-step.sh), so a minor upgrade
+    # rewrites this file the same way it rewrites the VM nodes'.
+    - name: The Kubernetes apt signing key
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail &&
+          curl -fsSL https://pkgs.k8s.io/core:/stable:/v{{ k8s_version.split('.')[:2] | join('.') }}/deb/Release.key
+          | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        executable: /bin/bash
+      register: k8s_key
+      tags: kubernetes
+
+    - name: The Kubernetes apt source, at the cluster's minor version
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/kubernetes.list
+        owner: root
+        group: root
+        mode: "0644"
+        content: >
+          deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg]
+          https://pkgs.k8s.io/core:/stable:/v{{ k8s_version.split('.')[:2] | join('.') }}/deb/ /
+      register: k8s_source
+      tags: kubernetes
+
+    - name: Refresh apt when a source changed
+      ansible.builtin.apt:
+        update_cache: true
+      when: docker_key.changed or docker_source.changed or k8s_key.changed or k8s_source.changed
+      tags: kubernetes
+
+    - name: Which apt sources were just added
+      ansible.builtin.set_fact:
+        apt_sources_pending: >-
+          {{ ansible_check_mode and (docker_source.changed or k8s_source.changed) }}
+      tags: kubernetes
+
+    # ---- the exact package versions ----------------------------------------
+    - name: The apt versions that match the cluster
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          pick() { apt-cache madison "$1" | awk -v v="$2-" 'index($3, v) == 1 {print $3; exit}'; }
+          echo "containerd.io=$(pick containerd.io {{ containerd_version }})"
+          for p in kubelet kubeadm kubectl; do echo "$p=$(pick $p {{ k8s_version }})"; done
+        executable: /bin/bash
+      register: apt_versions
+      changed_when: false
+      check_mode: false
+      when: not apt_sources_pending
+      tags: kubernetes
+
+    - name: Keep them
+      ansible.builtin.set_fact:
+        pinned: "{{ dict(apt_versions.stdout_lines | map('split', '=')) }}"
+      when: not apt_sources_pending
+      tags: kubernetes
+
+    - name: apt offers every version the cluster runs
+      ansible.builtin.assert:
+        that: pinned.values() | select('equalto', '') | list | length == 0
+        fail_msg: >-
+          apt has no package for {{ pinned | dict2items | selectattr('value', 'equalto', '')
+          | map(attribute='key') | list }} at containerd {{ containerd_version }} /
+          Kubernetes {{ k8s_version }}.
+      when: not apt_sources_pending
+      tags: kubernetes
+
+    - name: Which packages are installed
+      ansible.builtin.package_facts:
+      tags: kubernetes
+
+    # Install only what is missing. A node that runs another version is
+    # reported, never moved: the k8s-version-upgrade chain upgrades nodes.
+    - name: Install containerd and the Kubernetes packages at the cluster's versions
+      ansible.builtin.apt:
+        name: "{{ item.key }}={{ item.value }}"
+        state: present
+        install_recommends: false
+      loop: "{{ pinned | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}={{ item.value }}"
+      when:
+        - not apt_sources_pending
+        - item.key not in ansible_facts.packages
+      register: k8s_packages
+      tags: kubernetes
+
+    - name: Report a package that runs another version than the cluster
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.key }} is {{ ansible_facts.packages[item.key][0].version }} here and
+          {{ item.value }} in the cluster. The k8s-version-upgrade chain upgrades
+          nodes; this playbook does not.
+      loop: "{{ pinned | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when:
+        - not apt_sources_pending
+        - item.key in ansible_facts.packages
+        - ansible_facts.packages[item.key][0].version != item.value
+      tags: kubernetes
+
+    # Under --check on a fresh machine nothing is installed yet, so the tasks
+    # that read or edit the runtime's files skip instead of failing on them.
+    - name: Are the runtime packages only pretend-installed
+      ansible.builtin.set_fact:
+        runtime_pending: "{{ ansible_check_mode and (apt_sources_pending or k8s_packages is changed) }}"
+      tags: kubernetes
+
+    - name: The runtime and Kubernetes packages are held
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop: [kubelet, kubeadm, kubectl, containerd.io]
+      when: not runtime_pending
+      tags: kubernetes
+
+    # ---- containerd configuration -------------------------------------------
+    # What the VM nodes run, read off k8s-node2 (26.04, containerd 2.3.4) on
+    # 2026-11-22: `containerd config default` plus SystemdCgroup = true and
+    # config_path = /etc/containerd/certs.d. The GC values the old setup script
+    # set by sed (schedule_delay, exit_timeout) are on no live node, so they are
+    # not copied. k8s-node-tuning.yml then adds certs.d, pull concurrency, the
+    # pause image and discard_unpacked_layers.
+    #
+    # containerd.io ships a config.toml that disables the CRI plugin, so a file
+    # without the CRI runtime section is replaced by the default.
+    - name: containerd's default configuration, with the CRI plugin on
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          f={{ containerd_config_path }}
+          if [ -f "$f" ] && grep -q "io.containerd.cri.v1.runtime" "$f"; then exit 0; fi
+          containerd config default > "$f.new"
+          mv "$f.new" "$f"
+          echo changed
+        executable: /bin/bash
+      register: containerd_default
+      changed_when: "'changed' in containerd_default.stdout"
+      when: not runtime_pending
+      tags: kubernetes
+
+    - name: containerd settings the VM nodes carry
+      ansible.builtin.replace:
+        path: "{{ containerd_config_path }}"
+        regexp: "{{ item.regexp }}"
+        replace: "{{ item.replace }}"
+        validate: containerd -c %s config dump
+      loop:
+        - {what: cgroup driver, regexp: '^([ \t]*)SystemdCgroup = false[ \t]*$', replace: '\1SystemdCgroup = true'}
+        - {what: registry hosts, regexp: "^([ \\t]*)config_path = ''[ \\t]*$", replace: "\\1config_path = '/etc/containerd/certs.d'"}
+        - {what: layer blobs, regexp: '^([ \t]*)discard_unpacked_layers = false[ \t]*$', replace: '\1discard_unpacked_layers = true'}
+        - what: pause image
+          regexp: "^([ \\t]*)sandbox = '[^']*'[ \\t]*$"
+          replace: "\\1sandbox = '{{ containerd_sandbox_image }}'"
+        - what: pull concurrency
+          regexp: '^([ \t]*)max_concurrent_downloads = \d+[ \t]*$'
+          replace: '\1max_concurrent_downloads = {{ containerd_max_concurrent_downloads }}'
+      loop_control:
+        label: "{{ item.what }}"
+      register: containerd_settings
+      when: not runtime_pending
+      tags: kubernetes
+
+    - name: Has this node joined
+      ansible.builtin.stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf
+      tags: [kubernetes, join]
+
+    # Before the join only: nothing runs on containerd yet. After the join,
+    # the next boot applies a change, as with every other setting here.
+    - name: containerd runs the new configuration before the join
+      ansible.builtin.systemd_service:
+        name: containerd
+        state: restarted
+        daemon_reload: true
+      when:
+        - not kubelet_conf.stat.exists
+        - containerd_default is changed or containerd_settings is changed
+        - not ansible_check_mode
+      tags: kubernetes
+
+    - name: containerd and kubelet start at boot
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+      loop: [containerd, kubelet]
+      when: not runtime_pending
+      tags: kubernetes
+
+    # ---- join -----------------------------------------------------------------
+    - name: Join the cluster
+      when: not kubelet_conf.stat.exists and not ansible_check_mode
+      tags: [kubernetes, join]
+      block:
+        - name: A 30-minute join token from k8s-master
+          ansible.builtin.command: kubeadm token create --ttl 30m --print-join-command
+          delegate_to: "{{ k8s_master_host }}"
+          become: true
+          register: join_command
+          changed_when: true
+          no_log: true
+
+        - name: The parts of the join command
+          ansible.builtin.set_fact:
+            join_endpoint: "{{ join_command.stdout | regex_search('kubeadm join (\\S+)', '\\1') | first }}"
+            join_token: "{{ join_command.stdout | regex_search('--token (\\S+)', '\\1') | first }}"
+            join_ca_hash: "{{ join_command.stdout | regex_search('--discovery-token-ca-cert-hash (\\S+)', '\\1') | first }}"
+          no_log: true
+
+        - name: The join configuration, in memory only
+          ansible.builtin.copy:
+            dest: /run/physical-node-join.yaml
+            owner: root
+            group: root
+            mode: "0600"
+            content: |
+              apiVersion: kubeadm.k8s.io/v1beta4
+              kind: JoinConfiguration
+              discovery:
+                bootstrapToken:
+                  apiServerEndpoint: {{ join_endpoint | to_json }}
+                  token: {{ join_token | to_json }}
+                  caCertHashes:
+                    - {{ join_ca_hash | to_json }}
+              nodeRegistration:
+                name: {{ k8s_node_name | to_json }}
+                criSocket: unix:///run/containerd/containerd.sock
+                kubeletExtraArgs:
+                  - name: node-ip
+                    value: {{ node_ip | to_json }}
+                  - name: node-labels
+                    value: {{ node_labels_arg | trim | to_json }}
+                taints: {{ node_taints | to_json }}
+          diff: false
+          no_log: true
+
+        - name: kubeadm join
+          ansible.builtin.command: kubeadm join --config /run/physical-node-join.yaml
+          changed_when: true
+
+      always:
+        - name: Remove the join configuration
+          ansible.builtin.file:
+            path: /run/physical-node-join.yaml
+            state: absent
+
+    - name: The node is registered
+      ansible.builtin.command:
+        argv: [kubectl, get, node, "{{ k8s_node_name }}", -o, json]
+      delegate_to: localhost
+      become: false
+      register: node_object
+      changed_when: false
+      check_mode: false
+      retries: 30
+      delay: 10
+      until: node_object.rc == 0
+      when: kubelet_conf.stat.exists or not ansible_check_mode
+      tags: [kubernetes, join]
+
+    # Labels and taints are set once, at registration. This reads the live node
+    # and says what differs; it changes nothing in the cluster.
+    - name: Compare the live node with the declaration
+      ansible.builtin.set_fact:
+        live_labels: "{{ (node_object.stdout | from_json).metadata.labels }}"
+        live_taints: "{{ (node_object.stdout | from_json).spec.taints | default([]) }}"
+      when: node_object is not skipped
+      tags: [kubernetes, join]
+
+    - name: The live labels and taints are the declared ones
+      ansible.builtin.assert:
+        that:
+          - physical_node_labels | dict2items | difference(live_labels | dict2items) | length == 0
+          - >-
+            node_taints | map(attribute='key')
+            | zip(node_taints | map(attribute='value'), node_taints | map(attribute='effect'))
+            | map('join', ' ') | difference(
+              live_taints | map(attribute='key')
+              | zip(live_taints | map(attribute='value', default=''), live_taints | map(attribute='effect'))
+              | map('join', ' ')) | length == 0
+        fail_msg: >-
+          {{ k8s_node_name }} differs from host_vars. Declared labels
+          {{ physical_node_labels }}, taints {{ node_taints }}. Labels and taints
+          apply only at registration; set them with kubectl label/taint, or
+          delete the node and join again.
+      when: node_object is not skipped
+      tags: [kubernetes, join]
+
+    # =======================================================================
+    # g. GPU: a host driver the cluster's GPU Operator does not manage
+    # =======================================================================
+    # The Operator installs 595 open kernel modules, which need Turing or newer.
+    # A Pascal card (the Dell's P2000) needs the proprietary 580 branch, the
+    # last one for Pascal. Ubuntu's -server (ERD) packages through
+    # ubuntu-drivers, which also installs the signed kernel modules.
+    - name: GPU driver and container toolkit
+      when: gpu_driver | default('') | string | length > 0
+      tags: gpu
+      block:
+        - name: Which packages are installed
+          ansible.builtin.package_facts:
+
+        - name: ubuntu-drivers is installed
+          ansible.builtin.apt:
+            name: ubuntu-drivers-common
+            state: present
+
+        - name: The NVIDIA -server driver of the gpu_driver branch
+          ansible.builtin.command: ubuntu-drivers install --gpgpu nvidia:{{ gpu_driver }}-server
+          changed_when: true
+          when: ('nvidia-utils-' ~ gpu_driver ~ '-server') not in ansible_facts.packages
+
+        - name: nvidia-smi and the driver's user-space tools
+          ansible.builtin.apt:
+            name: "nvidia-utils-{{ gpu_driver }}-server"
+            state: present
+
+        - name: Is NVIDIA's apt signing key installed
+          ansible.builtin.stat:
+            path: /etc/apt/keyrings/nvidia-container-toolkit.asc
+          register: nvidia_key_file
+          check_mode: false
+
+        - name: NVIDIA's apt signing key
+          ansible.builtin.get_url:
+            url: https://nvidia.github.io/libnvidia-container/gpgkey
+            dest: /etc/apt/keyrings/nvidia-container-toolkit.asc
+            owner: root
+            group: root
+            mode: "0644"
+          register: nvidia_key
+          when: not nvidia_key_file.stat.exists
+
+        # The source NVIDIA's install guide gives, with the key in /etc/apt/keyrings.
+        - name: NVIDIA's container toolkit apt source
+          ansible.builtin.copy:
+            dest: /etc/apt/sources.list.d/nvidia-container-toolkit.list
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              deb [signed-by=/etc/apt/keyrings/nvidia-container-toolkit.asc] https://nvidia.github.io/libnvidia-container/stable/deb/$(ARCH) /
+          register: nvidia_source
+
+        - name: The NVIDIA container toolkit
+          ansible.builtin.apt:
+            name: nvidia-container-toolkit
+            state: present
+            update_cache: "{{ nvidia_key.changed or nvidia_source.changed }}"
+          register: nvidia_toolkit
+          when: not (ansible_check_mode and nvidia_source.changed)
+
+        - name: Does containerd know the nvidia runtime
+          ansible.builtin.shell:
+            cmd: set -o pipefail && containerd config dump | grep -cF 'runtimes.nvidia]'
+            executable: /bin/bash
+          register: nvidia_runtime
+          changed_when: false
+          check_mode: false
+          failed_when: false
+          when: not (ansible_check_mode and nvidia_toolkit is changed)
+
+        # The handler name `nvidia` matches the cluster's RuntimeClass `nvidia`.
+        # Read at the next containerd start, which the reboot after the first
+        # run provides.
+        - name: containerd gets the nvidia runtime
+          ansible.builtin.command: nvidia-ctk runtime configure --runtime=containerd
+          changed_when: true
+          when:
+            - nvidia_runtime is not skipped
+            - nvidia_runtime.stdout | trim == '0'
+
+    - name: Say what still needs a reboot
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: on a first run, reboot now. The boot unlock,
+          /tmp in memory, the lid setting, the Wi-Fi file, the NVIDIA module and
+          the kubelet settings from k8s-node-tuning.yml all start with the next
+          boot. Then check `journalctl -u physical-node-tether` and
+          `kubectl get node {{ k8s_node_name }}`.
+
+# ---------------------------------------------------------------------------
+# h. The node tuning every Kubernetes node gets.
+# ---------------------------------------------------------------------------
+- name: Kubernetes node tuning for the Physical node
+  ansible.builtin.import_playbook: k8s-node-tuning.yml
+  vars:
+    k8s_nodes_target: "{{ physical_node_target | default('physical_nodes') }}"
