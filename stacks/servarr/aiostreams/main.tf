@@ -274,6 +274,13 @@ resource "kubernetes_deployment" "aiostreams" {
             name  = "PORT"
             value = "8082"
           }
+          env {
+            # Variant "download" of Viktor's AIOStreams config (user config, not
+            # Terraform): it lifts resultLimits, which keep 3 files per
+            # resolution, mostly remuxes, and so hide the small files.
+            name  = "AIOSTREAMS_VARIANT"
+            value = "download"
+          }
           env_from {
             # AIOSTREAMS_UUID and AIOSTREAMS_PASSWORD.
             secret_ref { name = "aiostreams-probe-secrets" }

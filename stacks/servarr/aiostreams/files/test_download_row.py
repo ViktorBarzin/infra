@@ -161,8 +161,16 @@ class FakeUpstream:
 
 
 class StreamsTests(unittest.TestCase):
-    def make(self, upstream):
-        return dr.Addon(base="http://localhost:3000", uuid="u-1", password="pw", get_json=upstream.get_json)
+    def make(self, upstream, variant=None):
+        return dr.Addon(base="http://localhost:3000", uuid="u-1", password="pw", get_json=upstream.get_json, variant=variant)
+
+    def test_asks_the_named_variant(self):
+        up = FakeUpstream([SMALL_1080])
+        self.make(up, variant="download").streams("series", "tt0903747:1:1")
+        self.assertEqual(
+            up.stream_calls,
+            ["http://localhost:3000/stremio/u-1/enc%2F1/v/download/stream/series/tt0903747:1:1.json"],
+        )
 
     def test_one_row(self):
         up = FakeUpstream([REMUX_1080, SMALL_1080])

@@ -133,8 +133,11 @@ def http_get_json(url: str, auth: tuple[str, str] | None = None) -> dict:
 
 
 class Addon:
-    def __init__(self, base: str, uuid: str, password: str, get_json=http_get_json):
+    def __init__(self, base: str, uuid: str, password: str, get_json=http_get_json, variant: str | None = None):
         self.base, self.uuid, self.password, self.get_json = base, uuid, password, get_json
+        # An AIOStreams variant of Viktor's config. "download" lifts the result
+        # limits, which otherwise keep 3 files per resolution, mostly remuxes.
+        self.variant = variant
         self._encrypted = None
         self._lock = threading.Lock()
 
@@ -148,7 +151,8 @@ class Addon:
     def _upstream(self, kind: str, media_id: str, refresh: bool) -> list[dict]:
         enc = urllib.parse.quote(self._encrypted_password(refresh), safe="")
         sid = urllib.parse.quote(media_id, safe=":")
-        url = f"{self.base}/stremio/{self.uuid}/{enc}/stream/{kind}/{sid}.json"
+        variant = f"/v/{self.variant}" if self.variant else ""
+        url = f"{self.base}/stremio/{self.uuid}/{enc}{variant}/stream/{kind}/{sid}.json"
         return self.get_json(url).get("streams", [])
 
     def streams(self, kind: str, media_id: str) -> dict:
@@ -203,6 +207,7 @@ def main() -> None:
         base=os.environ.get("AIOSTREAMS_BASE", "http://localhost:3000"),
         uuid=os.environ["AIOSTREAMS_UUID"],
         password=os.environ["AIOSTREAMS_PASSWORD"],
+        variant=os.environ.get("AIOSTREAMS_VARIANT") or None,
     )
     ThreadingHTTPServer(("", PORT), make_handler(addon, os.environ["DOWNLOAD_ROW_TOKEN"])).serve_forever()
 
