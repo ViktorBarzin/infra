@@ -1,0 +1,133 @@
+#!/bin/bash
+# physical-node-tether: the Tether of a Physical node (ADR-0045, GLOSSARY.md).
+#
+# Managed by playbooks/physical-node.yml. Edits here are overwritten.
+#
+# physical-node-tether.timer runs this once a minute. Each run asks Tang for its
+# advertisement, then does at most one of two things:
+#
+#   * Tang has failed for TETHER_GRACE_SECONDS (600) in a row and the State
+#     volume is open: stop kubelet and containerd, remove the pods, unmount the
+#     bind mounts and the volume, and close it. The volume key leaves memory.
+#   * Tang answers and the State volume is closed, or open but not mounted:
+#     unlock it with Clevis, mount it and the bind mounts, start containerd and
+#     kubelet.
+#
+# It never starts a unit that it did not just make startable, so a kubelet
+# that an operator stopped on purpose stays stopped.
+#
+# Settings: /etc/physical-node-tether.conf (TETHER_CONF overrides, for tests).
+# State: /run/physical-node-tether/first-failure holds the time of the first
+# failed check in the current run of failures. /run is in memory, so a reboot
+# starts the count again.
+# Log: the journal, `journalctl -u physical-node-tether`.
+# Tests: playbooks/files/physical-node/test_physical_node_tether.py.
+
+set -u
+
+# shellcheck source=/dev/null
+. "${TETHER_CONF:-/etc/physical-node-tether.conf}"
+state_dir="${TETHER_STATE_DIR:-/run/physical-node-tether}"
+first_failure_file="$state_dir/first-failure"
+crypt_unit="systemd-cryptsetup@${STATE_NAME}.service"
+mkdir -p "$state_dir"
+
+volume_open() { cryptsetup status "$STATE_NAME" >/dev/null 2>&1; }
+
+unit_state() { systemctl show -p ActiveState --value "$1" 2>/dev/null; }
+
+# The units in reverse order: kubelet stops before containerd.
+units_reversed() { echo "$TETHER_UNITS" | tr ' ' '\n' | tac | tr '\n' ' '; }
+
+# Unmount one path and everything under it. Kill what holds it if it is busy.
+unmount_tree() {
+    local target="$1"
+    mountpoint -q "$target" || return 0
+    umount -R "$target" && return 0
+    echo "$target is busy; stopping the processes that use it"
+    fuser -k -M -m "$target"
+    sleep 2
+    umount -R "$target"
+}
+
+close_volume() {
+    local elapsed="$1" target
+    echo "Tang unreachable for ${elapsed}s: closing the State volume"
+    for unit in $(units_reversed); do
+        systemctl stop "$unit"
+    done
+    # containerd.service uses KillMode=process, so containers outlive it.
+    # Remove the pods first, then kill any shim that is left.
+    crictl rmp --force --all >/dev/null 2>&1
+    pkill -KILL -f containerd-shim
+    for target in $(echo "$BIND_TARGETS" | tr ' ' '\n' | tac); do
+        unmount_tree "$target" || echo "ERROR: cannot unmount $target"
+    done
+    if ! unmount_tree "$STATE_MOUNT"; then
+        echo "ERROR: cannot unmount $STATE_MOUNT; the volume stays open, next try in a minute"
+        return 1
+    fi
+    if [ "$(unit_state "$crypt_unit")" = active ]; then
+        systemctl stop "$crypt_unit"     # systemd opened it at boot; let systemd close it
+    else
+        cryptsetup close "$STATE_NAME"
+    fi
+    if volume_open; then
+        echo "ERROR: the State volume is still open; next try in a minute"
+        return 1
+    fi
+    echo "State volume closed"
+}
+
+bring_up() {
+    local changed=0 target
+    if ! volume_open; then
+        if [ "$(unit_state "$crypt_unit")" = activating ]; then
+            echo "Boot-time unlock is still waiting for Clevis; leaving it to finish"
+            return 0
+        fi
+        if ! clevis luks unlock -d "$STATE_DEVICE" -n "$STATE_NAME"; then
+            echo "ERROR: Clevis could not unlock $STATE_DEVICE although Tang answers"
+            return 1
+        fi
+        echo "State volume unlocked"
+        changed=1
+    fi
+    if ! mountpoint -q "$STATE_MOUNT"; then
+        mount "$STATE_MOUNT" || { echo "ERROR: cannot mount $STATE_MOUNT"; return 1; }
+        changed=1
+    fi
+    for target in $BIND_TARGETS; do
+        if ! mountpoint -q "$target"; then
+            mount "$target" || { echo "ERROR: cannot mount $target"; return 1; }
+            changed=1
+        fi
+    done
+    [ "$changed" = 1 ] || return 0
+    for unit in $TETHER_UNITS; do
+        systemctl start "$unit"
+    done
+    echo "State volume in use again; started $TETHER_UNITS"
+}
+
+if curl -sf --max-time 10 -o /dev/null "$TANG_URL/adv"; then
+    if [ -e "$first_failure_file" ]; then
+        echo "Tang answers again"
+        rm -f "$first_failure_file"
+    fi
+    bring_up
+    exit $?
+fi
+
+now=$(date +%s)
+if [ ! -e "$first_failure_file" ]; then
+    echo "$now" > "$first_failure_file"
+    echo "Tang at $TANG_URL does not answer; the State volume closes after ${TETHER_GRACE_SECONDS}s"
+fi
+elapsed=$(( now - $(cat "$first_failure_file") ))
+
+if volume_open && [ "$elapsed" -ge "$TETHER_GRACE_SECONDS" ]; then
+    close_volume "$elapsed"
+    exit $?
+fi
+exit 0

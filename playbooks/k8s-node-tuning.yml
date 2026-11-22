@@ -1531,6 +1531,8 @@
     # grub-install's "unable to identify a filesystem" safety check stopped it,
     # which left grub-pc half-configured and failed the run. The by-id path of
     # the disk that holds / names the Proxmox drive slot and does not move.
+    # A Physical node (playbooks/physical-node.yml) boots by UEFI with
+    # grub-efi and has no QEMU disk, so both tasks skip it.
     - name: Which disk holds the root filesystem, by a stable path
       ansible.builtin.shell:
         cmd: |
@@ -1544,6 +1546,7 @@
       register: boot_disk_by_id
       changed_when: false
       check_mode: false
+      when: not (physical_node | default(false) | bool)
       tags: patching
 
     - name: grub-pc installs onto that disk
@@ -1552,6 +1555,7 @@
         question: grub-pc/install_devices
         vtype: multiselect
         value: "{{ boot_disk_by_id.stdout | trim }}"
+      when: not (physical_node | default(false) | bool)
       tags: patching
 
     # The blacklist above keeps unattended-upgrades off these, and the hold

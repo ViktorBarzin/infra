@@ -1,0 +1,11 @@
+# Managed by playbooks/physical-node.yml. Edits here are overwritten.
+[Unit]
+Description=Tether: close the State volume when Tang is unreachable, reopen it when Tang returns
+Documentation=file:///usr/local/sbin/physical-node-tether
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/physical-node-tether
+# Stopping kubelet and unmounting can take a while; a stuck run must still end.
+TimeoutStartSec=10min

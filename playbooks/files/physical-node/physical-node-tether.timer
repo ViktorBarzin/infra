@@ -1,0 +1,12 @@
+# Managed by playbooks/physical-node.yml. Edits here are overwritten.
+[Unit]
+Description=Run the Tether check once a minute
+
+[Timer]
+# Give the boot-time Clevis unlock two minutes before the first check.
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
