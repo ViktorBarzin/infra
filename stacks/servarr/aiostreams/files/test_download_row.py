@@ -481,8 +481,8 @@ class StreamsWithLibraryTests(unittest.TestCase):
         self.assertEqual(second[1]["name"], "⬇ Recommended")
 
 
-class InventoryPostTests(unittest.TestCase):
-    """POST /<token>/inventory through the real handler on a local port."""
+class LocalServer(unittest.TestCase):
+    """The real handler on a local port."""
 
     def setUp(self):
         import threading
@@ -495,6 +495,11 @@ class InventoryPostTests(unittest.TestCase):
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
+
+
+
+class InventoryPostTests(LocalServer):
+    """POST /<token>/inventory."""
 
     def post(self, body: bytes, content_type: str, token="t0ken"):
         import urllib.request
@@ -517,3 +522,84 @@ class InventoryPostTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.post(b"", "text/plain", token="nope")
         self.assertEqual(caught.exception.code, 404)
+
+
+PROXY = "https://aiostreams-direct.viktorbarzin.me/api/v1/proxy/e.abc/Paddington%202%20%282017%29%201080p.mkv"
+BASE = "https://dl.example/t0ken"
+
+
+class ConfirmPageTests(unittest.TestCase):
+    """Stremio replays the last row tapped for a title from Continue Watching,
+    so a ⬇ row opens a page with a Download button, never the file itself."""
+
+    def library(self, on_tablet=False):
+        lib = dr.Library(None)
+        lib.remember("Paddington 2 (2017) 1080p.mkv", "movie", "tt4468740", "Paddington 2")
+        files = [{"name": "Paddington 2 (2017) 1080p.mkv", "size": 1_606_244_676, "mtime": 5}] if on_tablet else []
+        lib.set_inventory({"dir": "/sdcard/Movies", "files": files})
+        return lib
+
+    def test_link_carries_the_file_and_ends_in_its_name(self):
+        link = dr.confirm_link(BASE, PROXY, "movie", "tt4468740", "Paddington 2", "1080p · 1.6 GB")
+        self.assertTrue(link.startswith(BASE + "/get/"))
+        self.assertTrue(link.endswith("/Paddington%202%20%282017%29%201080p.mkv"))
+        payload = link[len(BASE) + 1:].split("/")[1]
+        self.assertEqual(dr.route(f"/t0ken/get/{payload}/x.mkv", "t0ken"), ("get", payload))
+        self.assertEqual(dr.decode_payload(payload)["u"], PROXY)
+
+    def test_page_offers_the_download(self):
+        payload = dr.confirm_link(BASE, PROXY, "movie", "tt4468740", "Paddington 2", "1080p · 1.6 GB").split("/")[-2]
+        html = dr.confirm_page(dr.decode_payload(payload), self.library())
+        self.assertIn(f'href="{PROXY}"', html)
+        self.assertIn("Paddington 2", html)
+        self.assertIn("1080p · 1.6 GB", html)
+        self.assertNotIn("vlc://", html)
+
+    def test_page_plays_a_film_already_on_the_tablet(self):
+        payload = dr.confirm_link(BASE, PROXY, "movie", "tt4468740", "Paddington 2", "1080p · 1.6 GB").split("/")[-2]
+        html = dr.confirm_page(dr.decode_payload(payload), self.library(on_tablet=True))
+        self.assertIn("vlc://file:///sdcard/Movies/Paddington%202%20%282017%29%201080p.mkv", html)
+        self.assertIn(f'href="{PROXY}"', html)  # download anyway stays possible
+
+    def test_page_escapes_and_refuses_other_links(self):
+        bad = dr.decode_payload(dr.confirm_link(BASE, "https://evil.example/x.mkv", "movie", "tt1", "x", "").split("/")[-2])
+        with self.assertRaises(ValueError):
+            dr.confirm_page(bad, self.library())
+        with self.assertRaises(ValueError):
+            dr.decode_payload("not-base64!")
+        odd = dr.decode_payload(dr.confirm_link(BASE, PROXY, "movie", "tt1", "<b>x</b>", "").split("/")[-2])
+        self.assertIn("&lt;b&gt;x&lt;/b&gt;", dr.confirm_page(odd, self.library()))
+
+    def test_stream_rows_link_to_the_page(self):
+        lib = dr.Library(None)
+        own = stream("🕵️ [RD⚡] Torrentio 720p", "720p", GB, url="https://aiostreams-direct.viktorbarzin.me/api/v1/proxy/e/Inception.2010.720p.mkv", filename="Inception.2010.720p.mkv")
+        up = FakeUpstream([own], title="Inception")
+        up.year = "2010"
+        addon = dr.Addon(
+            base="http://localhost:3000", uuid="u-1", password="pw", get_json=up.get_json,
+            cinemeta="http://cinemeta", library=lib, page_base=BASE,
+        )
+        lib.remember("Inception (2010) 720p.mkv", "movie", "tt1375666", "Inception")
+        lib.set_inventory({"dir": "/sdcard/Movies", "files": [{"name": "Inception (2010) 720p.mkv", "size": GB, "mtime": 1}]})
+        rows = addon.streams("movie", "tt1375666")["streams"]
+        self.assertTrue(rows[0]["externalUrl"].startswith("vlc://"))  # the play row is unchanged
+        self.assertTrue(rows[1]["externalUrl"].startswith(BASE + "/get/"))
+        page = dr.decode_payload(rows[1]["externalUrl"].split("/")[-2])
+        self.assertEqual((page["id"], page["t"]), ("tt1375666", "Inception"))
+        self.assertTrue(page["u"].endswith("/Inception%20%282010%29%20720p.mkv"))
+        self.assertTrue(rows[1]["externalUrl"].endswith("/Inception%20%282010%29%20720p.mkv"))
+        self.assertEqual(page["d"], "720p · 1.0 GB")
+
+
+class ConfirmPageHandlerTests(LocalServer):
+    def test_get_serves_html(self):
+        import urllib.request
+        payload = dr.confirm_link(BASE, PROXY, "movie", "tt4468740", "Paddington 2", "1080p").split("/")[-2]
+        url = f"http://127.0.0.1:{self.server.server_port}/t0ken/get/{payload}/Paddington.mkv"
+        with urllib.request.urlopen(url, timeout=5) as r:
+            self.assertEqual(r.status, 200)
+            self.assertTrue(r.headers["Content-Type"].startswith("text/html"))
+            self.assertIn(PROXY, r.read().decode())
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(f"http://127.0.0.1:{self.server.server_port}/t0ken/get/garbage/x.mkv", timeout=5)
+        self.assertEqual(caught.exception.code, 400)

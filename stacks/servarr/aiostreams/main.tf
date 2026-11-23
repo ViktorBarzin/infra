@@ -291,6 +291,11 @@ resource "kubernetes_deployment" "aiostreams" {
             value = "http://cinemeta-proxy.stremio.svc.cluster.local"
           }
           env {
+            # Where the ⬇ rows' confirm page lives (module.ingress_download).
+            name  = "PUBLIC_URL"
+            value = "https://aiostreams-download.viktorbarzin.me"
+          }
+          env {
             # The names it gave downloads and the tablet's last file list, sent
             # by the tablet's Automate flow "Films to Movies and Stremio".
             name  = "DATA_DIR"

@@ -12,6 +12,11 @@ the film's title (from Cinemeta) are left out. Each link ends in a clean file
 name, "Inception (2010) 720p.mkv"; the AIOStreams proxy ignores that segment,
 and the browser saves the file under it.
 
+The rows do not start the download themselves: each opens a small page here
+(/<token>/get/...) with one Download button, or Play in VLC when the title is
+already on the tablet. Stremio remembers the last row tapped for a title, and
+Continue Watching opens that row again, which used to download the film again.
+
 What is on the tablet: an Automate flow on the tablet moves finished video
 files from Download into Movies and POSTs that folder's listing to
 /<token>/inventory whenever it changes (text/plain, one `size|mtime|path` line
@@ -27,6 +32,7 @@ The token is the only gate, as for AIOStreams' own install URLs.
 Standard library only, so nothing is installed at start.
 Tests: cd files && python3 -m unittest test_download_row
 """
+import html
 import json
 import os
 import re
@@ -37,7 +43,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
-from base64 import b64encode
+from base64 import b64encode, urlsafe_b64decode, urlsafe_b64encode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("PORT", "8082"))
@@ -327,6 +333,75 @@ def parse_listing(text: str) -> dict:
     return {"dir": folder, "files": files}
 
 
+def confirm_link(base: str, url: str, kind: str, media_id: str, title: str | None, details: str) -> str:
+    """A link to this addon's confirm page for one file. Stremio remembers the
+    last row tapped for a title and Continue Watching opens it again, so a row
+    that started the download at once would download the film again."""
+    data = json.dumps({"u": url, "k": kind, "id": media_id, "t": title or "", "d": details}, separators=(",", ":"))
+    payload = urlsafe_b64encode(data.encode()).decode().rstrip("=")
+    return f"{base}/get/{payload}/{url.rsplit('/', 1)[-1]}"
+
+
+def decode_payload(payload: str) -> dict:
+    try:
+        data = json.loads(urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except (ValueError, TypeError) as e:
+        raise ValueError("bad link") from e
+    if not isinstance(data, dict) or not all(isinstance(data.get(k), str) for k in ("u", "k", "id", "t", "d")):
+        raise ValueError("bad link")
+    return data
+
+
+PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{title}</title>
+<style>
+body {{ font: 18px/1.5 system-ui, sans-serif; background: #141218; color: #eee; margin: 0;
+  display: flex; min-height: 100vh; align-items: center; justify-content: center; }}
+main {{ max-width: 34em; padding: 2em; text-align: center; }}
+h1 {{ font-size: 1.6em; margin: 0 0 .2em; }}
+p {{ color: #bbb; margin: .3em 0 1.4em; }}
+a.button {{ display: block; padding: .9em; margin: .7em 0; border-radius: .6em; background: #7b5bf5;
+  color: #fff; text-decoration: none; font-weight: 600; }}
+a.quiet {{ background: none; border: 1px solid #555; color: #ccc; font-weight: 400; }}
+</style></head>
+<body><main>
+{body}
+</main></body></html>
+"""
+
+
+def confirm_page(data: dict, library: "Library") -> str:
+    """The page behind a ⬇ row: Download, or Play in VLC when the title is
+    already on the tablet."""
+    url = data["u"]
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != "https" or "/api/v1/proxy/" not in parts.path:
+        raise ValueError("not an AIOStreams proxy link")
+    title = html.escape(data["t"] or "This file")
+    details = html.escape(data["d"])
+    download = html.escape(url, quote=True)
+    on_tablet = library.play_rows(data["id"])
+    if on_tablet:
+        play = html.escape(on_tablet[0]["externalUrl"], quote=True)
+        body = (
+            f"<h1>{title} is on the tablet</h1>\n<p>It plays offline in VLC.</p>\n"
+            f'<a class="button" href="{play}">Play in VLC</a>\n'
+            f'<a class="button quiet" href="{download}">Download {details} again</a>\n'
+            # Chrome may refuse an app link nobody tapped; the button stays.
+            f"<script>location.href = {json.dumps(on_tablet[0]['externalUrl'])};</script>"
+        )
+    else:
+        body = (
+            f"<h1>Download {title}?</h1>\n<p>{details}</p>\n"
+            f'<a class="button" href="{download}">Download</a>\n'
+            "<p>Chrome saves it to Downloads, and the tablet moves it to Movies.</p>"
+        )
+    return PAGE.format(title=title, body=body)
+
+
 def route(path: str, token: str) -> tuple | None:
     path = urllib.parse.urlsplit(path).path
     if path in ("/", "/healthz"):
@@ -338,6 +413,8 @@ def route(path: str, token: str) -> tuple | None:
         return ("manifest",)
     if parts[1:] == ["inventory"]:
         return ("inventory",)
+    if len(parts) in (3, 4) and parts[1] == "get":
+        return ("get", parts[2])
     if parts[1:] == ["library", "manifest.json"]:
         return ("library_manifest",)
     if parts[1:] == ["library", "catalog", "movie", "downloaded.json"]:
@@ -362,6 +439,7 @@ class Addon:
     def __init__(
         self, base: str, uuid: str, password: str, get_json=http_get_json,
         variant: str | None = None, cinemeta: str | None = None, library: Library | None = None,
+        page_base: str | None = None,
     ):
         self.base, self.uuid, self.password, self.get_json = base, uuid, password, get_json
         # Cinemeta, for the title the filenames must carry. AIOStreams' own title
@@ -371,6 +449,8 @@ class Addon:
         # limits, which otherwise keep 3 files per resolution, mostly remuxes.
         self.variant = variant
         self.library = library or Library(None)
+        # https://<host>/<token>: the ⬇ rows open its confirm page.
+        self.page_base = page_base
         self._encrypted = None
         self._lock = threading.Lock()
 
@@ -425,7 +505,12 @@ class Addon:
                 self.library.remember(filename_of(stream), kind, media_id, title)
             return name
 
-        return {"streams": self.library.play_rows(media_id) + options(upstream, title, name_for)}
+        rows = options(upstream, title, name_for)
+        if self.page_base:
+            for r in rows:
+                details = r["description"].split("\n")[0]
+                r["externalUrl"] = confirm_link(self.page_base, r["externalUrl"], kind, media_id, title, details)
+        return {"streams": self.library.play_rows(media_id) + rows}
 
 
 def log(message: str) -> None:
@@ -448,6 +533,19 @@ def make_handler(addon: Addon, token: str):
                 self._send(200, {"metas": addon.library.catalog()})
             elif target[0] == "stream":
                 self._send(200, addon.streams(target[1], target[2]))
+            elif target[0] == "get":
+                try:
+                    page = confirm_page(decode_payload(target[1]), addon.library)
+                except ValueError as e:
+                    self._send(400, {"error": str(e)})
+                    return
+                data = page.encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
             else:
                 self._send(405, {"error": "use POST"})
 
@@ -494,7 +592,10 @@ def main() -> None:
         cinemeta=os.environ.get("CINEMETA_BASE") or None,
         library=Library(os.environ.get("DATA_DIR") or None),
     )
-    ThreadingHTTPServer(("", PORT), make_handler(addon, os.environ["DOWNLOAD_ROW_TOKEN"])).serve_forever()
+    token = os.environ["DOWNLOAD_ROW_TOKEN"]
+    if os.environ.get("PUBLIC_URL"):
+        addon.page_base = f"{os.environ['PUBLIC_URL'].rstrip('/')}/{token}"
+    ThreadingHTTPServer(("", PORT), make_handler(addon, token)).serve_forever()
 
 
 if __name__ == "__main__":
