@@ -1,12 +1,14 @@
-"""A Stremio addon that adds one "Download" row per film or episode.
+"""A Stremio addon that adds "Download" rows to each film or episode.
 
 The row opens one of AIOStreams' own links in the browser. The proxy sends
 Content-Disposition: attachment, so the browser saves the file, and VLC plays
 it offline (the London tablet, for flights). Stremio rows do one thing each
 (play, or open a link), so the download cannot sit on the play row itself.
 
-It asks AIOStreams on localhost for Viktor's streams, picks one file, and
-returns it as a single externalUrl row. Install URL: https://<host>/<token>/manifest.json.
+It asks AIOStreams on localhost for Viktor's streams and returns externalUrl
+rows: a recommended file first, then a short ladder of other sizes per
+resolution, each labelled with its resolution and size. Files whose name lacks
+the film's title (from Cinemeta) are left out. Install URL: https://<host>/<token>/manifest.json.
 The token is the only gate, as for AIOStreams' own install URLs.
 
 Standard library only, so nothing is installed at start.
@@ -17,6 +19,7 @@ import os
 import re
 import sys
 import threading
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,9 +30,14 @@ PORT = int(os.environ.get("PORT", "8082"))
 # Largest file the row offers when a smaller one exists: about 20 minutes at
 # the 41 Mbit/s the tablet measured in London on 2026-11-22.
 MAX_BYTES = 6_000_000_000
-# Resolutions in the order the row prefers them. 1080p looks right on an
-# 11-inch screen and keeps files small.
+# Resolutions in the order the recommended row prefers them. 1080p looks
+# right on an 11-inch screen and keeps files small.
 PREFERENCE = (1080, 2160, 720, 480)
+# Below the recommended row, a ladder per resolution: the smallest file, and
+# the largest one up to LADDER_MAX_BYTES when it is at least LADDER_STEP times
+# bigger. Remuxes of 20-80 GB stay out unless nothing smaller exists.
+LADDER_MAX_BYTES = 15_000_000_000
+LADDER_STEP = 1.3
 TYPES = ("movie", "series")
 ID = re.compile(r"^tt\d+(?::\d+:\d+)?$")
 RES = re.compile(r"(2160|1080|720|480)p", re.IGNORECASE)
@@ -74,11 +82,31 @@ def single_language(stream: dict) -> bool:
     return set(audio_languages(stream)) <= {AUDIO_LANGUAGE}
 
 
+def words(text: str) -> list[str]:
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+    return re.findall(r"[a-z0-9]+", text)
+
+
+def title_matches(title: str, filename: str) -> bool:
+    """The title's words appear in a row in the filename. Mislabeled torrents
+    carry another film's file (a 720p "Inception" was The Island of Dr. Moreau),
+    and the smallest-file slots find them first. No filename: keep it."""
+    want, have = words(title), words(filename)
+    if not want or not have:
+        return True
+    n = len(want)
+    return any(have[i : i + n] == want for i in range(len(have) - n + 1))
+
+
 def is_candidate(stream: dict) -> bool:
     # A direct link (P2P rows and AIOStreams' own download rows have none),
     # cached in Real-Debrid (the formatter marks uncached files with ⏳), and
     # of known size, so the row can say how big it is.
     return bool(stream.get("url")) and "⏳" not in (stream.get("name") or "") and size_of(stream) > 0
+
+
+def filename_of(stream: dict) -> str:
+    return (stream.get("behaviorHints") or {}).get("filename") or ""
 
 
 def choose(streams: list[dict], max_bytes: int = MAX_BYTES) -> dict | None:
@@ -95,16 +123,56 @@ def choose(streams: list[dict], max_bytes: int = MAX_BYTES) -> dict | None:
     return min(candidates, key=size_of, default=None)
 
 
-def row(stream: dict) -> dict:
-    res = resolution_of(stream)
+def label(res: int | None) -> str | None:
+    return "4K" if res == 2160 else f"{res}p" if res else None
+
+
+def ladder(streams: list[dict]) -> list[dict]:
+    """Per resolution, lowest first: the smallest file, then the largest up to
+    LADDER_MAX_BYTES when it is clearly bigger. English-only audio files fill
+    a resolution's slots when there are any. 480p only when 720p is missing."""
+    candidates = [s for s in streams if is_candidate(s)]
+    found = {resolution_of(s) for s in candidates}
+    out = []
+    for res in (480, 720, 1080, 2160):
+        if res == 480 and 720 in found:
+            continue
+        pool = [s for s in candidates if resolution_of(s) == res]
+        pool = [s for s in pool if single_language(s)] or pool
+        if not pool:
+            continue
+        small = min(pool, key=size_of)
+        out.append(small)
+        fitting = [s for s in pool if size_of(s) <= LADDER_MAX_BYTES]
+        big = max(fitting, key=size_of, default=None)
+        if big is not None and size_of(big) >= LADDER_STEP * size_of(small):
+            out.append(big)
+    return out
+
+
+def row(stream: dict, recommended: bool = False) -> dict:
+    tag = label(resolution_of(stream))
     size = f"{size_of(stream) / 1e9:.1f} GB"
     filename = (stream.get("behaviorHints") or {}).get("filename") or ""
-    details = f"{res}p · {size}" if res else size
+    details = f"{tag} · {size}" if tag else size
+    name = "Recommended" if recommended else tag or "Download"
     return {
-        "name": "⬇ Download",
-        "description": "\n".join(x for x in ("For offline viewing", details, filename) if x),
+        "name": f"⬇ {name}",
+        "description": "\n".join(x for x in (details, filename) if x),
         "externalUrl": stream["url"],
     }
+
+
+def options(streams: list[dict], title: str | None = None) -> list[dict]:
+    """The recommended file first, then the ladder without it. With a title,
+    files named after another title are left out."""
+    if title:
+        streams = [s for s in streams if title_matches(title, filename_of(s))]
+    best = choose(streams)
+    if best is None:
+        return []
+    rest = [s for s in ladder(streams) if s.get("url") != best.get("url")]
+    return [row(best, recommended=True)] + [row(s) for s in rest]
 
 
 def route(path: str, token: str) -> tuple | None:
@@ -133,8 +201,14 @@ def http_get_json(url: str, auth: tuple[str, str] | None = None) -> dict:
 
 
 class Addon:
-    def __init__(self, base: str, uuid: str, password: str, get_json=http_get_json, variant: str | None = None):
+    def __init__(
+        self, base: str, uuid: str, password: str, get_json=http_get_json,
+        variant: str | None = None, cinemeta: str | None = None,
+    ):
         self.base, self.uuid, self.password, self.get_json = base, uuid, password, get_json
+        # Cinemeta, for the title the filenames must carry. AIOStreams' own title
+        # matching needs a TMDB key, which this setup does not have.
+        self.cinemeta = cinemeta
         # An AIOStreams variant of Viktor's config. "download" lifts the result
         # limits, which otherwise keep 3 files per resolution, mostly remuxes.
         self.variant = variant
@@ -155,6 +229,17 @@ class Addon:
         url = f"{self.base}/stremio/{self.uuid}/{enc}{variant}/stream/{kind}/{sid}.json"
         return self.get_json(url).get("streams", [])
 
+    def title(self, kind: str, media_id: str) -> str | None:
+        """The film's or show's name; None (no title check) when Cinemeta fails."""
+        if not self.cinemeta:
+            return None
+        try:
+            meta = self.get_json(f"{self.cinemeta}/meta/{kind}/{media_id.split(':')[0]}.json")
+            return (meta.get("meta") or {}).get("name") or None
+        except (urllib.error.URLError, TimeoutError, ValueError) as e:
+            log(f"no title for {kind} {media_id}: {e!r}")
+            return None
+
     def streams(self, kind: str, media_id: str) -> dict:
         try:
             try:
@@ -166,8 +251,7 @@ class Addon:
         except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as e:
             log(f"no row for {kind} {media_id}: {e!r}")
             return {"streams": []}
-        chosen = choose(upstream)
-        return {"streams": [row(chosen)] if chosen else []}
+        return {"streams": options(upstream, self.title(kind, media_id))}
 
 
 def log(message: str) -> None:
@@ -208,6 +292,7 @@ def main() -> None:
         uuid=os.environ["AIOSTREAMS_UUID"],
         password=os.environ["AIOSTREAMS_PASSWORD"],
         variant=os.environ.get("AIOSTREAMS_VARIANT") or None,
+        cinemeta=os.environ.get("CINEMETA_BASE") or None,
     )
     ThreadingHTTPServer(("", PORT), make_handler(addon, os.environ["DOWNLOAD_ROW_TOKEN"])).serve_forever()
 

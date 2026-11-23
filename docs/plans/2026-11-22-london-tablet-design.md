@@ -96,7 +96,7 @@ After a restart, nothing runs until someone unlocks the tablet once by hand. The
 
 The tablet has two Android profiles: user 0 is Anca's and is the one in use, user 10 is Viktor's. `adb shell` and `pm` act on user 0 unless you pass `--user 10`. An app that `pm list packages` shows can still be missing from user 0; check `dumpsys package <pkg>` for `User 0: installed=true`. `pm install-existing --user 0 <pkg>` copies an app over from the other profile.
 
-Stremio on user 0 signs in to the shared account stremio@viktorbarzin.me. The "⬇ Download" row at the bottom of a film's streams opens one file in Chrome, which saves it to Downloads; VLC plays it offline. The row comes from the `download-row` addon next to AIOStreams, described in the service catalog (row `aiostreams`).
+Stremio on user 0 signs in to the shared account stremio@viktorbarzin.me. The "Download" tab on a film's streams lists a recommended file and other sizes per resolution; a row opens its file in Chrome, which saves it to Downloads, and VLC plays it offline. The rows come from the `download-row` addon next to AIOStreams, described in the service catalog (row `aiostreams`).
 
 When the Companion app signed in, ha-london added `device_tracker.london_tablet` to `person.viktorbarzin` by itself. A `person/update` call over the WebSocket API removed it again. Do the same after you sign the app in again.
 

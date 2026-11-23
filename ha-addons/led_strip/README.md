@@ -41,7 +41,7 @@ misread within a second, and gives the strip far fewer frames to misread.
 
 - `GET /state` returns `on`, `pattern`, `brightness` (1-255), `rgb`, `running`
   and `patterns`, the list of names (Home Assistant's effect list).
-- `POST /state` takes any of `on`, `pattern`, `brightness` and `rgb`. A change
+- `POST /state` takes any of `on`, `pattern`, `brightness`, `rgb` and `palette` (the music patterns' colours: `rainbow`, `colour`, `warm` or `cool`). A change
   without `on` turns the strip on. A colour sent while a rainbow pattern runs
   switches to `color_wipe`.
 
@@ -132,7 +132,8 @@ phone that plays to the speaker directly.
 |---|---|
 | record | The add-on has `audio: true`. `parec` records `@DEFAULT_MONITOR@`, the sound the Pi sends to its default output, as 16 kHz mono. |
 | analyse | `music.Analyser` takes 533 new samples 30 times a second and finds the power of 10 bands from 40 Hz to 7.6 kHz in the last 1024 samples. Each band is shown against its own recent peak, so quiet and loud stations both fill the bars. A bass jump of 1.8 times its recent average is a beat. Below -60 dB is silence. |
-| wait | Bluetooth makes the speaker play about 0.2 s after the Pi sends the sound. `music.Delayed` holds the levels back by the add-on option `music_delay_ms` (default 200), so the lights land on the beat the room hears. Change the option in the add-on's Configuration tab, then restart the add-on: `server.py` reads it at start. |
+| wait | `music.Delayed` can hold the levels back by the add-on option `music_delay_ms`, so the lights land on the beat the room hears. The default is 0: on 2026-11-22 Viktor judged the beat pulse in sync at 0 ms on NRJ, and ahead of the kick at 200 ms. Change the option in the add-on's Configuration tab, then restart the add-on: `server.py` reads it at start. |
+| colours | The `palette` in the state picks the colours: `rainbow` (each pattern's own look: red to violet bars, a green to red meter, a pulse drifting round the colour circle), `colour` (shades of the picked colour), `warm` (deep red to gold) or `cool` (teal to violet). The music patterns take a colour, so picking one on the colour wheel keeps the music pattern running. |
 | draw | `listen` in `patterns.py` gives each frame its levels. Without `music.py` (tests, previews) it is a made-up demo signal. |
 
 Home Assistant starts them from the radio: `packages/radio.yaml` in the

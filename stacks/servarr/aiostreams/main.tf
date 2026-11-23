@@ -256,12 +256,13 @@ resource "kubernetes_deployment" "aiostreams" {
           }
         }
         container {
-          # A Stremio addon that adds one "Download" row per film or episode:
-          # it asks AIOStreams on localhost for Viktor's streams, picks one file
-          # (1080p first, up to 6 GB, English-only audio first) and returns its
-          # proxied link as an externalUrl row. The browser saves the file and
-          # VLC plays it offline on the London tablet. One row per film instead
-          # of AIOStreams' externalDownloads, which adds one under every stream.
+          # A Stremio addon that adds "Download" rows to each film or episode:
+          # it asks AIOStreams on localhost for Viktor's streams and returns a
+          # recommended file (1080p first, up to 6 GB, English-only audio first)
+          # plus the smallest and a larger file per resolution, as externalUrl
+          # rows with the proxied links. The browser saves the file and VLC
+          # plays it offline on the London tablet. Its own tab instead of
+          # AIOStreams' externalDownloads, which adds a row under every stream.
           # Standard library only, so nothing is installed at start.
           # Tests: cd files && python3 -m unittest test_download_row
           name    = "download-row"
@@ -280,6 +281,12 @@ resource "kubernetes_deployment" "aiostreams" {
             # resolution, mostly remuxes, and so hide the small files.
             name  = "AIOSTREAMS_VARIANT"
             value = "download"
+          }
+          env {
+            # Titles for the filename check, which drops mislabeled torrents.
+            # AIOStreams' own title matching needs a TMDB key we do not have.
+            name  = "CINEMETA_BASE"
+            value = "http://cinemeta-proxy.stremio.svc.cluster.local"
           }
           env_from {
             # AIOSTREAMS_UUID and AIOSTREAMS_PASSWORD.

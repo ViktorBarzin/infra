@@ -1,5 +1,5 @@
 name: LED strip
-version: "1.6.0"
+version: "1.7.0"
 slug: led_strip
 description: >-
   Plays light patterns on the WS2812 strip wired to GPIO10 (SPI) and lets
@@ -19,7 +19,7 @@ devices:
 watchdog: tcp://[HOST]:[PORT:8099]
 options:
   led_count: 150
-  music_delay_ms: 200
+  music_delay_ms: 0
 schema:
   led_count: "int(1,1000)"
   music_delay_ms: "int(0,2000)"
