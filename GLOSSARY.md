@@ -1,6 +1,6 @@
 # Homelab infrastructure
 
-The language we use for the homelab's infrastructure. It covers network security monitoring, sites and backups, deal watches, notifications and the London radio; add other areas as their terms settle.
+The language we use for the homelab's infrastructure. It covers network security monitoring, sites and backups, deal watches, notifications, the London radio and saved films and episodes; add other areas as their terms settle.
 
 ## Language
 
@@ -145,3 +145,30 @@ _Avoid_: equalizer, visualiser, sound-reactive mode
 **Follow music**:
 The setting that makes the strip show the chosen Music pattern while the radio plays, and the earlier Pattern again when it stops.
 _Avoid_: sync, music mode, auto lights
+
+### Saved films and episodes
+
+**Save**:
+A Stremio viewer's request to keep one film or episode ready to watch later. A save is kept as one copy, on Real-Debrid or on our server.
+_Avoid_: download, request, queue
+
+**Follow**:
+A save of a season that also takes each of its episodes when it airs. Following a season saves the episodes already out and every later one.
+_Avoid_: subscribe, watchlist, auto-download
+
+**Saver**:
+A Stremio account that saved a copy. One copy can have more than one saver.
+_Avoid_: owner, requester, user
+
+**Copy**:
+The one file of a release that a save keeps, either on Real-Debrid or on our server. Savers who want different releases of a title, such as a Bulgarian dub and the original, have different copies.
+_Avoid_: download, file, torrent
+
+**Watched**:
+A copy that a saver played past 90% of. A copy on our server is removed seven days after every one of its savers has watched it; a copy on Real-Debrid stays.
+_Avoid_: seen, finished, completed
+
+**Download**:
+A film or episode copied onto the London tablet for offline viewing. It is not a save.
+_Avoid_: save, offline copy
+
