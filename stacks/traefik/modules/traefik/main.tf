@@ -37,6 +37,29 @@ resource "kubernetes_namespace" "traefik" {
   }
 }
 
+# What each local plugin ships into Traefik: go.mod, .traefik.yml and every
+# .go file except tests, read from the plugin's directory. Built from the
+# directory so a new source file cannot be left out: on 2026-11-23 a file
+# missing from a hand-written list stopped the crowdsec plugin from loading,
+# which disabled every plugin and took all websecure hosts down for 12 minutes.
+# scripts/yaegi-plugin-gate loads the whole directory, so it now checks
+# exactly what ships.
+locals {
+  plugin_source = {
+    for dir in ["sablier-plugin", "analytics-inject-plugin", "real-ip-plugin", "crowdsec-bouncer-plugin", "api-token-plugin"] :
+    dir => merge(
+      {
+        "go.mod"       = file("${path.module}/${dir}/go.mod")
+        ".traefik.yml" = file("${path.module}/${dir}/.traefik.yml")
+      },
+      {
+        for f in fileset("${path.module}/${dir}", "*.go") :
+        f => file("${path.module}/${dir}/${f}") if !endswith(f, "_test.go")
+      },
+    )
+  }
+}
+
 resource "helm_release" "traefik" {
   namespace        = kubernetes_namespace.traefik.metadata[0].name
   create_namespace = false
@@ -393,13 +416,7 @@ resource "helm_release" "traefik" {
           moduleName = "github.com/sablierapp/sablier-traefik-plugin"
           mountPath  = "/plugins-local/src/github.com/sablierapp/sablier-traefik-plugin"
           type       = "inlinePlugin"
-          source = {
-            "go.mod"       = file("${path.module}/sablier-plugin/go.mod")
-            ".traefik.yml" = file("${path.module}/sablier-plugin/.traefik.yml")
-            "config.go"    = file("${path.module}/sablier-plugin/config.go")
-            "main.go"      = file("${path.module}/sablier-plugin/main.go")
-            "version.go"   = file("${path.module}/sablier-plugin/version.go")
-          }
+          source     = local.plugin_source["sablier-plugin"]
         }
         # Rewrites X-Real-Ip to the true client for Cloudflare-tunneled
         # traffic (Cf-Connecting-Ip / first public XFF entry / else leave the
@@ -417,23 +434,13 @@ resource "helm_release" "traefik" {
           moduleName = "github.com/viktorbarzin/analytics-inject-plugin"
           mountPath  = "/plugins-local/src/github.com/viktorbarzin/analytics-inject-plugin"
           type       = "inlinePlugin"
-          source = {
-            "go.mod"       = file("${path.module}/analytics-inject-plugin/go.mod")
-            ".traefik.yml" = file("${path.module}/analytics-inject-plugin/.traefik.yml")
-            "main.go"      = file("${path.module}/analytics-inject-plugin/main.go")
-            "filters.go"   = file("${path.module}/analytics-inject-plugin/filters.go")
-            "identify.go"  = file("${path.module}/analytics-inject-plugin/identify.go")
-          }
+          source     = local.plugin_source["analytics-inject-plugin"]
         }
         realip = {
           moduleName = "github.com/viktorbarzin/real-ip-plugin"
           mountPath  = "/plugins-local/src/github.com/viktorbarzin/real-ip-plugin"
           type       = "inlinePlugin"
-          source = {
-            "go.mod"       = file("${path.module}/real-ip-plugin/go.mod")
-            ".traefik.yml" = file("${path.module}/real-ip-plugin/.traefik.yml")
-            "main.go"      = file("${path.module}/real-ip-plugin/main.go")
-          }
+          source     = local.plugin_source["real-ip-plugin"]
         }
         # CrowdSec ban enforcement, in-process. Vendored as a LOCAL plugin, same
         # rationale as sablier and realip above.
@@ -458,12 +465,7 @@ resource "helm_release" "traefik" {
           moduleName = "github.com/viktorbarzin/crowdsec-bouncer-plugin"
           mountPath  = "/plugins-local/src/github.com/viktorbarzin/crowdsec-bouncer-plugin"
           type       = "inlinePlugin"
-          source = {
-            "go.mod"        = file("${path.module}/crowdsec-bouncer-plugin/go.mod")
-            ".traefik.yml"  = file("${path.module}/crowdsec-bouncer-plugin/.traefik.yml")
-            "main.go"       = file("${path.module}/crowdsec-bouncer-plugin/main.go")
-            "block_page.go" = file("${path.module}/crowdsec-bouncer-plugin/block_page.go")
-          }
+          source     = local.plugin_source["crowdsec-bouncer-plugin"]
         }
         # Static-token bearer/header auth for gateways with no app-layer
         # auth (paperless-mcp; repowise's MCP gate used it until that endpoint was
@@ -506,11 +508,7 @@ resource "helm_release" "traefik" {
           moduleName = "github.com/Aetherinox/traefik-api-token-middleware"
           mountPath  = "/plugins-local/src/github.com/Aetherinox/traefik-api-token-middleware"
           type       = "inlinePlugin"
-          source = {
-            "go.mod"       = file("${path.module}/api-token-plugin/go.mod")
-            ".traefik.yml" = file("${path.module}/api-token-plugin/.traefik.yml")
-            "plugin.go"    = file("${path.module}/api-token-plugin/plugin.go")
-          }
+          source     = local.plugin_source["api-token-plugin"]
         }
       }
     }
