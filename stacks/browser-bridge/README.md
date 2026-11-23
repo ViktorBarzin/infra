@@ -21,7 +21,7 @@ summarises.
 | deployment `browser-bridge` | 1 replica, `Recreate`, `ghcr.io/viktorbarzin/browser-bridge`, 25m CPU request, 256Mi requests = limits |
 | service `browser-bridge` | ClusterIP on 8080. Port 8081 is deliberately absent |
 | ExternalSecret `browser-bridge-secrets` | `BB_INGRESS_SECRET` and `BB_EXTENSION_ID` from Vault `secret/browser-bridge` |
-| env `BB_STORE_EXTENSION_ID` | `ieemnanbkklejolafdipiagoldakinkb`, the id of the unlisted Chrome Web Store copy. Enrolment accepts it beside `BB_EXTENSION_ID`, because the store signs its copy with its own key |
+| env `BB_STORE_EXTENSION_ID` | `ieemnanbkklejolafdipiagoldakinkb`, the id of the unlisted Chrome Web Store copy. Enrolment accepts it beside `BB_EXTENSION_ID`, because the store signs its copy with its own key. The dashboard and settings pages link the listing when it is set |
 | Middleware `ingress-secret` | stamps `X-BB-Ingress` on the forward-auth'd routers |
 | Middleware `crx-rate-limit` | 6 a minute, burst 12, keyed on `X-Real-Ip` |
 | three `ingress_factory` calls | one host, three auth postures, below |
