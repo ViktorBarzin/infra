@@ -103,7 +103,7 @@ locals {
   # Slim image: datasource lookups are plain HTTP inside Node, and infra has
   # no lock files, so the 2.6 GB -full image adds nothing. Renovate bumps this
   # pin itself, at most once a week (renovate.json5).
-  image = "docker.io/renovate/renovate:44.240.0@sha256:e33a3330128949311ebc9c4c2ffda7452ab58da8a04e17216a03755ca3449949"
+  image = "docker.io/renovate/renovate:44.257.9@sha256:d6b65ff3562dd499240b23d34ef806ec7e5fd2675e4236a027dfb36774f2aa75"
   labels = {
     app = "renovate"
   }
