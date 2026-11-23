@@ -102,7 +102,7 @@ flowchart TD
 | storage | 192.168.1.13 TCP 445 | sign-in by a member of `london-storage`, or Viktor |
 | infra-ha | 192.168.1.127 TCP 2049 (backups), 10.0.20.200 TCP 19532 (journal upload), 8554 and 8080 (vacuum camera) | Viktor (ha-london) |
 | infra-k8s | 10.0.20.0/24 | Viktor (dell-worker) |
-| media | 10.0.20.203 TCP 443, Traefik's web services | Viktor (the projector, for ImmichFrame) |
+| media | 10.0.20.203 TCP 443, Traefik's web services. Its internet traffic goes through NordVPN (next section) | Viktor (the projector, for ImmichFrame) |
 | iot | nothing; same as guest | Viktor (plugs, air sensor) |
 | guest | only the sign-in page, 10.0.20.215 TCP 443 | default |
 
@@ -167,6 +167,44 @@ and Macs: Rotating changes the MAC too.
 `cat /etc/london-roles.list`, `ipset list lr_admin`,
 `iptables -S london_roles`, `uci show dhcp | grep lr_`. In the app: `/` shows the device you are on, and
 `/admin` lists every device.
+
+## Media players via NordVPN
+
+The ISP objects to BitTorrent. Stremio on the projector plays a raw torrent
+when Real-Debrid has no copy, so since 2026-11-23 (Viktor) every device with
+the role `media` sends all its internet traffic through a NordVPN WireGuard
+tunnel on the Flint. The Flint's WAN then carries only the encrypted tunnel
+for that device. Traffic to Sofia (ImmichFrame, Traefik) still uses
+`wgclient1`, and LAN traffic and casting stay local. Other London devices are
+not affected.
+
+```mermaid
+flowchart LR
+  proj["projector (role media)"] -->|"mark 0x10000"| rule["rule 5995<br/>0x18000/0x1f000 to table 1100"]
+  rule --> nord["nordvpn (10.5.0.2)<br/>UK server"] --> wan["eth1, encrypted"]
+  proj -->|"to 10.0.0.0/8, GL mark 0x1000"| wg1["wgclient1 to Sofia"]
+  rule -.->|"tunnel down"| bh["blackhole, metric 254"]
+```
+
+| piece | where | what |
+|---|---|---|
+| tunnel | uci `network.nordvpn` (proto wireguard, 10.5.0.2/32, MTU 1420, `ip4table 1100`) and peer `network.nordvpn_server` (allowed 0.0.0.0/0, keepalive 25 s) | The key and the server come from NordVPN's API: `/v1/users/services/credentials` with the account token, and the least-loaded UK WireGuard server from `/v1/servers/recommendations`. NordVPN carries IPv4 only. |
+| routing | uci rule `nordvpn_media` (mark `0x18000/0x1f000`, table 1100, priority 5995) and route `nordvpn_blackhole` (table 1100, metric 254) | The mangle rule marks packets from `lr_media` MACs with bit 0x10000, which GL's marks (0xf000, 0xf00, 0xf00000) leave free. GL marks internet-bound LAN traffic 0x8000 and Sofia-bound traffic 0x1000, so only internet traffic matches. With the tunnel down only the blackhole is left in table 1100, and media traffic is dropped, not sent out of the WAN. |
+| kill switch | chain `london_nordvpn` (IPv4 and IPv6), hooked into `forwarding_lan_rule` for `lr_media` sources | A second guard: a media player may leave only through `nordvpn`, `wgclient1`, `br-lan` or `br-guest`. Everything else is rejected and logged with prefix `london-nordvpn-blocked`. This refuses the projector's IPv6 internet, so its apps use IPv4. |
+| watchdog | cron, every minute: `/usr/bin/london-nordvpn watchdog` | Renews the key and the server when the last handshake is older than 5 minutes, or when there is no handshake 3 minutes after a renewal. It renews at most every 10 minutes, because NordVPN refuses an over-limit reconnect for about that long. After a 401, 403 or 429 it stops for an hour. Alert `LondonMediaVpnDown` (Loki, `stacks/monitoring/modules/monitoring/loki.tf`) fires on two failure lines in 30 minutes. |
+| files | `/usr/bin/london-nordvpn` (`scripts/london-flint/london-nordvpn.sh`, tests in `london_nordvpn_test.py`), `/etc/firewall.london-nordvpn` (firewall include, runs `apply` on every reload), `/etc/london-nordvpn.token` (Vault `secret/proxy` `nordvpn_token`, the token the cluster's NordVPN gateways use) | All installed by `provision.sh` and listed in `/etc/sysupgrade.conf`, as is `/etc/crontabs/root`. |
+
+**Checks.** On the router: `wg show nordvpn` (a handshake under 2 minutes
+old), `logread -e london-nordvpn`, `ip route get 1.1.1.1 from 192.168.8.100 iif br-lan mark 0x18000`
+(answers `dev nordvpn table 1100`), and the projector's flows in
+`/proc/net/nf_conntrack`, whose reply address is 10.5.0.2 and never the WAN
+address. Renew by hand with `london-nordvpn refresh`.
+
+**Limits.** DNS for the projector still goes through the Flint's dnsmasq to
+AdGuard over the WAN, so tracker names are visible there, but no torrent
+traffic is. A NordVPN account allows about 10 tunnels at once, shared with
+the cluster's gateways (`stacks/proxy`). The NordVPN app on the projector is
+not needed. If it is on, its tunnel runs inside this one.
 
 ## Monitoring
 

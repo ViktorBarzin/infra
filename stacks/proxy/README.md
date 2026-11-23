@@ -49,7 +49,9 @@ The **NordVPN ~10-tunnel account cap therefore limits concurrent COUNTRIES**
 browsers share one country's single tunnel. One of those six is now permanently
 the UK (see "Cluster VPN egress"), leaving five user-selectable. Proven
 end-to-end by Spike G (memory #10214): a browser pod egresses NordVPN with no
-home-IP leak.
+home-IP leak. The London Flint holds one more tunnel on the same account and
+token, for the projector (`docs/architecture/london-site.md`, "Media players
+via NordVPN").
 
 - **Broker** (`files/broker/`, pure-stdlib `python:3.12-slim`, ConfigMap-mounted —
   no custom image/GHA). `broker.py` serves the UI + JSON API and orchestrates

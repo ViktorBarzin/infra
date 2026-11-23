@@ -1,0 +1,6 @@
+#!/bin/sh
+# /etc/firewall.london-nordvpn: firewall include that marks media players for
+# the NordVPN tunnel and rebuilds the kill switch after every firewall reload
+# (scripts/london-flint/london-nordvpn.sh).
+[ -x /usr/bin/london-nordvpn ] && /usr/bin/london-nordvpn apply
+exit 0
