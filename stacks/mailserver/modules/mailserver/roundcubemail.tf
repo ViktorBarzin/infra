@@ -174,7 +174,7 @@ resource "kubernetes_deployment" "roundcubemail" {
       spec {
         container {
           name  = "roundcube"
-          image = "roundcube/roundcubemail:1.7.6-apache"
+          image = "roundcube/roundcubemail:1.7.7-apache"
           volume_mount {
             name       = "php2shell-mitigation"
             mount_path = "/usr/local/etc/php/conf.d/zz-php2shell.ini"
