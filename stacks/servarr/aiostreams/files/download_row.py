@@ -81,14 +81,16 @@ MANIFEST = {
     "idPrefixes": ["tt"],
     "catalogs": [],
 }
+# One catalog, filed under "movie", holding films and shows alike (each item
+# keeps its own type): two catalogs would show an empty "Series" row.
 LIBRARY_MANIFEST = {
     "id": "me.viktorbarzin.download.library",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "name": "On the tablet",
     "description": "Films and episodes downloaded on the London tablet.",
     "resources": ["catalog"],
     "types": list(TYPES),
-    "catalogs": [{"type": t, "id": "downloaded", "name": "On the tablet"} for t in TYPES],
+    "catalogs": [{"type": "movie", "id": "downloaded", "name": "On the tablet"}],
 }
 
 
@@ -287,14 +289,14 @@ class Library:
             if entry:
                 yield f, entry
 
-    def catalog(self, kind: str) -> list[dict]:
+    def catalog(self) -> list[dict]:
         metas, seen = [], set()
         for _, entry in self._on_tablet():
             show_id = entry["id"].split(":")[0]
-            if entry["type"] != kind or show_id in seen:
+            if show_id in seen:
                 continue
             seen.add(show_id)
-            metas.append({"id": show_id, "type": kind, "name": entry["title"], "poster": POSTER.format(show_id)})
+            metas.append({"id": show_id, "type": entry["type"], "name": entry["title"], "poster": POSTER.format(show_id)})
         return metas
 
     def play_rows(self, media_id: str) -> list[dict]:
@@ -324,8 +326,8 @@ def route(path: str, token: str) -> tuple | None:
         return ("inventory",)
     if parts[1:] == ["library", "manifest.json"]:
         return ("library_manifest",)
-    if len(parts) == 5 and parts[1:3] == ["library", "catalog"] and parts[3] in TYPES and parts[4] == "downloaded.json":
-        return ("catalog", parts[3])
+    if parts[1:] == ["library", "catalog", "movie", "downloaded.json"]:
+        return ("catalog",)
     if len(parts) == 4 and parts[1] == "stream" and parts[2] in TYPES and parts[3].endswith(".json"):
         media_id = urllib.parse.unquote(parts[3][: -len(".json")])
         if ID.match(media_id):
@@ -429,7 +431,7 @@ def make_handler(addon: Addon, token: str):
             elif target[0] == "library_manifest":
                 self._send(200, LIBRARY_MANIFEST)
             elif target[0] == "catalog":
-                self._send(200, {"metas": addon.library.catalog(target[1])})
+                self._send(200, {"metas": addon.library.catalog()})
             elif target[0] == "stream":
                 self._send(200, addon.streams(target[1], target[2]))
             else:

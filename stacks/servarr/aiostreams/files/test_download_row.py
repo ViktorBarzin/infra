@@ -356,19 +356,25 @@ class LibraryTests(unittest.TestCase):
         lib.set_inventory(INVENTORY, now=1000)
         return lib
 
-    def test_catalog_lists_titles_on_the_tablet_newest_first(self):
+    def test_one_catalog_lists_films_and_shows_newest_first(self):
+        # One row, so Stremio never shows an empty "Series" row beside it.
         lib = self.make()
         self.assertEqual(
-            lib.catalog("movie"),
-            [{
-                "id": "tt1375666", "type": "movie", "name": "Inception",
-                "poster": "https://images.metahub.space/poster/medium/tt1375666/img",
-            }],
+            lib.catalog(),
+            [
+                {
+                    "id": "tt1375666", "type": "movie", "name": "Inception",
+                    "poster": "https://images.metahub.space/poster/medium/tt1375666/img",
+                },
+                {
+                    "id": "tt0903747", "type": "series", "name": "Breaking Bad",
+                    "poster": "https://images.metahub.space/poster/medium/tt0903747/img",
+                },
+            ],
         )
-        self.assertEqual([m["id"] for m in lib.catalog("series")], ["tt0903747"])
 
     def test_files_it_did_not_name_are_ignored(self):
-        self.assertNotIn("holiday", json.dumps(self.make().catalog("movie")))
+        self.assertNotIn("holiday", json.dumps(self.make().catalog()))
 
     def test_play_rows_for_the_title(self):
         rows = self.make().play_rows("tt1375666")
@@ -382,26 +388,27 @@ class LibraryTests(unittest.TestCase):
     def test_a_deleted_file_drops_out(self):
         lib = self.make()
         lib.set_inventory({"dir": "/sdcard/Download", "files": []}, now=2000)
-        self.assertEqual(lib.catalog("movie"), [])
+        self.assertEqual(lib.catalog(), [])
         self.assertEqual(lib.play_rows("tt1375666"), [])
 
     def test_survives_a_restart(self):
         with tempfile.TemporaryDirectory() as d:
             self.make(d)
             again = dr.Library(d)
-            self.assertEqual([m["id"] for m in again.catalog("movie")], ["tt1375666"])
+            self.assertEqual([m["id"] for m in again.catalog()], ["tt1375666", "tt0903747"])
 
     def test_rejects_a_bad_inventory(self):
         lib = self.make()
         for bad in ({}, {"dir": "/x", "files": "nope"}, {"dir": "/x", "files": [{"name": 3}]}):
             with self.assertRaises(ValueError):
                 lib.set_inventory(bad)
-        self.assertEqual(len(lib.catalog("movie")), 1)
+        self.assertEqual(len(lib.catalog()), 2)  # unchanged
 
 
 class MoreRouteTests(unittest.TestCase):
     def test_catalog(self):
-        self.assertEqual(dr.route("/t0ken/library/catalog/movie/downloaded.json", "t0ken"), ("catalog", "movie"))
+        self.assertEqual(dr.route("/t0ken/library/catalog/movie/downloaded.json", "t0ken"), ("catalog",))
+        self.assertIsNone(dr.route("/t0ken/library/catalog/series/downloaded.json", "t0ken"))
         self.assertIsNone(dr.route("/t0ken/library/catalog/movie/other.json", "t0ken"))
         self.assertIsNone(dr.route("/t0ken/catalog/movie/downloaded.json", "t0ken"))
 
@@ -418,7 +425,7 @@ class MoreRouteTests(unittest.TestCase):
         self.assertEqual(dr.MANIFEST["resources"], ["stream"])
         self.assertEqual(dr.MANIFEST["catalogs"], [])
         self.assertEqual(dr.LIBRARY_MANIFEST["resources"], ["catalog"])
-        self.assertEqual({c["name"] for c in dr.LIBRARY_MANIFEST["catalogs"]}, {"On the tablet"})
+        self.assertEqual([c["name"] for c in dr.LIBRARY_MANIFEST["catalogs"]], ["On the tablet"])
         self.assertNotEqual(dr.MANIFEST["id"], dr.LIBRARY_MANIFEST["id"])
 
 
