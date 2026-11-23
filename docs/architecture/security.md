@@ -80,7 +80,7 @@ Intelligence below):
 
 1. **Cloudflare WAF / edge** - managed DDoS L7 protection and Bot Fight Mode. No CrowdSec rule here since 2026-08-18
 2. **Cloudflared Tunnel** - Zero Trust tunnel, hides origin IP (proxied hosts)
-3. **CrowdSec** - in-kernel nftables drop on direct hosts, and the `crowdsec` entrypoint middleware for all HTTP (one map lookup; 403 on a hit), which also runs the AppSec check on request content (see "AppSec check" below)
+3. **CrowdSec** - in-kernel nftables drop on direct hosts, and the `crowdsec` entrypoint middleware for all HTTP (one map lookup; 403 on a hit), which also runs the AppSec check on request content (see "AppSec check" below). A browser (`Accept` names `text/html`) gets a self-contained block page with its address, the site and the time in UTC; every other client gets the plain `Forbidden` body. The page has two variants: an address ban, and one request refused by AppSec. It never names the scenario or rule (`crowdsec-bouncer-plugin/block_page.go`)
 4. **Anti-AI Scraping** - 3-layer bot defense (optional per service, updated 2026-04-17)
 5. **Authentik ForwardAuth** - Authentication check (if `protected = true`)
 6. **Rate Limiting** - per-client limits keyed on `X-Real-Ip`, 10/s average and 50 burst per Traefik pod (returns 429 on breach). A chain: `real-ip` then the limiter

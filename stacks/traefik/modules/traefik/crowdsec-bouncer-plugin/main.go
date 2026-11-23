@@ -843,7 +843,7 @@ func (b *Bouncer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 		b.logf(fmt.Sprintf("[crowdsec-bouncer] action=block ip=%s host=%s method=%s path=%s status=%d origin=%s",
 			ip, host, req.Method, req.URL.Path, b.statusCode, origin))
-		b.deny(rw)
+		b.deny(rw, req, ip, host, pageBanned)
 		return
 	}
 
@@ -857,7 +857,17 @@ func (b *Bouncer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	b.next.ServeHTTP(rw, req)
 }
 
-func (b *Bouncer) deny(rw http.ResponseWriter) {
+// deny writes the block response. A browser (Accept names text/html) gets the
+// block page; apps, scripts and API clients keep the short plain-text body, so
+// nothing that parses our 403s changes.
+func (b *Bouncer) deny(rw http.ResponseWriter, req *http.Request, ip net.IP, host string, kind int) {
+	if wantsHTML(req) {
+		rw.Header().Set("Content-Type", "text/html; charset=utf-8")
+		rw.Header().Set("Cache-Control", "no-store")
+		rw.WriteHeader(b.statusCode)
+		fmt.Fprint(rw, blockPage(kind, ip, host, time.Now()))
+		return
+	}
 	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	rw.WriteHeader(b.statusCode)
 	if b.banMessage != "" {
@@ -923,7 +933,7 @@ func (b *Bouncer) appsecCheck(rw http.ResponseWriter, req *http.Request, ip net.
 	}
 	b.logf(fmt.Sprintf("[crowdsec-bouncer] action=appsec-block ip=%s host=%s method=%s path=%s status=%d ruleset=%s",
 		ip, host, req.Method, req.URL.Path, b.statusCode, ruleset))
-	b.deny(rw)
+	b.deny(rw, req, ip, host, pageRequestBlocked)
 	return true
 }
 
