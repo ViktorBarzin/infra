@@ -872,7 +872,7 @@ resource "kubernetes_deployment" "bot_block_proxy" {
         }
         container {
           name  = "nginx"
-          image = "openresty/openresty:1.31.8.1-alpine@sha256:fec9da11e7a975d67caf66aaf70e9af2a101fdb167e0b60502c94a4e4959b943"
+          image = "openresty/openresty:1.31.9.1-alpine@sha256:cb91ff1b7ce00bdcf400e3b91e59347da31fa6b8cac3795d08774c4364e8a8f0"
 
           port {
             container_port = 8080
