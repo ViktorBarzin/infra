@@ -38,6 +38,9 @@ ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'cat > /tmp/london-drop-probe.ipk' <"$i
 ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'cat > /tmp/60-mtk-debug-off' <"$HERE/mtk-debug-off.hotplug"
 
 # shellcheck disable=SC2086
+ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'cat > /tmp/thermal.lua' <"$HERE/thermal.lua"
+
+# shellcheck disable=SC2086
 ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'cat > /tmp/firewall.bruteforce' <"$HERE/wan-bruteforce.sh"
 # The router gets the key list without its comment lines.
 # shellcheck disable=SC2086
@@ -74,6 +77,17 @@ else
 	opkg install --force-reinstall /tmp/london-drop-probe.ipk
 fi
 rm -f /tmp/london-drop-probe.ipk
+
+# CPU temperature for Prometheus: the feed has no thermal collector package,
+# so a collector of our own (thermal.lua) goes next to the packaged ones. A
+# firmware upgrade removes it with the exporter; this script puts both back.
+col=/usr/lib/lua/prometheus-collectors/thermal.lua
+if ! cmp -s /tmp/thermal.lua "$col"; then
+	mv /tmp/thermal.lua "$col"
+	echo "installed $col"
+else
+	rm -f /tmp/thermal.lua
+fi
 
 # Listen on every interface: the WAN zone drops 9100 and the tunnel zone
 # accepts it, which is how Prometheus in Sofia scrapes 10.3.2.6:9100.
