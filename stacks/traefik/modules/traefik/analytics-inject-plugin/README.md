@@ -151,15 +151,13 @@ analytics-inject = {
   moduleName = "github.com/viktorbarzin/analytics-inject-plugin"
   mountPath  = "/plugins-local/src/github.com/viktorbarzin/analytics-inject-plugin"
   type       = "inlinePlugin"
-  source = {
-    "go.mod"       = file("${path.module}/analytics-inject-plugin/go.mod")
-    ".traefik.yml" = file("${path.module}/analytics-inject-plugin/.traefik.yml")
-    "main.go"      = file("${path.module}/analytics-inject-plugin/main.go")
-    "filters.go"   = file("${path.module}/analytics-inject-plugin/filters.go")
-    "identify.go"  = file("${path.module}/analytics-inject-plugin/identify.go")
-  }
+  source     = local.plugin_source["analytics-inject-plugin"]
 }
 ```
+
+`local.plugin_source` (in `../main.tf`) ships `go.mod`, `.traefik.yml` and
+every non-test `.go` file in the folder, so a new source file needs no wiring.
+A new plugin folder needs its name added to that local's list.
 
 Declare the Middleware in `../middleware.tf`, next to `crowdsec`:
 
