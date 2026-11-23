@@ -132,6 +132,12 @@ EXCLUDES=(
     # anything already copied — see the correction above.
     --exclude='/servarr/downloads/f1-replays/'
 
+    # ---- Stremio "Our server" downloads: live-only, never backed up (2026-11-23) ----
+    # Films and episodes qBittorrent fetched for the stremio-library addon
+    # (stacks/stremio/library.tf). Re-downloadable from the swarm, and watched
+    # once. Viktor's call: do not back these up. Covers the offsite leg too.
+    --exclude='/servarr/downloads/stremio/'
+
     # ---- f1-stream CONVERTED library: same call, a path the 2026-08-22 exclude
     # above did not cover (added 2026-09-11). That line named the torrent cache
     # (/srv/nfs/servarr/downloads/f1-replays, mounted /replay-cache); the
