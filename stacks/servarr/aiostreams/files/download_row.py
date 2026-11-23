@@ -12,11 +12,13 @@ the film's title (from Cinemeta) are left out. Each link ends in a clean file
 name, "Inception (2010) 720p.mkv"; the AIOStreams proxy ignores that segment,
 and the browser saves the file under it.
 
-What is on the tablet: a devvm timer (tablet-downloads-sync) lists the video
-files in its Downloads folder every hour and POSTs them to /<token>/inventory.
-Files this addon named map back to their titles, which give an "On the tablet"
-catalog on the Home board and a "▶ On the tablet" row that opens the file in
-VLC (vlc://file://...). Stremio itself cannot play local files on Android.
+What is on the tablet: an Automate flow on the tablet moves finished video
+files from Download into Movies and POSTs that folder's listing to
+/<token>/inventory whenever it changes (text/plain, one `size|mtime|path` line
+per file; JSON {dir, files} is accepted too). Files this addon named map back
+to their titles, which give an "On the tablet" catalog on the Home board and a
+"▶ On the tablet" row that opens the file in VLC (vlc://file://...). Stremio
+itself cannot play local files on Android.
 
 Install URLs: https://<host>/<token>/manifest.json (the rows, last on the
 account) and https://<host>/<token>/library/manifest.json (the list, first).
@@ -313,6 +315,18 @@ class Library:
         return rows
 
 
+def parse_listing(text: str) -> dict:
+    """{dir, files} from `stat -c '%s|%Y|%n'` lines; other lines are skipped."""
+    folder, files = "", []
+    for line in text.splitlines():
+        parts = line.strip().split("|", 2)
+        if len(parts) != 3 or not parts[0].isdigit() or not parts[1].isdigit() or "/" not in parts[2]:
+            continue
+        folder, name = parts[2].rsplit("/", 1)
+        files.append({"name": name, "size": int(parts[0]), "mtime": int(parts[1])})
+    return {"dir": folder, "files": files}
+
+
 def route(path: str, token: str) -> tuple | None:
     path = urllib.parse.urlsplit(path).path
     if path in ("/", "/healthz"):
@@ -446,7 +460,11 @@ def make_handler(addon: Addon, token: str):
                 self._send(413, {"error": "too large"})
                 return
             try:
-                addon.library.set_inventory(json.loads(self.rfile.read(length)))
+                body = self.rfile.read(length)
+                if (self.headers.get("Content-Type") or "").startswith("text/plain"):
+                    addon.library.set_inventory(parse_listing(body.decode("utf-8", "replace")))
+                else:
+                    addon.library.set_inventory(json.loads(body))
             except ValueError as e:
                 self._send(400, {"error": str(e)})
                 return

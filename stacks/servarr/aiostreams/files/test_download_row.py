@@ -405,6 +405,38 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(len(lib.catalog()), 2)  # unchanged
 
 
+class ListingTests(unittest.TestCase):
+    # The tablet's Automate flow POSTs `stat -c '%s|%Y|%n'` lines as text/plain.
+    def test_parses_the_tablets_listing(self):
+        text = (
+            "1039639206|1763854740|/sdcard/Movies/Inception (2010) 720p.mkv\n"
+            "1606244676|1763850300|/sdcard/Movies/Paddington 2 2017 1080p BONE.mkv\n"
+        )
+        self.assertEqual(dr.parse_listing(text), {
+            "dir": "/sdcard/Movies",
+            "files": [
+                {"name": "Inception (2010) 720p.mkv", "size": 1039639206, "mtime": 1763854740},
+                {"name": "Paddington 2 2017 1080p BONE.mkv", "size": 1606244676, "mtime": 1763850300},
+            ],
+        })
+
+    def test_a_name_with_a_bar_survives(self):
+        files = dr.parse_listing("5|6|/sdcard/Movies/a|b.mkv")["files"]
+        self.assertEqual(files, [{"name": "a|b.mkv", "size": 5, "mtime": 6}])
+
+    def test_skips_noise_and_accepts_an_empty_folder(self):
+        self.assertEqual(dr.parse_listing("find: x: Permission denied\n\r\n"), {"dir": "", "files": []})
+
+    def test_the_library_takes_it(self):
+        lib = dr.Library(None)
+        lib.remember("Inception (2010) 720p.mkv", "movie", "tt1375666", "Inception")
+        lib.set_inventory(dr.parse_listing("1039639206|1|/sdcard/Movies/Inception (2010) 720p.mkv\r\n"))
+        self.assertEqual(
+            lib.play_rows("tt1375666")[0]["externalUrl"],
+            "vlc://file:///sdcard/Movies/Inception%20%282010%29%20720p.mkv",
+        )
+
+
 class MoreRouteTests(unittest.TestCase):
     def test_catalog(self):
         self.assertEqual(dr.route("/t0ken/library/catalog/movie/downloaded.json", "t0ken"), ("catalog",))
@@ -447,3 +479,41 @@ class StreamsWithLibraryTests(unittest.TestCase):
         second = addon.streams("movie", "tt1375666")["streams"]
         self.assertEqual(second[0]["name"], "▶ On the tablet")
         self.assertEqual(second[1]["name"], "⬇ Recommended")
+
+
+class InventoryPostTests(unittest.TestCase):
+    """POST /<token>/inventory through the real handler on a local port."""
+
+    def setUp(self):
+        import threading
+        from http.server import ThreadingHTTPServer
+        self.addon = dr.Addon(
+            base="http://localhost:3000", uuid="u-1", password="pw", get_json=FakeUpstream().get_json,
+            cinemeta="http://cinemeta", library=dr.Library(None),
+        )
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), dr.make_handler(self.addon, "t0ken"))
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+
+    def post(self, body: bytes, content_type: str, token="t0ken"):
+        import urllib.request
+        url = f"http://127.0.0.1:{self.server.server_port}/{token}/inventory"
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": content_type}, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status, json.loads(r.read())
+
+    def test_text_listing_from_the_tablet(self):
+        status, body = self.post("5|6|/sdcard/Movies/Inception (2010) 720p.mkv\n".encode(), "text/plain; charset=utf-8")
+        self.assertEqual((status, body), (200, {"ok": True, "files": 1}))
+        self.assertEqual(self.addon.library.inventory["dir"], "/sdcard/Movies")
+
+    def test_json_still_works(self):
+        status, _ = self.post(json.dumps({"dir": "/sdcard/Download", "files": []}).encode(), "application/json")
+        self.assertEqual(status, 200)
+        self.assertEqual(self.addon.library.inventory["dir"], "/sdcard/Download")
+
+    def test_wrong_token_is_refused(self):
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.post(b"", "text/plain", token="nope")
+        self.assertEqual(caught.exception.code, 404)

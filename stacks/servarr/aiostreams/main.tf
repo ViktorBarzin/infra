@@ -292,7 +292,7 @@ resource "kubernetes_deployment" "aiostreams" {
           }
           env {
             # The names it gave downloads and the tablet's last file list, sent
-            # hourly by the devvm's tablet-downloads-sync (playbooks/devvm.yml).
+            # by the tablet's Automate flow "Films to Movies and Stremio".
             name  = "DATA_DIR"
             value = "/app/data/download-row"
           }
