@@ -194,6 +194,30 @@ flowchart LR
 | watchdog | cron, every minute: `/usr/bin/london-nordvpn watchdog` | Renews the key and the server when the last handshake is older than 5 minutes, or when there is no handshake 3 minutes after a renewal. It renews at most every 10 minutes, because NordVPN refuses an over-limit reconnect for about that long. After a 401, 403 or 429 it stops for an hour. Alert `LondonMediaVpnDown` (Loki, `stacks/monitoring/modules/monitoring/loki.tf`) fires on two failure lines in 30 minutes. |
 | files | `/usr/bin/london-nordvpn` (`scripts/london-flint/london-nordvpn.sh`, tests in `london_nordvpn_test.py`), `/etc/firewall.london-nordvpn` (firewall include, runs `apply` on every reload), `/etc/london-nordvpn.token` (Vault `secret/proxy` `nordvpn_token`, the token the cluster's NordVPN gateways use) | All installed by `provision.sh` and listed in `/etc/sysupgrade.conf`, as is `/etc/crontabs/root`. |
 
+**BitTorrent from other devices.** Since 2026-11-23 (Viktor) Stremio shows
+P2P rows on every device, so devices outside the tunnel get a best-effort
+block. GL's DPI agent netifyd has a flow action of ours, `london-bittorrent`
+(target `ctmark_london_bittorrent`, in `/etc/netifyd/netify-proc-flow-actions.json`),
+with criteria in `/etc/netifyd/nfa-block.d/20-london-bittorrent.conf`:
+`protocol == 'bittorrent'`, `application == 'netify.bittorrent'` and
+`'netify.utorrent'`. It marks such a flow with connmark 0x1000000. The chain
+`london_bittorrent`, first in `FORWARD` (IPv4 and IPv6), lets a marked flow
+into `nordvpn`, `wgclient1` or the LANs and rejects it on the WAN, logging
+`london-bittorrent-blocked`. netifyd recognises a flow from its first payload,
+so the first handshake packet of each connection still leaves, and torrents it
+cannot recognise are not blocked. The tunnel is the guarantee; this only
+catches devices without it. Tested 2026-11-23 from ha-london: three
+connections sending a BitTorrent handshake to portquiz.net:6881 were all
+marked, and their later packets were rejected. The criteria grammar is
+netifyd's: an unknown name such as `detected_protocol` is a parse error that
+stops netifyd (traffic still flows, its queue has `--queue-bypass`), so check
+`logread -e proc-nfa` after a change. `provision.sh` restores the action after
+a firmware upgrade or a GL UI change to DPI.
+
+The London tablet (Xiaomi Pad 7, on the shared Stremio account) has the role
+`media` too since 2026-11-23, so all its internet traffic also exits through
+NordVPN Bulgaria.
+
 **Checks.** On the router: `wg show nordvpn` (a handshake under 2 minutes
 old), `logread -e london-nordvpn`, `ip route get 1.1.1.1 from 192.168.8.100 iif br-lan mark 0x18000`
 (answers `dev nordvpn table 1100`), and the projector's flows in

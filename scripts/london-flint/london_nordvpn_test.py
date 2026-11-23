@@ -239,3 +239,18 @@ def test_the_kill_switch_lets_media_players_out_only_through_the_tunnel(env: Env
     assert rules[:4] == [f"-A london_nordvpn -o {dev} -j RETURN" for dev in ("nordvpn", "wgclient1", "br-lan", "br-guest")]
     assert rules[-1] == "-A london_nordvpn -j REJECT"
     assert "-A forwarding_lan_rule -m set --match-set lr_media src -j london_nordvpn" in env.calls(tool)
+
+
+@pytest.mark.parametrize("tool", ["iptables", "ip6tables"])
+def test_bittorrent_flagged_by_dpi_never_leaves_through_the_wan(env: Env, tool: str) -> None:
+    # netifyd marks BitTorrent flows with connmark bit 0x1000000 (action
+    # london-bittorrent). From any London device they may go only into a tunnel
+    # or the LANs; out of the WAN they are rejected.
+    env.run("apply")
+    calls = env.calls(tool)
+    rules = [c for c in calls if c.startswith("-A london_bittorrent")]
+    assert rules[:4] == [f"-A london_bittorrent -o {dev} -j RETURN" for dev in ("nordvpn", "wgclient1", "br-lan", "br-guest")]
+    assert rules[-1] == "-A london_bittorrent -j REJECT"
+    # Hooked first in FORWARD, before the ESTABLISHED accept: a flow is only
+    # recognised a few packets in, when it is already established.
+    assert "-I FORWARD 1 -m connmark --mark 0x1000000/0x1000000 -j london_bittorrent" in calls

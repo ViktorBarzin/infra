@@ -486,6 +486,45 @@ if [ "$fw" = 1 ]; then
 	/etc/init.d/firewall reload
 	echo "firewall: nordvpn zone, forwarding and include set"
 fi
+
+# BitTorrent safety net for the other London devices: GL's DPI agent
+# (netifyd, flow-actions plugin) marks flows it recognises as BitTorrent
+# (protocol bittorrent, apps netify.bittorrent and netify.utorrent) with connmark
+# 0x1000000, and london-nordvpn's london_bittorrent chain rejects them on the
+# WAN. A GL firmware upgrade or a GL UI change to DPI can rewrite the JSON:
+# provision.sh puts the action back.
+crit=/etc/netifyd/nfa-block.d/20-london-bittorrent.conf
+printf "protocol == 'bittorrent';\napplication == 'netify.bittorrent';\napplication == 'netify.utorrent';\n" >/tmp/london-bittorrent.conf
+dpi=0
+if ! cmp -s /tmp/london-bittorrent.conf "$crit"; then mv /tmp/london-bittorrent.conf "$crit"; dpi=1; else rm -f /tmp/london-bittorrent.conf; fi
+if lua - <<'LUA'
+local c = require("cjson")
+local path = "/etc/netifyd/netify-proc-flow-actions.json"
+local f = assert(io.open(path))
+local d = c.decode(f:read("*a"))
+f:close()
+local t = d.targets.ctmark_london_bittorrent or {}
+local a = d.actions["london-bittorrent"] or {}
+local same = t.target_type == "ctmark" and t.target_enabled == true and t.mark == "0x01000000"
+	and t.mask == "0x01000000" and t.shift == 0 and a.enabled == true and a.interface == "*"
+	and a.criteria == "${path_state_persistent}/nfa-block.d/20-london-bittorrent.conf"
+	and type(a.targets) == "table" and a.targets[1] == "ctmark_london_bittorrent" and #a.targets == 1
+if same then os.exit(1) end
+d.targets.ctmark_london_bittorrent = { target_type = "ctmark", target_enabled = true,
+	mark = "0x01000000", mask = "0x01000000", shift = 0 }
+d.actions["london-bittorrent"] = { enabled = true, targets = { "ctmark_london_bittorrent" },
+	criteria = "${path_state_persistent}/nfa-block.d/20-london-bittorrent.conf", interface = "*" }
+f = assert(io.open(path, "w"))
+f:write(c.encode(d))
+f:close()
+LUA
+then
+	dpi=1
+fi
+if [ "$dpi" = 1 ]; then
+	/etc/init.d/netifyd restart
+	echo "netifyd: action london-bittorrent set"
+fi
 /usr/bin/london-nordvpn apply
 
 # A key or server change since the last run: renew now. The watchdog renews

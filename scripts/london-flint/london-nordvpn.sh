@@ -7,7 +7,8 @@
 # (interface nordvpn, routing table 1100), and the Flint's WAN only ever
 # carries the encrypted tunnel. Traffic to Sofia keeps using wgclient1.
 #
-#   london-nordvpn apply      mark media players and (re)build the kill switch;
+#   london-nordvpn apply      mark media players, (re)build the kill switch and the
+#                             BitTorrent WAN block;
 #                             the firewall include runs it on every reload
 #   london-nordvpn refresh    fetch the account key and a Bulgarian server, bring the tunnel up
 #   london-nordvpn watchdog   refresh when the handshake is stale (cron, every minute)
@@ -31,6 +32,7 @@ NV_LOGGER=${NV_LOGGER:-logger}
 IFACE=nordvpn
 COUNTRY=33       # NordVPN's id for Bulgaria (Viktor's choice: Bulgarian sites and catalogues)
 MARK=0x10000     # a bit GL's own marks (0xf000, 0xf00, 0xf00000) leave free
+BT_MARK=0x1000000 # connmark netifyd sets on BitTorrent flows; free in GL's and netifyd's marks
 STALE_S=300      # WireGuard re-handshakes every 2 minutes; keepalive keeps it busy
 FIRST_S=180      # no handshake this long after a refresh: the server is not answering
 COOLDOWN_S=600   # NordVPN refuses an over-limit reconnect for about 10 minutes
@@ -137,6 +139,23 @@ apply() {
 		$ipt -A london_nordvpn -j REJECT
 		$ipt -C forwarding_lan_rule -m set --match-set lr_media src -j london_nordvpn 2>/dev/null ||
 			$ipt -A forwarding_lan_rule -m set --match-set lr_media src -j london_nordvpn
+
+		# Safety net for every other London device: GL's DPI agent (netifyd,
+		# action london-bittorrent, set up by provision.sh) marks a flow it
+		# recognises as BitTorrent with connmark $BT_MARK. Such a flow may go into
+		# a tunnel or stay on the LANs, never out of the WAN. Recognition takes a
+		# few packets, so this is best effort; the tunnel is the guarantee.
+		$ipt -N london_bittorrent 2>/dev/null
+		$ipt -F london_bittorrent
+		for dev in $IFACE wgclient1 br-lan br-guest; do
+			$ipt -A london_bittorrent -o "$dev" -j RETURN
+		done
+		$ipt -A london_bittorrent -m limit --limit 20/min -j LOG --log-prefix london-bittorrent-blocked:
+		$ipt -A london_bittorrent -j REJECT
+		# First in FORWARD, before the ESTABLISHED accept: by the time a flow is
+		# recognised it is already established.
+		$ipt -C FORWARD -m connmark --mark $BT_MARK/$BT_MARK -j london_bittorrent 2>/dev/null ||
+			$ipt -I FORWARD 1 -m connmark --mark $BT_MARK/$BT_MARK -j london_bittorrent
 	done
 }
 
