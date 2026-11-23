@@ -181,14 +181,14 @@ not affected.
 ```mermaid
 flowchart LR
   proj["projector (role media)"] -->|"mark 0x10000"| rule["rule 5995<br/>0x18000/0x1f000 to table 1100"]
-  rule --> nord["nordvpn (10.5.0.2)<br/>UK server"] --> wan["eth1, encrypted"]
+  rule --> nord["nordvpn (10.5.0.2)<br/>Bulgarian server"] --> wan["eth1, encrypted"]
   proj -->|"to 10.0.0.0/8, GL mark 0x1000"| wg1["wgclient1 to Sofia"]
   rule -.->|"tunnel down"| bh["blackhole, metric 254"]
 ```
 
 | piece | where | what |
 |---|---|---|
-| tunnel | uci `network.nordvpn` (proto wireguard, 10.5.0.2/32, MTU 1420, `ip4table 1100`) and peer `network.nordvpn_server` (allowed 0.0.0.0/0, keepalive 25 s) | The key and the server come from NordVPN's API: `/v1/users/services/credentials` with the account token, and the least-loaded UK WireGuard server from `/v1/servers/recommendations`. NordVPN carries IPv4 only. |
+| tunnel | uci `network.nordvpn` (proto wireguard, 10.5.0.2/32, MTU 1420, `ip4table 1100`) and peer `network.nordvpn_server` (allowed 0.0.0.0/0, keepalive 25 s) | The key and the server come from NordVPN's API: `/v1/users/services/credentials` with the account token, and the least-loaded Bulgarian WireGuard server from `/v1/servers/recommendations` (country 33; UK until 2026-11-23, changed by Viktor). NordVPN has four servers there, all in Sofia. NordVPN carries IPv4 only. |
 | routing | uci rule `nordvpn_media` (mark `0x18000/0x1f000`, table 1100, priority 5995) and route `nordvpn_blackhole` (table 1100, metric 254) | The mangle rule marks packets from `lr_media` MACs with bit 0x10000, which GL's marks (0xf000, 0xf00, 0xf00000) leave free. GL marks internet-bound LAN traffic 0x8000 and Sofia-bound traffic 0x1000, so only internet traffic matches. With the tunnel down only the blackhole is left in table 1100, and media traffic is dropped, not sent out of the WAN. |
 | kill switch | chain `london_nordvpn` (IPv4 and IPv6), hooked into `forwarding_lan_rule` for `lr_media` sources | A second guard: a media player may leave only through `nordvpn`, `wgclient1`, `br-lan` or `br-guest`. Everything else is rejected and logged with prefix `london-nordvpn-blocked`. This refuses the projector's IPv6 internet, so its apps use IPv4. |
 | watchdog | cron, every minute: `/usr/bin/london-nordvpn watchdog` | Renews the key and the server when the last handshake is older than 5 minutes, or when there is no handshake 3 minutes after a renewal. It renews at most every 10 minutes, because NordVPN refuses an over-limit reconnect for about that long. After a 401, 403 or 429 it stops for an hour. Alert `LondonMediaVpnDown` (Loki, `stacks/monitoring/modules/monitoring/loki.tf`) fires on two failure lines in 30 minutes. |

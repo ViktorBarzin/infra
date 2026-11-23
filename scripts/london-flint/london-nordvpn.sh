@@ -9,7 +9,7 @@
 #
 #   london-nordvpn apply      mark media players and (re)build the kill switch;
 #                             the firewall include runs it on every reload
-#   london-nordvpn refresh    fetch the account key and a UK server, bring the tunnel up
+#   london-nordvpn refresh    fetch the account key and a Bulgarian server, bring the tunnel up
 #   london-nordvpn watchdog   refresh when the handshake is stale (cron, every minute)
 #
 # Routing lives in uci, set by scripts/london-flint/provision.sh: rule
@@ -29,7 +29,7 @@ NV_NOW=${NV_NOW:-}
 NV_IFUP=${NV_IFUP:-ifup}
 NV_LOGGER=${NV_LOGGER:-logger}
 IFACE=nordvpn
-COUNTRY=227      # NordVPN's id for the United Kingdom
+COUNTRY=33       # NordVPN's id for Bulgaria (Viktor's choice: Bulgarian sites and catalogues)
 MARK=0x10000     # a bit GL's own marks (0xf000, 0xf00, 0xf00000) leave free
 STALE_S=300      # WireGuard re-handshakes every 2 minutes; keepalive keeps it busy
 FIRST_S=180      # no handshake this long after a refresh: the server is not answering

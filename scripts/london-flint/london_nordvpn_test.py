@@ -145,10 +145,10 @@ def test_refresh_writes_the_key_and_server_then_brings_the_tunnel_up(env: Env) -
     assert any("uk1808.nordvpn.com" in line for line in env.calls("logger"))
 
 
-def test_refresh_asks_for_a_uk_wireguard_server(env: Env) -> None:
+def test_refresh_asks_for_a_bulgarian_wireguard_server(env: Env) -> None:
     env.run("refresh")
     server_call = [c for c in env.calls("curl") if "recommendations" in c][0]
-    assert "filters[country_id]=227" in server_call
+    assert "filters[country_id]=33" in server_call
     assert "wireguard_udp" in server_call
     assert "-g" in server_call.split()  # brackets in the URL are not curl globs
 
