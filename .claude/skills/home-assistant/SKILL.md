@@ -463,7 +463,7 @@ Bike named **"Classic Performance"** → entities are `sensor.classic_performanc
 - Projector + debug bridge: unavailable (Tapo plug off)
 - Scripts: `script.start_netflix`, `script.start_stremio`
 - Scene: `scene.night` (turns off Livia + Michelle plugs)
-- Radio: `script.radio_play` (field `station`, e.g. "Radio Swiss Jazz") plays a station on the Logitech Z537 through the VLC add-on (`media_player.vlc_telnet`) over the Pi's Bluetooth; `script.radio_stop`. Dashboard `london-radio`. Details: `docs/architecture/london-site.md`, "Radio"
+- Radio: `script.radio_play` (field `station`, e.g. "Radio Swiss Jazz") plays a station on the Logitech Z537 through the VLC add-on (`media_player.vlc_telnet`) over the Pi's Bluetooth; `script.radio_stop`. Volume: set `input_number.radio_volume` (0-100, 100 = the stream untouched), never `media_player.volume_set` on VLC above 0.512 (that is a clipping boost; an automation pulls it back). Dashboard `london-radio`. Details: `docs/architecture/london-site.md`, "Radio"
 
 #### 8. Yiko robot vacuum (Ecovacs X8 Pro Omni) and its camera
 Control Yiko with `homelab ha yiko`. Do not drive the robot by hand:
