@@ -1840,7 +1840,7 @@
         path: /usr/local/bin/milka-adb
         state: absent
 
-    # Stremio's "Downloaded" row (stacks/servarr/aiostreams, sidecar
+    # Stremio's "On the tablet" row (stacks/servarr/aiostreams, sidecar
     # download-row): every hour tablet-downloads-sync lists the video files in
     # the London tablet's Downloads folder over adb and sends their names and
     # sizes to the addon. It runs as wizard for the adb key. The addon URL

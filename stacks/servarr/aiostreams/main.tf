@@ -263,7 +263,7 @@ resource "kubernetes_deployment" "aiostreams" {
           # rows with the proxied links, ending in a clean file name. The
           # browser saves the file and VLC plays it offline on the London
           # tablet. Its own tab instead of AIOStreams' externalDownloads, which
-          # adds a row under every stream. It also serves a "Downloaded"
+          # adds a row under every stream. It also serves an "On the tablet"
           # catalog and "On the tablet" rows from the file list the devvm sends.
           # Standard library only, so nothing is installed at start.
           # Tests: cd files && python3 -m unittest test_download_row

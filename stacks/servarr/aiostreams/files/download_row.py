@@ -14,12 +14,13 @@ and the browser saves the file under it.
 
 What is on the tablet: a devvm timer (tablet-downloads-sync) lists the video
 files in its Downloads folder every hour and POSTs them to /<token>/inventory.
-Files this addon named map back to their titles, which give a "Downloaded"
+Files this addon named map back to their titles, which give an "On the tablet"
 catalog on the Home board and a "▶ On the tablet" row that opens the file in
 VLC (vlc://file://...). Stremio itself cannot play local files on Android.
 
-Install URL: https://<host>/<token>/manifest.json. The token is the only gate,
-as for AIOStreams' own install URLs.
+Install URLs: https://<host>/<token>/manifest.json (the rows, last on the
+account) and https://<host>/<token>/library/manifest.json (the list, first).
+The token is the only gate, as for AIOStreams' own install URLs.
 
 Standard library only, so nothing is installed at start.
 Tests: cd files && python3 -m unittest test_download_row
@@ -66,15 +67,28 @@ UNSAFE = re.compile(r'\s*[\\/:*?"<>|]+\s*')
 POSTER = "https://images.metahub.space/poster/medium/{}/img"
 MAX_BODY = 1_000_000
 
+# Two addons from one server. Stremio orders both Home rows and stream rows
+# by addon position, and the two want opposite ends: the download rows go last
+# (installed last, under AIOStreams' streams), the list of films on the tablet
+# goes first (its Home row right under Continue Watching).
 MANIFEST = {
     "id": "me.viktorbarzin.download",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "name": "Download",
-    "description": "Saves films for offline viewing and lists what is on the tablet.",
-    "resources": ["catalog", "stream"],
+    "description": "Saves films for offline viewing on the tablet.",
+    "resources": ["stream"],
     "types": list(TYPES),
     "idPrefixes": ["tt"],
-    "catalogs": [{"type": t, "id": "downloaded", "name": "Downloaded"} for t in TYPES],
+    "catalogs": [],
+}
+LIBRARY_MANIFEST = {
+    "id": "me.viktorbarzin.download.library",
+    "version": "1.0.0",
+    "name": "On the tablet",
+    "description": "Films and episodes downloaded on the London tablet.",
+    "resources": ["catalog"],
+    "types": list(TYPES),
+    "catalogs": [{"type": t, "id": "downloaded", "name": "On the tablet"} for t in TYPES],
 }
 
 
@@ -308,8 +322,10 @@ def route(path: str, token: str) -> tuple | None:
         return ("manifest",)
     if parts[1:] == ["inventory"]:
         return ("inventory",)
-    if len(parts) == 4 and parts[1] == "catalog" and parts[2] in TYPES and parts[3] == "downloaded.json":
-        return ("catalog", parts[2])
+    if parts[1:] == ["library", "manifest.json"]:
+        return ("library_manifest",)
+    if len(parts) == 5 and parts[1:3] == ["library", "catalog"] and parts[3] in TYPES and parts[4] == "downloaded.json":
+        return ("catalog", parts[3])
     if len(parts) == 4 and parts[1] == "stream" and parts[2] in TYPES and parts[3].endswith(".json"):
         media_id = urllib.parse.unquote(parts[3][: -len(".json")])
         if ID.match(media_id):
@@ -410,6 +426,8 @@ def make_handler(addon: Addon, token: str):
                 self._send(200, {"ok": True})
             elif target[0] == "manifest":
                 self._send(200, MANIFEST)
+            elif target[0] == "library_manifest":
+                self._send(200, LIBRARY_MANIFEST)
             elif target[0] == "catalog":
                 self._send(200, {"metas": addon.library.catalog(target[1])})
             elif target[0] == "stream":

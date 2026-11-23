@@ -3,7 +3,7 @@
 
 Lists the video files in the tablet's Downloads folder over adb and POSTs
 their names, sizes and times to the addon (stacks/servarr/aiostreams,
-files/download_row.py), which turns the ones it named into a "Downloaded" row
+files/download_row.py), which turns the ones it named into an "On the tablet" row
 in Stremio and a "▶ On the tablet" row that opens the file in VLC. Only video
 files in that one folder are sent; the folder belongs to Anca's profile.
 

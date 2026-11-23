@@ -401,16 +401,25 @@ class LibraryTests(unittest.TestCase):
 
 class MoreRouteTests(unittest.TestCase):
     def test_catalog(self):
-        self.assertEqual(dr.route("/t0ken/catalog/movie/downloaded.json", "t0ken"), ("catalog", "movie"))
-        self.assertIsNone(dr.route("/t0ken/catalog/movie/other.json", "t0ken"))
+        self.assertEqual(dr.route("/t0ken/library/catalog/movie/downloaded.json", "t0ken"), ("catalog", "movie"))
+        self.assertIsNone(dr.route("/t0ken/library/catalog/movie/other.json", "t0ken"))
+        self.assertIsNone(dr.route("/t0ken/catalog/movie/downloaded.json", "t0ken"))
+
+    def test_library_manifest(self):
+        self.assertEqual(dr.route("/t0ken/library/manifest.json", "t0ken"), ("library_manifest",))
 
     def test_inventory(self):
         self.assertEqual(dr.route("/t0ken/inventory", "t0ken"), ("inventory",))
         self.assertIsNone(dr.route("/nope/inventory", "t0ken"))
 
-    def test_manifest_lists_the_catalogs(self):
-        self.assertIn("catalog", dr.MANIFEST["resources"])
-        self.assertEqual({c["id"] for c in dr.MANIFEST["catalogs"]}, {"downloaded"})
+    def test_two_addons(self):
+        # Rows: stream only, installed last. The list: catalog only, installed
+        # first, so its Home row sits under Continue Watching.
+        self.assertEqual(dr.MANIFEST["resources"], ["stream"])
+        self.assertEqual(dr.MANIFEST["catalogs"], [])
+        self.assertEqual(dr.LIBRARY_MANIFEST["resources"], ["catalog"])
+        self.assertEqual({c["name"] for c in dr.LIBRARY_MANIFEST["catalogs"]}, {"On the tablet"})
+        self.assertNotEqual(dr.MANIFEST["id"], dr.LIBRARY_MANIFEST["id"])
 
 
 class StreamsWithLibraryTests(unittest.TestCase):
