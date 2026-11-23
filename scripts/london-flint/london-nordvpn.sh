@@ -7,8 +7,8 @@
 # (interface nordvpn, routing table 1100), and the Flint's WAN only ever
 # carries the encrypted tunnel. Traffic to Sofia keeps using wgclient1.
 #
-#   london-nordvpn apply      mark media players, (re)build the kill switch and the
-#                             BitTorrent WAN block;
+#   london-nordvpn apply      mark media players, (re)build the kill switch, the
+#                             BitTorrent WAN block and the IPv4-only DNS forwarder;
 #                             the firewall include runs it on every reload
 #   london-nordvpn refresh    fetch the account key and a Bulgarian server, bring the tunnel up
 #   london-nordvpn watchdog   refresh when the handshake is stale (cron, every minute)
@@ -29,7 +29,12 @@ NV_NOW=${NV_NOW:-}
 # Tests point these at stand-ins: busybox sh runs its own applets first.
 NV_IFUP=${NV_IFUP:-ifup}
 NV_LOGGER=${NV_LOGGER:-logger}
+NV_DNSMASQ=${NV_DNSMASQ:-dnsmasq}
+NV_DNS_PID=${NV_DNS_PID:-/var/run/london-nordvpn-dns.pid}
 IFACE=nordvpn
+DNS_PORT=2154    # the media players' DNS forwarder; GL's own second instance has 2153
+# Google, Cloudflare and Quad9: the resolvers Android and apps use for DNS over HTTPS or TLS
+PUBLIC_RESOLVERS="8.8.8.8 8.8.4.4 1.1.1.1 1.0.0.1 9.9.9.9 149.112.112.112"
 COUNTRY=33       # NordVPN's id for Bulgaria (Viktor's choice: Bulgarian sites and catalogues)
 MARK=0x10000     # a bit GL's own marks (0xf000, 0xf00, 0xf00000) leave free
 BT_MARK=0x1000000 # connmark netifyd sets on BitTorrent flows; free in GL's and netifyd's marks
@@ -124,6 +129,8 @@ watchdog() {
 
 apply() {
 	ipset create lr_media hash:mac -exist
+	dns_up=0
+	dns_forwarder && dns_up=1
 	iptables -t mangle -C PREROUTING -i br-lan -m set --match-set lr_media src -j MARK --set-xmark $MARK/$MARK 2>/dev/null ||
 		iptables -t mangle -I PREROUTING -i br-lan -m set --match-set lr_media src -j MARK --set-xmark $MARK/$MARK
 	# Kill switch: a media player may leave only through the tunnel, to Sofia,
@@ -156,7 +163,50 @@ apply() {
 		# recognised it is already established.
 		$ipt -C FORWARD -m connmark --mark $BT_MARK/$BT_MARK -j london_bittorrent 2>/dev/null ||
 			$ipt -I FORWARD 1 -m connmark --mark $BT_MARK/$BT_MARK -j london_bittorrent
+
+		# A media player's DNS goes to a forwarder that drops IPv6 answers. The
+		# kill switch refuses its IPv6 internet, and some clients do not fall back
+		# to IPv4 when it is refused: Stremio's streaming server (4.21) then fails
+		# every fetch from a dual-stack host, subtitles included.
+		# Without a running forwarder the redirect is removed: plain IPv6 trouble
+		# beats no DNS at all.
+		for proto in udp tcp; do
+			redirect="PREROUTING -i br-lan -m set --match-set lr_media src -p $proto --dport 53 -j REDIRECT --to-ports $DNS_PORT"
+			if [ "$dns_up" = 1 ]; then
+				$ipt -t nat -C $redirect 2>/dev/null || $ipt -t nat -I ${redirect%% *} 1 ${redirect#* }
+			else
+				if $ipt -t nat -C $redirect 2>/dev/null; then $ipt -t nat -D $redirect; fi
+			fi
+		done
 	done
+
+	# The projector's Android resolver sends its queries over HTTPS to Google
+	# (8.8.4.4:443) and never asks the router, so the redirect above never sees
+	# them. Media players may not reach public resolvers on 443 or 853: Android
+	# then falls back to plain DNS. First in FORWARD, so an open connection is
+	# cut too. IPv4 only: the kill switch already refuses their IPv6 internet.
+	iptables -N london_media_dns 2>/dev/null
+	iptables -F london_media_dns
+	for ip in $PUBLIC_RESOLVERS; do
+		iptables -A london_media_dns -d "$ip" -p tcp -m multiport --dports 443,853 -j REJECT --reject-with tcp-reset
+		iptables -A london_media_dns -d "$ip" -p udp -m multiport --dports 443,853 -j REJECT
+	done
+	iptables -C FORWARD -m set --match-set lr_media src -j london_media_dns 2>/dev/null ||
+		iptables -I FORWARD 1 -m set --match-set lr_media src -j london_media_dns
+}
+
+# The forwarder: a separate dnsmasq on br-lan, port $DNS_PORT, that asks the
+# main one (so London names, Sofia names and the upstreams stay the same) and
+# answers AAAA queries with no records. No DHCP, no hosts files.
+dns_forwarder() {
+	if [ -f "$NV_DNS_PID" ] && kill -0 "$(cat "$NV_DNS_PID")" 2>/dev/null; then
+		return 0
+	fi
+	$NV_DNSMASQ -C /dev/null --port=$DNS_PORT --interface=br-lan --bind-dynamic \
+		--no-dhcp-interface=br-lan --no-resolv --no-hosts --server=127.0.0.1#53 \
+		--filter-AAAA --user=dnsmasq --group=dnsmasq --pid-file="$NV_DNS_PID" && return 0
+	log "DNS forwarder for media players did not start; their DNS stays on the main dnsmasq"
+	return 1
 }
 
 case "${1:-}" in

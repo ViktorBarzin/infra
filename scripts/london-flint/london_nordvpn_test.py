@@ -13,6 +13,7 @@ arguments to a log file, so nothing touches the network or the firewall.
 
 from __future__ import annotations
 
+import os
 import shutil
 import stat
 import subprocess
@@ -79,7 +80,7 @@ def env(tmp_path: Path) -> Env:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log = tmp_path / "calls.log"
-    for tool in ("ipset", "logger", "ifup", "uci"):
+    for tool in ("ipset", "logger", "ifup", "uci", "dnsmasq"):
         _stub(bin_dir, tool, f'echo "{tool} $*" >> "{log}"\n')
     # iptables/ip6tables: -C (check) finds nothing, so every hook gets added.
     for tool in ("iptables", "ip6tables"):
@@ -126,6 +127,8 @@ def env(tmp_path: Path) -> Env:
         "NV_RUN": str(run_dir),
         "NV_IFUP": str(bin_dir / "ifup"),
         "NV_LOGGER": str(bin_dir / "logger"),
+        "NV_DNSMASQ": str(bin_dir / "dnsmasq"),
+        "NV_DNS_PID": str(tmp_path / "dns.pid"),
     }
     return Env(root=tmp_path, log=log, run_dir=run_dir, env=e)
 
@@ -254,3 +257,69 @@ def test_bittorrent_flagged_by_dpi_never_leaves_through_the_wan(env: Env, tool: 
     # Hooked first in FORWARD, before the ESTABLISHED accept: a flow is only
     # recognised a few packets in, when it is already established.
     assert "-I FORWARD 1 -m connmark --mark 0x1000000/0x1000000 -j london_bittorrent" in calls
+
+
+# ---------------------------------------------------------------- DNS
+
+
+def test_apply_starts_a_dns_forwarder_that_drops_ipv6_answers(env: Env) -> None:
+    # Media players have no IPv6 internet (the kill switch refuses it), and
+    # Stremio's server does not fall back to IPv4 when IPv6 is refused. A
+    # forwarder that drops AAAA answers keeps every app on IPv4.
+    env.run("apply")
+    [start] = env.calls("dnsmasq")
+    args = start.split()
+    assert "--filter-AAAA" in args
+    assert "--port=2154" in args
+    assert "--interface=br-lan" in args
+    assert "--server=127.0.0.1#53" in args  # the main dnsmasq: same names and upstreams
+    assert "--no-resolv" in args
+    assert not any(a.startswith("--dhcp-range") for a in args)
+    assert f"--pid-file={env.root / 'dns.pid'}" in args
+
+
+def test_apply_leaves_a_running_dns_forwarder_alone(env: Env) -> None:
+    (env.root / "dns.pid").write_text(f"{os.getpid()}\n")  # a process that is alive
+    env.run("apply")
+    assert env.calls("dnsmasq") == []
+
+
+def test_apply_restarts_a_dns_forwarder_that_died(env: Env) -> None:
+    (env.root / "dns.pid").write_text("999999999\n")
+    env.run("apply")
+    assert len(env.calls("dnsmasq")) == 1
+
+
+@pytest.mark.parametrize("tool", ["iptables", "ip6tables"])
+@pytest.mark.parametrize("proto", ["udp", "tcp"])
+def test_media_players_dns_goes_to_the_forwarder(env: Env, tool: str, proto: str) -> None:
+    env.run("apply")
+    assert (
+        f"-t nat -I PREROUTING 1 -i br-lan -m set --match-set lr_media src -p {proto} --dport 53 -j REDIRECT --to-ports 2154"
+        in env.calls(tool)
+    )
+
+
+@pytest.mark.parametrize("tool", ["iptables", "ip6tables"])
+def test_without_a_forwarder_media_players_keep_the_main_dns(env: Env, tool: str) -> None:
+    (env.root / "bin" / "dnsmasq").write_text("#!" + str(BUSYBOX) + " sh\nexit 1\n")
+    # The redirect is there from an earlier run: -C finds it.
+    _stub(env.root / "bin", tool, f'echo "{tool} $*" >> "{env.log}"\nexit 0\n')
+    env.run("apply")
+    calls = env.calls(tool)
+    assert not any("REDIRECT" in c and "-I" in c.split() for c in calls)
+    assert any(c.startswith("-t nat -D PREROUTING") and "REDIRECT --to-ports 2154" in c for c in calls)
+
+
+def test_media_players_cannot_bypass_the_forwarder_with_encrypted_dns(env: Env) -> None:
+    # The projector's Android resolver sends its queries over HTTPS to 8.8.4.4
+    # and never asks the router. Refusing public resolvers on 443 and 853 makes
+    # it fall back to plain DNS, which goes to the forwarder.
+    env.run("apply")
+    calls = env.calls("iptables")
+    rules = [c for c in calls if c.startswith("-A london_media_dns")]
+    for ip in ("8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "9.9.9.9", "149.112.112.112"):
+        assert f"-A london_media_dns -d {ip} -p tcp -m multiport --dports 443,853 -j REJECT --reject-with tcp-reset" in rules
+        assert f"-A london_media_dns -d {ip} -p udp -m multiport --dports 443,853 -j REJECT" in rules
+    # First in FORWARD, so a resolver connection that is already open is cut too.
+    assert "-I FORWARD 1 -m set --match-set lr_media src -j london_media_dns" in calls
