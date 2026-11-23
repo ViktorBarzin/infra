@@ -459,9 +459,10 @@ resource "helm_release" "traefik" {
           mountPath  = "/plugins-local/src/github.com/viktorbarzin/crowdsec-bouncer-plugin"
           type       = "inlinePlugin"
           source = {
-            "go.mod"       = file("${path.module}/crowdsec-bouncer-plugin/go.mod")
-            ".traefik.yml" = file("${path.module}/crowdsec-bouncer-plugin/.traefik.yml")
-            "main.go"      = file("${path.module}/crowdsec-bouncer-plugin/main.go")
+            "go.mod"        = file("${path.module}/crowdsec-bouncer-plugin/go.mod")
+            ".traefik.yml"  = file("${path.module}/crowdsec-bouncer-plugin/.traefik.yml")
+            "main.go"       = file("${path.module}/crowdsec-bouncer-plugin/main.go")
+            "block_page.go" = file("${path.module}/crowdsec-bouncer-plugin/block_page.go")
           }
         }
         # Static-token bearer/header auth for gateways with no app-layer
