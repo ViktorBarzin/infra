@@ -147,7 +147,7 @@ resource "kubernetes_deployment" "lean_proxy" {
         }
         container {
           name  = "nginx"
-          image = "openresty/openresty:1.31.9.1-alpine@sha256:cb91ff1b7ce00bdcf400e3b91e59347da31fa6b8cac3795d08774c4364e8a8f0"
+          image = "openresty/openresty:1.31.9.1-alpine@sha256:40b124f4e477efb8c67ea997c3eef3a9b1619eef3aa3f5c394d14b68e42b564d"
 
           port {
             name           = "http"
