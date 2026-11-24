@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 plan: true
 ---
 
@@ -133,7 +133,7 @@ steps:
 ## Commands
 
 ```sh
-cd stacks/stremio/files && python3 -m unittest test_library
+cd stacks/stremio/files && python3 -m unittest test_library test_saves
 homelab tf plan stremio
 homelab tf apply stremio
 ```

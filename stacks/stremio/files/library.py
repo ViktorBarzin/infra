@@ -1,38 +1,42 @@
-"""A Stremio addon that plays films and episodes downloaded to our server.
+"""A Stremio addon that plays films and episodes from our server, and saves
+films and episodes to watch later (saves.py).
 
-qBittorrent saves a title into /downloads/stremio/<imdb id>/ (category
-"stremio"), for releases Real-Debrid refuses or does not have. This addon lists
-those files as stream rows ("Our server") and serves them over HTTPS with byte
-ranges, so Stremio plays them like any other link and fetches subtitles for
-them as usual.
+Files: qBittorrent saves a title into /downloads/stremio/<imdb id>/ (category
+"stremio"). This addon lists those files as stream rows ("Our server") and
+serves them over HTTPS with byte ranges, so Stremio plays them like any other
+link and fetches subtitles for them as usual. For a series id tt…:S:E, every
+video file under the title's folder whose name carries SxxEyy for that
+episode; for a film, every video file in its folder. qBittorrent names an
+unfinished file "<name>.!qB", so it never shows. Files are served only when
+they are on that list, so no other path on the share is reachable.
 
-Rows: for a series id tt…:S:E, every video file under the title's folder
-whose name carries SxxEyy for that episode; for a film, every video file in
-its folder. qBittorrent names an unfinished file "<name>.!qB", so it never
-shows. Files are served only when they are on that list, so no other path on
-the share is reachable.
+Saves: each Stremio account installs its own manifest,
+/<token>/a/<account>/manifest.json (viktor, emo), whose rows offer "Save this
+episode", show "Saving 45%" and play the copy once it is "Saved"; saves.py
+explains the rules. The old /<token>/manifest.json is the viktor account.
 
-Install URL: https://<host>/<token>/manifest.json. The token is the only gate,
-as for AIOStreams' own install URLs. The host is DNS-only (not proxied by
-Cloudflare), whose terms bar serving video through its CDN.
+The token is the only gate, as for AIOStreams' own install URLs. The public
+host is DNS-only (not proxied by Cloudflare), whose terms bar serving video
+through its CDN; emo's rows use the internal host, as his TV on the Sofia LAN
+has no hairpin NAT to our public address.
 
-Standard library only. Tests: cd files && python3 -m unittest test_library
+Standard library only. Tests: cd files && python3 -m unittest test_library test_saves
 """
 import hmac
 import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VIDEO_EXT = (".mkv", ".mp4", ".avi", ".m4v")
+import saves as saves_module
+from saves import RES, STREAM_ID, Refused, Saves, ServiceError, Stop, episode_of, videos
+
 CONTENT_TYPES = {".mkv": "video/x-matroska", ".mp4": "video/mp4", ".m4v": "video/mp4", ".avi": "video/x-msvideo"}
-EPISODE = re.compile(r"(?i)\bs(\d{1,2})[ ._-]?e(\d{1,3})\b")
-IMDB = re.compile(r"^tt\d+$")
-STREAM_ID = re.compile(r"^(tt\d+)(?::(\d+):(\d+))?$")
-RES = re.compile(r"(?i)(2160|1080|720|480)p")
 CHUNK = 1 << 20
+ACTIONS = ("v", "follow", "remove", "retry")
 
 MANIFEST = {
     "id": "me.viktorbarzin.library",
@@ -45,41 +49,24 @@ MANIFEST = {
     "catalogs": [],
 }
 
-
 def quote(path: str) -> str:
     return urllib.parse.quote(path, safe="/")
-
-
-def episode_of(name: str) -> tuple[int, int] | None:
-    m = EPISODE.search(name)
-    return (int(m.group(1)), int(m.group(2))) if m else None
-
-
-def videos(root: str, imdb: str) -> list[str]:
-    """Finished video files under root/imdb, as paths relative to that folder."""
-    if not IMDB.match(imdb):
-        return []
-    base = os.path.join(root, imdb)
-    found = []
-    for folder, dirs, files in os.walk(base):
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
-        for f in files:
-            if f.lower().endswith(VIDEO_EXT) and not f.startswith("."):
-                found.append(os.path.relpath(os.path.join(folder, f), base))
-    return sorted(found)
 
 
 def size_label(size: int) -> str:
     return f"{size / 1e9:.2f} GB" if size >= 1e8 else f"{size / 1e6:.0f} MB"
 
 
-def rows(root: str, public_url: str, token: str, kind: str, media_id: str) -> list[dict]:
+def rows(root: str, base: str, kind: str, media_id: str, skip: set[str] | frozenset[str] = frozenset()) -> list[dict]:
+    """Rows for the files on our server; base is https://<host>/<token>[/a/<account>]."""
     m = STREAM_ID.match(media_id)
     if not m:
         return []
     imdb, season, episode = m.group(1), m.group(2), m.group(3)
     out = []
     for rel in videos(root, imdb):
+        if rel in skip:
+            continue
         name = os.path.basename(rel)
         if kind == "series":
             if season is None or episode_of(name) != (int(season), int(episode)):
@@ -92,7 +79,7 @@ def rows(root: str, public_url: str, token: str, kind: str, media_id: str) -> li
             {
                 "name": "Our server" + (f"\n{res.group(1)}p" if res else ""),
                 "title": f"{name}\n💾 {size_label(size)}",
-                "url": f"{public_url}/{token}/file/{imdb}/{quote(rel)}",
+                "url": f"{base}/file/{imdb}/{quote(rel)}",
                 "behaviorHints": {"filename": name, "videoSize": size, "bingeGroup": "me.viktorbarzin.library"},
             }
         )
@@ -119,11 +106,17 @@ def parse_range(header: str | None, size: int) -> tuple[int, int] | None | str:
     return start, min(end, size - 1)
 
 
-def make_handler(root: str, token: str, public_url: str):
+def content_range_start(value: str | None) -> tuple[int, int] | None:
+    """(start, total) from "bytes 10-19/1000"."""
+    m = re.match(r"^bytes (\d+)-\d+/(\d+)$", value or "")
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def make_handler(root: str, token: str, public_url: str, saves: Saves | None = None):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
-        def log_message(self, fmt: str, *args) -> None:  # one line per request, token hidden
+        def log_message(self, fmt: str, *args: object) -> None:  # one line per request, token hidden
             sys.stderr.write("%s %s\n" % (self.command, self.path.replace(token, "<token>")[:200]))
 
         def send_json(self, data: dict) -> None:
@@ -156,24 +149,82 @@ def make_handler(root: str, token: str, public_url: str):
                 self.not_found()
                 return
             rest = parts[2]
+            m = re.match(r"^a/([a-z]+)/(.+)$", rest)
+            if m:
+                if saves is None or m.group(1) not in saves.accounts:
+                    self.not_found()
+                    return
+                account = m.group(1)
+                self.account_route(account, m.group(2), f"{saves.accounts[account].public_url}/{token}/a/{account}", head)
+                return
+            # The old install URL: files only, or the viktor account when saves run.
+            if saves is not None and "viktor" in saves.accounts and rest != "manifest.json":
+                self.account_route("viktor", rest, f"{public_url}/{token}", head)
+                return
             if rest == "manifest.json":
-                self.send_json(MANIFEST)
+                self.send_json(saves_module.manifest(saves.accounts["viktor"]) if saves and "viktor" in saves.accounts else MANIFEST)
+                return
+            self.account_route(None, rest, f"{public_url}/{token}", head)
+
+        def account_route(self, account: str | None, rest: str, file_base: str, head: bool) -> None:
+            if rest == "manifest.json" and saves and account:
+                self.send_json(saves_module.manifest(saves.accounts[account]))
+                return
+            if rest == "catalog/movie/saved.json" and saves and account:
+                self.send_json({"metas": saves.catalog(account)})
                 return
             m = re.match(r"^stream/(movie|series)/([^/]+)\.json$", rest)
             if m:
-                media_id = urllib.parse.unquote(m.group(2))
-                self.send_json({"streams": rows(root, public_url, token, m.group(1), media_id)})
+                kind, media_id = m.group(1), urllib.parse.unquote(m.group(2))
+                if account and saves:
+                    if not STREAM_ID.match(media_id):
+                        self.not_found()
+                        return
+                    imdb = media_id.split(":")[0]
+                    found = saves.rows(account, kind, media_id) + rows(root, file_base, kind, media_id, saves.saved_paths(account, imdb))
+                else:
+                    found = rows(root, file_base, kind, media_id)
+                self.send_json({"streams": found})
                 return
             m = re.match(r"^file/(tt\d+)/(.+)$", rest)
             if m:
-                rel = urllib.parse.unquote(m.group(2))
-                if rel in videos(root, m.group(1)):
-                    self.send_file(os.path.join(root, m.group(1), rel), head)
+                imdb, rel = m.group(1), urllib.parse.unquote(m.group(2))
+                if rel in videos(root, imdb):
+                    copy_id = saves.server_copy_at(imdb, rel) if saves and account else None
+                    self.send_file(os.path.join(root, imdb, rel), head, account, copy_id)
+                    return
+            m = re.match(r"^([a-z]+)/([^/]+)$", rest)
+            if m and m.group(1) in ACTIONS and saves and account:
+                vid = urllib.parse.unquote(m.group(2))
+                if STREAM_ID.match(vid):
+                    self.tap(account, m.group(1), vid, head)
                     return
             self.not_found()
 
-        def send_file(self, full: str, head: bool) -> None:
-            size = os.path.getsize(full)
+        def tap(self, account: str, action: str, vid: str, head: bool) -> None:
+            assert saves is not None
+            if head:  # a HEAD never records anything
+                save = saves.save_of(account, vid)
+                copy = saves.copy_of(account, vid) if save and save["state"] != "removed" else None
+                if copy is None or copy["status"] != "ready" or copy["place"] != "server":
+                    self.send_file(saves.clip_path(account, "saved" if save is None else "saving"), True, None, None, clip=True)
+                    return
+                self.send_file(os.path.join(root, vid.split(":")[0], copy["path"]), True, None, None)
+                return
+            result = saves.tap(account, action, vid)
+            if result[0] == "clip":
+                self.send_file(saves.clip_path(account, result[1]), head, None, None, clip=True)
+            elif result[0] == "server":
+                self.send_file(result[1], head, account, result[2])
+            else:
+                self.proxy(account, result[1])
+
+        def send_file(self, full: str, head: bool, account: str | None, copy_id: int | None, clip: bool = False) -> None:
+            try:
+                size = os.path.getsize(full)
+            except OSError:
+                self.not_found()
+                return
             rng = parse_range(self.headers.get("Range"), size)
             if rng == "bad":
                 self.send_response(416)
@@ -188,11 +239,14 @@ def make_handler(root: str, token: str, public_url: str):
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Content-Length", str(end - start + 1))
+            if clip:
+                self.send_header("Cache-Control", "no-store")
             if rng:
                 self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
             self.end_headers()
             if head:
                 return
+            sent = 0
             with open(full, "rb") as f:
                 f.seek(start)
                 left = end - start + 1
@@ -203,8 +257,56 @@ def make_handler(root: str, token: str, public_url: str):
                             break
                         self.wfile.write(chunk)
                         left -= len(chunk)
+                        sent += len(chunk)
                 except (BrokenPipeError, ConnectionResetError):
                     pass  # the player seeks by dropping the connection
+            if saves and account and copy_id is not None:
+                saves.delivered(account, copy_id, start, start + sent, size)
+
+        def proxy(self, account: str, copy: dict) -> None:
+            """A Real-Debrid copy: the bytes come through Sofia, so Real-Debrid
+            sees one IP for every player."""
+            assert saves is not None
+            rng = self.headers.get("Range")
+            try:
+                upstream = saves.opener(saves.upstream_url(copy), rng)
+            except Refused:
+                saves.refused_at_play(copy)
+                self.send_file(saves.clip_path(account, "saving"), False, None, None, clip=True)
+                return
+            except (Stop, ServiceError, OSError, urllib.error.URLError) as e:
+                saves.log(f"no playback of {copy['release']}: {e!r}")
+                self.send_response(502)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            try:
+                status = upstream.status
+                headers = upstream.headers
+                self.send_response(status)
+                for name in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
+                    value = headers.get(name)
+                    if value:
+                        self.send_header(name, str(value))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                if status >= 400:
+                    return
+                span = content_range_start(headers.get("Content-Range"))
+                start, size = span if span else (0, int(headers.get("Content-Length") or copy["size"] or 0))
+                sent = 0
+                try:
+                    while True:
+                        chunk = upstream.read(CHUNK)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        sent += len(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                saves.delivered(account, copy["id"], start, start + sent, size or copy["size"])
+            finally:
+                upstream.close()
 
     return Handler
 
@@ -214,9 +316,13 @@ def main() -> None:
     token = os.environ["LIBRARY_TOKEN"]
     public_url = os.environ["PUBLIC_URL"].rstrip("/")
     port = int(os.environ.get("PORT", "8080"))
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(root, token, public_url))
+    saves = None
+    if os.environ.get("DATA_DIR"):
+        saves = Saves(saves_module.config_from_env(dict(os.environ), root, token))
+        saves.start()
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(root, token, public_url, saves))
     server.daemon_threads = True
-    sys.stderr.write(f"library: serving {root} on :{port}\n")
+    sys.stderr.write(f"library: serving {root} on :{port}" + (" with saves" if saves else "") + "\n")
     server.serve_forever()
 
 
