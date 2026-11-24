@@ -188,6 +188,12 @@ resource "kubernetes_deployment" "library" {
             value = "download"
           }
           env {
+            # Torrent rows for releases Real-Debrid refuses: Viktor's main config
+            # returns none since 2026-11-24 (commit 484926bc4); its "p2p" variant does.
+            name  = "AIOSTREAMS_VARIANT_TORRENTS"
+            value = "p2p"
+          }
+          env {
             name  = "QBITTORRENT_URL"
             value = "http://qbittorrent.servarr.svc.cluster.local/api/v2"
           }

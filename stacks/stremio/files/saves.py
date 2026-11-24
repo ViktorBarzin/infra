@@ -242,6 +242,9 @@ class Config:
     token: str = ""
     seed_follows: tuple[str, ...] = ()
     cap_bytes: int = SERVER_CAP
+    # The AIOStreams variant that returns torrent rows (Viktor's main config
+    # has none since 2026-11-24); asked on top of each account's own variant.
+    torrent_variant: str | None = None
 
 
 def http_fetch(method: str, url: str, form: dict[str, str] | None = None,
@@ -994,6 +997,9 @@ class Saves:
                 continue
             try:
                 streams = self.aio.streams(save["kind"], vid, acct.variant)
+                tv = self.cfg.torrent_variant
+                if tv and tv != acct.variant:
+                    streams = streams + self.aio.streams(save["kind"], vid, tv)
             except (OSError, ValueError, KeyError, ServiceError) as e:
                 self.log(f"AIOStreams failed for {vid}: {e!r}")
                 continue
@@ -1249,4 +1255,5 @@ def config_from_env(env: dict[str, str], root: str, token: str) -> Config:
         cinemeta_base=env.get("CINEMETA_BASE", "http://cinemeta-proxy.stremio.svc.cluster.local"),
         token=token,
         seed_follows=tuple(s.strip() for s in env.get("SEED_FOLLOWS", "").split(",") if s.strip()),
+        torrent_variant=env.get("AIOSTREAMS_VARIANT_TORRENTS") or None,
     )

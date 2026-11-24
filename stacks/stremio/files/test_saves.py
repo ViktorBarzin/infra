@@ -423,6 +423,21 @@ class SaveFlowTests(Base):
         self.assertEqual(self.saves.clip_path("emo", "saved"), os.path.join(self.clips, "saved-bg.mp4"))
         self.assertEqual(saves.manifest(self.saves.accounts["emo"])["catalogs"][0]["name"], "Запазени")
 
+    def test_torrent_rows_come_from_the_torrent_variant(self):
+        # Since 2026-11-24 Viktor's main AIOStreams config returns no torrent
+        # rows; its "p2p" variant does. A save asks both and picks from all.
+        self.saves.close()
+        self.saves = self.make(torrent_variant="p2p")
+        vid = f"{UNDERCOVER}:6:8"
+        ep = self.episode(8, infohash=HASH_A)
+        self.web.aio.streams[("p2p", vid)] = [ep]
+        self.web.rd.files[HASH_A] = [(ep["behaviorHints"]["filename"], 1000)]
+        self.saves.tap("viktor", "v", vid)
+        self.saves.run_cycle()
+        self.assertIn((None, vid), self.web.aio.calls)
+        self.assertIn(("p2p", vid), self.web.aio.calls)
+        self.assertIn(("POST", "/torrents/addMagnet"), self.web.rd.calls)
+
     def test_rd_refusal_falls_back_to_qbittorrent(self):
         vid = f"{UNDERCOVER}:6:8"
         ep = self.episode(8, infohash=HASH_A)
