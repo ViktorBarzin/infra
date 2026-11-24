@@ -440,7 +440,11 @@ else. ha-london (the Pi 3) sends it over Bluetooth, so the projector can stay
 off. The VLC add-on (`core_vlc`, about 12 MB of RAM, HA entity
 `media_player.vlc_telnet`) plays the stream into the Pi's sound system, whose
 default output is the Z537. The Z537 keeps two Bluetooth sources connected at
-once, so it stays paired with the projector for films.
+once, so it stays paired with the projector for films. It plays only one of
+them: the source that streams holds it, and the other is silent until that
+stream stops. So the Pi holds the speaker only while the radio plays (Bluetooth
+link row below), and a film playing on the projector keeps the radio silent
+until it is paused.
 
 | Piece | Where | Notes |
 |---|---|---|
@@ -450,7 +454,7 @@ once, so it stays paired with the projector for films.
 | Station directory | Radio Browser integration | Browse opens `/media-browser/media_player.vlc_telnet/app%2Cmedia-source%3A%2F%2Fradio_browser`, which selects VLC as the player. A new browser tab takes up to a minute to load this page on the Pi. |
 | Volume | `input_number.radio_volume` (0-100%) and the Z537 knob | The slider only turns VLC down: 100% is VLC's own 100% (`volume_level` 0.512), the stream as sent. The VLC integration maps 0..1 to VLC 0..500, so a raw `volume_level` above 0.512 is a digital boost of up to 195% that clipped above 50% on the old slider (2026-11-23). Automation `radio_volume_cap` pulls VLC back to 0.512 whatever sets it; `radio_volume_to_vlc` applies the slider. A new station keeps the slider's volume: `script.radio_play` sets VLC to it before it plays. The Z537 offers no AVRCP, so the Pi cannot set the speaker's own volume; its knob sets how loud. The PulseAudio Bluetooth output stays at 100%. |
 | One tap | `script.radio_and_lights` | A toggle: while VLC plays, it runs `radio_stop`. Otherwise it sets Follow music on with Beat pulse in Rainbow, sets the volume to 30%, plays the station played last (`input_text.radio_last_station`, written by `radio_play` and kept by Radio stop; NRJ when empty), then sets Livia to brightness 117 of 255. Viktor runs it from the companion app's Scripts widget on the iPhone and from the Apple Watch app (companion app settings, Apple Watch, Configuration). It runs `radio_lights_follow` itself, because VLC stays "playing" when NRJ was already on. `script.radio_stop` undoes it as usual. It takes an optional `station`: it plays that station, switches to it, or stops the radio when that station already plays. For the iPhone widget buttons, which run a script without options, each station has a script `radio_lights_<station>` ("Radio and lights: NRJ") that calls it; a new station needs one too. |
-| Bluetooth link | `switch.radio_speaker_bluetooth` (command_line) | On means the Pi is connected to the Z537 (`40:EF:4C:C3:B2:1E`). The Z537 rejoins the device it used last, so `radio_play` turns this switch on first. |
+| Bluetooth link | `switch.radio_speaker_bluetooth` (command_line, state read every 60 s) | On means the Pi is connected to the Z537 (`40:EF:4C:C3:B2:1E`). The Z537 rejoins the device it used last, so `radio_play` turns this switch on first. The Pi's sound system does not load `module-suspend-on-idle`, so a connected Pi streams silence even with the radio paused or stopped, and the projector stays silent (2026-11-24, 21:03 to 21:19). Automation `radio_speaker_follows_vlc` turns the switch off 30 s after VLC stops playing, also when the Z537 rejoined the Pi by itself or the Speaker chip was turned on by hand, and turns it on when VLC plays while the Pi is disconnected. |
 
 **Follow music** couples the radio with the Livia LED strip. With
 `input_boolean.radio_follow_music` on, a station starting on VLC switches the
