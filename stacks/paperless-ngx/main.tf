@@ -656,7 +656,7 @@ resource "kubernetes_deployment" "tika" {
       }
       spec {
         container {
-          image = "docker.io/apache/tika:3.3.3.1"
+          image = "docker.io/apache/tika:3.4.0.0"
           name  = "tika"
           port {
             container_port = 9998
