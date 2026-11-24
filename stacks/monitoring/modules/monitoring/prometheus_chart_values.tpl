@@ -2727,6 +2727,25 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Immich search probe has not reported in {{ $value | printf \"%.0f\" }}s — immich-search-probe CronJob may be broken"
+          # The shared Stremio account must carry no raw torrent rows: a London
+          # device would torrent from the flat's line, which the ISP objects to.
+          # Torrent rows play only through "P2P via Sofia" (stacks/servarr/aiostreams,
+          # files/p2p_row.py). The stremio-torrent-guard CronJob (aiostreams ns,
+          # hourly, files/torrent_row_guard.py) counts infoHash rows per addon.
+          - alert: StremioTorrentRowsOnAccount
+            expr: max by (addon) (stremio_torrent_rows{job="stremio-torrent-guard"}) > 0
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Stremio addon {{ $labels.addon }} gives the shared account raw torrent rows, so London devices would torrent on the flat's line. Remove the addon, or turn P2P off in Viktor's main AIOStreams config (only variant p2p may have it)."
+          - alert: StremioTorrentGuardStale
+            expr: (time() - stremio_torrent_guard_last_run_timestamp{job="stremio-torrent-guard"}) > 3 * 3600 or stremio_torrent_guard_success{job="stremio-torrent-guard"} == 0 or absent(stremio_torrent_guard_last_run_timestamp{job="stremio-torrent-guard"})
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "stremio-torrent-guard has not checked the shared Stremio account for torrent rows in 3 hours, or its session key stopped working (Vault secret/viktor stremio_guard_authkey). kubectl logs -n aiostreams job/<latest stremio-torrent-guard job>"
           # Photos the job pipeline dropped. Immich chains metadataExtraction ->
           # thumbnailGeneration through BullMQ; a job that exhausts its retries or
           # was never enqueued (server died between saving the asset and queueing)

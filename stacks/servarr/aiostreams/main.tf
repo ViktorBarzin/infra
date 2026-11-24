@@ -60,6 +60,62 @@ resource "kubernetes_config_map" "download_row" {
   }
 }
 
+# The P2P via Sofia addon's install URL is https://aiostreams-p2p.viktorbarzin.me/<token>/manifest.json.
+# The token is its only gate: whoever has it can play torrents through the
+# Sofia streaming server.
+resource "random_id" "p2p_row_token" {
+  byte_length = 24
+}
+
+resource "kubernetes_secret" "p2p_row" {
+  metadata {
+    name      = "p2p-row"
+    namespace = kubernetes_namespace.aiostreams.metadata[0].name
+  }
+  data = {
+    P2P_ROW_TOKEN = random_id.p2p_row_token.hex
+  }
+}
+
+resource "kubernetes_config_map" "p2p_row" {
+  metadata {
+    name      = "p2p-row"
+    namespace = kubernetes_namespace.aiostreams.metadata[0].name
+  }
+  data = {
+    "p2p_row.py" = file("${path.module}/files/p2p_row.py")
+  }
+}
+
+# The Sofia streaming server's basic-auth login (stacks/stremio), which the
+# p2p-row sidecar adds to its requests so players never hold it.
+resource "kubernetes_manifest" "stremio_server_login" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "stremio-server-login"
+      namespace = kubernetes_namespace.aiostreams.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = { name = "stremio-server-login" }
+      data = [
+        { secretKey = "STREMIO_SERVER_USER", remoteRef = { key = "stremio", property = "webui_user" } },
+        { secretKey = "STREMIO_SERVER_PASSWORD", remoteRef = { key = "stremio", property = "webui_password" } },
+      ]
+    }
+  }
+  depends_on = [kubernetes_namespace.aiostreams]
+}
+
 resource "kubernetes_deployment" "aiostreams" {
   metadata {
     name      = "aiostreams"
@@ -88,6 +144,7 @@ resource "kubernetes_deployment" "aiostreams" {
           # Roll the pod when the sidecar script changes.
           "checksum/rd-blocked-names" = sha1(file("${path.module}/files/rd_blocked_names.py"))
           "checksum/download-row"     = sha1(file("${path.module}/files/download_row.py"))
+          "checksum/p2p-row"          = sha1(file("${path.module}/files/p2p_row.py"))
           # AIOSTREAMS_AUTH is read only at start: change this when the account
           # list in kubernetes_manifest.auth_secret changes, to roll the pod.
           "aiostreams-auth-users" = "proxy,viktor"
@@ -334,10 +391,82 @@ resource "kubernetes_deployment" "aiostreams" {
             }
           }
         }
+        container {
+          # "P2P via Sofia": the shared account's torrent rows as HTTPS rows. It
+          # asks AIOStreams (variant "p2p" of Viktor's config, which keeps only
+          # torrent rows) and relays the video from the Sofia streaming server
+          # (stacks/stremio), so no London device torrents (Viktor 2026-11-23;
+          # the London ISP objects to BitTorrent). Standard library only.
+          # Tests: cd files && python3 -m unittest test_p2p_row
+          name    = "p2p-row"
+          image   = "docker.io/library/python:3.15.2-alpine"
+          command = ["python3", "-u", "/scripts/p2p_row.py"]
+          port {
+            container_port = 8083
+          }
+          env {
+            name  = "PORT"
+            value = "8083"
+          }
+          env {
+            # Variant "p2p" of Viktor's AIOStreams config (user config, not
+            # Terraform): Torrentio P2P and Comet/StremThru P2P on, only the p2p
+            # stream type kept, Real-Debrid's blocked-names list off.
+            name  = "AIOSTREAMS_VARIANT"
+            value = "p2p"
+          }
+          env {
+            name  = "PUBLIC_URL"
+            value = "https://aiostreams-p2p.viktorbarzin.me"
+          }
+          env {
+            # The stremio Service (port 80 to its nginx), which needs the basic-auth login.
+            name  = "STREMIO_BASE"
+            value = "http://stremio.stremio.svc.cluster.local"
+          }
+          env_from {
+            # AIOSTREAMS_UUID and AIOSTREAMS_PASSWORD.
+            secret_ref { name = "aiostreams-probe-secrets" }
+          }
+          env_from {
+            secret_ref { name = kubernetes_secret.p2p_row.metadata[0].name }
+          }
+          env_from {
+            # STREMIO_SERVER_USER and STREMIO_SERVER_PASSWORD.
+            secret_ref { name = "stremio-server-login" }
+          }
+          readiness_probe {
+            http_get {
+              path = "/healthz"
+              port = 8083
+            }
+            period_seconds = 30
+          }
+          volume_mount {
+            name       = "p2p-row-script"
+            mount_path = "/scripts"
+            read_only  = true
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "24Mi"
+            }
+            limits = {
+              memory = "96Mi"
+            }
+          }
+        }
         volume {
           name = "download-row-script"
           config_map {
             name = kubernetes_config_map.download_row.metadata[0].name
+          }
+        }
+        volume {
+          name = "p2p-row-script"
+          config_map {
+            name = kubernetes_config_map.p2p_row.metadata[0].name
           }
         }
         volume {
@@ -363,7 +492,7 @@ resource "kubernetes_deployment" "aiostreams" {
       metadata[0].annotations["deployment.kubernetes.io/revision"],
     ]
   }
-  depends_on = [kubernetes_manifest.auth_secret, kubernetes_manifest.probe_secrets]
+  depends_on = [kubernetes_manifest.auth_secret, kubernetes_manifest.probe_secrets, kubernetes_manifest.stremio_server_login]
 }
 
 # AIOStreams accounts: the built-in proxy's, and viktor's admin login for the
@@ -450,6 +579,9 @@ resource "kubernetes_manifest" "probe_secrets" {
         { secretKey = "AIOSTREAMS_PASSWORD", remoteRef = { key = "viktor", property = "aiostreams_password" } },
         { secretKey = "STREMIO_EMAIL", remoteRef = { key = "viktor", property = "stremio_email" } },
         { secretKey = "STREMIO_PASSWORD", remoteRef = { key = "viktor", property = "stremio_password" } },
+        # A Stremio session key for the shared account, made by one sign-in on
+        # 2026-11-23, so stremio-torrent-guard never signs in.
+        { secretKey = "STREMIO_AUTH_KEY", remoteRef = { key = "viktor", property = "stremio_guard_authkey" } },
       ]
     }
   }
@@ -762,6 +894,81 @@ sys.exit(0 if success else 1)
   }
 }
 
+resource "kubernetes_config_map" "torrent_row_guard" {
+  metadata {
+    name      = "torrent-row-guard"
+    namespace = kubernetes_namespace.aiostreams.metadata[0].name
+  }
+  data = {
+    "torrent_row_guard.py" = file("${path.module}/files/torrent_row_guard.py")
+  }
+}
+
+# Alerts StremioTorrentRowsOnAccount when any addon on the shared Stremio
+# account returns a raw torrent row: London devices would then torrent on the
+# flat's line. Torrent rows reach the account only through "P2P via Sofia"
+# (container p2p-row). Reads the addon list with a saved session key, so it
+# never signs in. Tests: cd files && python3 -m unittest test_torrent_row_guard
+resource "kubernetes_cron_job_v1" "torrent_row_guard" {
+  metadata {
+    name      = "stremio-torrent-guard"
+    namespace = kubernetes_namespace.aiostreams.metadata[0].name
+  }
+  spec {
+    schedule                      = "17 * * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 0 # one attempt per run
+        ttl_seconds_after_finished = 3600
+        template {
+          metadata {}
+          spec {
+            restart_policy = "Never"
+            container {
+              name    = "guard"
+              image   = "docker.io/library/python:3.15.2-alpine"
+              command = ["python3", "-u", "/scripts/torrent_row_guard.py"]
+              env {
+                name = "STREMIO_AUTH_KEY"
+                value_from {
+                  secret_key_ref {
+                    name = "aiostreams-probe-secrets"
+                    key  = "STREMIO_AUTH_KEY"
+                  }
+                }
+              }
+              volume_mount {
+                name       = "script"
+                mount_path = "/scripts"
+                read_only  = true
+              }
+              resources {
+                requests = { memory = "32Mi", cpu = "10m" }
+                limits   = { memory = "64Mi" }
+              }
+            }
+            volume {
+              name = "script"
+              config_map {
+                name = kubernetes_config_map.torrent_row_guard.metadata[0].name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  depends_on = [kubernetes_manifest.probe_secrets]
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
 resource "kubernetes_cron_job_v1" "stremio_account_backup" {
   metadata {
     name      = "stremio-account-backup"
@@ -979,3 +1186,39 @@ module "ingress_download" {
   homepage_enabled = false
   tls_secret_name  = var.tls_secret_name
 }
+
+resource "kubernetes_service" "p2p_row" {
+  metadata {
+    name      = "aiostreams-p2p"
+    namespace = kubernetes_namespace.aiostreams.metadata[0].name
+    labels = {
+      "app" = "aiostreams"
+    }
+  }
+  spec {
+    selector = {
+      app = "aiostreams"
+    }
+    port {
+      name        = "http"
+      port        = 80
+      target_port = 8083
+    }
+  }
+}
+
+# The P2P via Sofia addon (container p2p-row above). Video crosses this host.
+module "ingress_p2p" {
+  source = "../../../modules/kubernetes/ingress_factory"
+  # auth = "app": the path token is the gate (see random_id.p2p_row_token).
+  # Stremio clients cannot follow a sign-in redirect.
+  auth             = "app"
+  dns_type         = "non-proxied" # video: Cloudflare's CDN terms bar it on proxied hosts
+  namespace        = kubernetes_namespace.aiostreams.metadata[0].name
+  name             = "aiostreams-p2p"
+  service_name     = kubernetes_service.p2p_row.metadata[0].name
+  turnstile        = false # Stremio players, not browsers
+  homepage_enabled = false
+  tls_secret_name  = var.tls_secret_name
+}
+
