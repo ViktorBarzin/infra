@@ -756,6 +756,9 @@ class AdoptionTests(Base):
             self.assertEqual(play[0], "server")
         self.assertEqual(self.labels("viktor", "series", f"{UNDERCOVER}:6:3")[0], "Saving when it comes out")
         self.assertEqual([c for c in self.web.aio.calls if c[1].endswith((":6:1", ":6:2"))], [])
+        # Adopted torrents seed to ratio 1, like the ones the saves start.
+        for n in (1, 2):
+            self.assertEqual(self.web.qb.torrents[f"{n:040x}"].get("ratio_limit"), "1")
         # A restart adopts nothing twice and does not apply the seed again.
         self.saves.tap("viktor", "remove", f"{UNDERCOVER}:6:1")
         self.saves.close()

@@ -899,6 +899,11 @@ class Saves:
                     "VALUES (?, 'server', 'ready', 'original', ?, ?, ?, ?, ?, 100, ?, ?, ?)",
                     (vid, os.path.basename(rel), infohash or f"file:{imdb}/{rel}", infohash, rel, st.st_size, st.st_mtime, now, now),
                 )
+                if infohash:
+                    try:
+                        self.qb.share_limits(infohash)
+                    except (OSError, ValueError, ServiceError) as e:
+                        self.log(f"could not set ratio 1 on {imdb}/{rel}: {e}")
                 self.log(f"adopted {imdb}/{rel}")
 
     def apply_seeds(self, now: float) -> None:
