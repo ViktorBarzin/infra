@@ -9,6 +9,7 @@
 | technitium | DNS server (10.0.20.201 = primary + 2 replicas that follow it by NOTIFY; blocking and PostgreSQL query logging on all three, replicas kept in step by `technitium-blocking-sync`); external-dns for `*.viktorbarzin.lan` Ingress hosts and `external-dns-cloud` for Cloud App hosts in `viktorbarzin.me` | technitium |
 | headscale | Tailscale control server | headscale |
 | tang | Tang key servers that unlock each Physical node's State volume (ADR-0045); one tangd per node on its own MetalLB IP, reachable only from that node's Site LAN (dell-worker: 10.0.20.214) | tang |
+| opportunistic-nodes | CronJob `remove-offline` (every 5 min) that deletes the Node object of an Opportunistic worker (ADR-0045) once it is not Ready and kubelet has been silent 15 min; kubelet registers it again at boot | opportunistic-nodes |
 | traefik | Ingress controller (Helm) | traefik |
 | xray | Proxy/tunnel | platform |
 | authentik | Identity provider (SSO) | authentik |

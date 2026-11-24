@@ -57,6 +57,25 @@ journalctl -u physical-node-tether --since -1h
 
 The Tether starts a unit only when it has just opened or mounted the volume. A kubelet that you stopped stays stopped.
 
+## Offline and back
+
+An Opportunistic worker that is off is not in the cluster. The CronJob `opportunistic-nodes/remove-offline` (`stacks/opportunistic-nodes`) runs every 5 minutes. It deletes the Node object of an Opportunistic worker when both are true:
+
+- the node is not Ready;
+- kubelet has not renewed the node's Lease in `kube-node-lease` for 15 minutes.
+
+The node's Pending DaemonSet pods and its Lease go with it. A NotReady node with a live kubelet stays, because a running kubelet does not register again.
+
+When the machine boots, kubelet registers the node again. kubeadm wrote the label and the taint into `/var/lib/kubelet/kubeadm-flags.env` (`--node-labels`, `--register-with-taints`), so the new Node object has both before a pod can schedule. calico-node writes its annotations again.
+
+A tunnel outage on a running machine: after 10 minutes without Tang the Tether stops kubelet; after 15 minutes the CronJob deletes the node. When the tunnel returns, the Tether starts kubelet, and kubelet registers the node.
+
+Read what the CronJob did:
+
+```sh
+kubectl -n opportunistic-nodes logs job/$(kubectl -n opportunistic-nodes get jobs -o name | tail -1 | cut -d/ -f2)
+```
+
 ## Add a machine
 
 PXE provisioning comes later (ADR-0045). For now, install by hand.
@@ -169,14 +188,15 @@ If the machine comes back, do not trust its OS. Install Ubuntu again and follow 
 
 ## Remove a machine
 
-1. `kubectl drain <node> --ignore-daemonsets --delete-emptydir-data` and `kubectl delete node <node>`.
+1. If the machine is on, `kubectl drain <node> --ignore-daemonsets --delete-emptydir-data`, switch it off, and `kubectl delete node <node>`. If it is off, the node is already gone (`Offline and back`).
 2. Remove it from `local.nodes` in `stacks/tang/main.tf` and apply. Delete `secret/tang-<node>`.
 3. Remove it from `[physical_nodes]` and delete `playbooks/host_vars/<node>.yml`.
 
 ## Known limits
 
 - **Versions.** The playbook installs containerd and kubeadm at the cluster's versions only on a new node. It does not upgrade a node. A node that was off during a `k8s-version-upgrade` run keeps its old kubelet; the playbook reports it.
-- **Labels and taints** apply at registration. The playbook reports a difference and changes nothing.
+- **Labels and taints** apply at registration. The playbook reports a difference and changes nothing. A label added with `kubectl label` is lost when `remove-offline` deletes the node; put it in `node_labels` in `host_vars` and join again.
+- **A node deleted under a running kubelet.** If the apiserver is unreachable for 15 minutes while Tang still answers, the Tether keeps kubelet running and the CronJob deletes the node. kubelet then reports `nodes "<node>" not found` and does not register again. Fix: `systemctl restart kubelet` on the machine.
 - **GPU.** The node keeps a host NVIDIA driver (`gpu_driver`) and the labels `nvidia.com/gpu.deploy.driver=false` and `nvidia.com/gpu.deploy.container-toolkit=false`. The GPU Operator's DaemonSets tolerate only `nvidia.com/gpu`, so its device plugin does not run on a node with the Opportunistic worker taint.
 - **Gates that wait for every node.** `kured-sentinel-gate` and the `k8s-version-upgrade` preflight skip nodes with the label `node-role.viktorbarzin.me/opportunistic`, so an Opportunistic worker that is off blocks neither (`docs/agents/nodes.md`).
 - **IPv6 pods across Sites.** The pods on a node away from VLAN 20 get IPv6 addresses, but no route leads to `calico_ipv6_address`, so IPv6 pod traffic does not reach them from Sofia. IPv4 works. Only Traefik's Services are dual-stack, and Traefik does not tolerate the taint.

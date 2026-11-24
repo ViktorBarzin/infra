@@ -6846,8 +6846,19 @@ serverFiles:
             annotations:
               summary: "No Tetragon events written to netsec.tetragon for 30m"
           - alert: TetragonNotReady
-            # A node without a ready Tetragon agent records nothing.
-            expr: kube_daemonset_status_number_ready{namespace="tetragon", daemonset="tetragon"} < kube_daemonset_status_desired_number_scheduled{namespace="tetragon", daemonset="tetragon"}
+            # A node without a ready Tetragon agent records nothing. Agents on an
+            # Opportunistic worker do not count (record
+            # opportunistic_node:daemonset_pods_not_ready:count), same as
+            # DaemonSetMissingPods.
+            expr: |
+              (
+                kube_daemonset_status_desired_number_scheduled{namespace="tetragon", daemonset="tetragon"}
+                - on(namespace, daemonset) kube_daemonset_status_number_ready{namespace="tetragon", daemonset="tetragon"}
+                - on(namespace, daemonset) (
+                    opportunistic_node:daemonset_pods_not_ready:count{namespace="tetragon", daemonset="tetragon"}
+                    or on(namespace, daemonset) (kube_daemonset_status_desired_number_scheduled{namespace="tetragon", daemonset="tetragon"} * 0)
+                  )
+              ) > 0
             for: 15m
             labels:
               severity: warning
