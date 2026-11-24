@@ -63,6 +63,7 @@ locals {
     "545" = "infra-map"                # ViktorBarzin/infra-map
     "546" = "datenight"                # ViktorBarzin/datenight
     "547" = "wifi"                     # ViktorBarzin/wifi
+    "580" = "wealth"                   # ViktorBarzin/wealth
     "7"   = "realestate-crawler"       # immovika/realestate-crawler
     "9"   = "ebook2audiobook"          # ViktorBarzin/audiblez-web
     "10"  = "tv"                       # ViktorBarzin/tv
