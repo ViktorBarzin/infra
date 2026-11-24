@@ -185,7 +185,7 @@ resource "kubernetes_cron_job_v1" "idle_sleeper" {
             restart_policy       = "Never"
             container {
               name    = "sleeper"
-              image   = "bitnami/kubectl:latest@sha256:8f59408f9e896fc8992a0660a56687545bd06751f26531b4a26fca6d5dc7562d"
+              image   = "bitnami/kubectl:latest@sha256:ae71f848f057a71029d092e98548cabf7cd17b11da0adad0a8f4145a9c87c830"
               command = ["/bin/bash", "-c"]
               args = [<<-EOT
                 set -u
