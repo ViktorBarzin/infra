@@ -411,7 +411,7 @@ Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Fr
 - **Card** = a widget inside a view.
 
 - **Overview** (`lovelace`, the default): two **sections** views, styled with Mushroom + mini-graph-card. Home holds ONLY the five things Viktor asked for on 2026-11-24; put anything else on its topic dashboard and ask before adding it here.
-  - **Home** tab: *Who's been home* (history-graph of the 3 `person.*`, 48 h, title links to Location) · *Controls* (Radio & lights = `script.radio_and_lights`, hold opens Radio; Water cooler = `switch.pikkachu` toggle with its watts) · *Bedroom air* (Apollo AIR-1 is in the Bedroom area: CO₂/temp/humidity/PM2.5 chips + CO₂ and temp/humidity 24 h trends, title links to Air Quality) · *Bike* (Cowboy remaining battery, 7-day mini-graph).
+  - **Home** tab: *Who's been home* (history-graph of the 3 `person.*`, 48 h, title links to Location) · *Controls* (Radio & lights = `script.radio_and_lights`, hold opens Radio; Water cooler = `switch.pikkachu` toggle with its watts) · *Bedroom air* (Apollo AIR-1 is in the Bedroom area: CO₂/PM2.5/temperature/humidity needle gauges in a 2x2 grid, same thresholds as the Air Quality page, + CO₂ and temp/humidity 24 h trends, title links to Air Quality) · *Bike* (Cowboy remaining battery, 7-day mini-graph).
   - **System** tab: *Router health* (GL-iNet MT6000 chips + CPU temp/load/memory tiles with trend graphs) · *Home Assistant* (installed version from `update.home_assistant_core_update`, last backup, RPi power, HA started) · *Batteries* (iPhone 17, Anca's Xiaomi, London tablet).
 - **Location** (`location-map`): map, Who's where, per-person cards, plus the 24 h "Who's been home" timeline and "Recent changes" logbook moved off the old Overview Router tab.
 - **Air Quality** (`air-quality`): deep-dive (views: Home, Detailed).
@@ -508,14 +508,14 @@ homelab ha yiko stop                        # stop the wheels
 
 ### Custom Components (HACS integrations)
 - **cowboy** (`elsbrock/cowboy-ha` v1.2.0): Cowboy e-bike — revived 2026-06-24. The old `jdejaegh/home-assistant-cowboy` repo is **dead (404)**; don't chase it.
-- **hildebrandglow_dcc**: UK smart meter DCC energy — **DISABLED by user** (config entry `disabled_by: user`), not broken.
+- **hildebrandglow_dcc** (HandyHat v1.0.3): UK smart meter half-hourly data from the DCC through Hildebrand Glowmarkt (Bright account, login stored only in this config entry). ENABLED 2026-11-24 after the flat's meter (MPAN 2700000946551) was registered on glowmarkt.com with the in-home display GUID. The Energy dashboard's grid source is `sensor.dcc_sourced_smart_electricity_meter_usage_today` (kWh) with cost `..._cost_today`, on device "Smart electricity meter". Data arrives hours late, not live. The account also holds the meter from the previous flat; its device "Old meter (Spenlow, moved out 2024)" is disabled and its sensors are `sensor.old_meter_spenlow_*`.
 
 ### HACS frontend cards (plugins)
 - **Mushroom** (`piitaya/lovelace-mushroom`), **mini-graph-card** (`kalkih/mini-graph-card`), **plotly-graph-card** (`dbuezas/lovelace-plotly-graph-card`) — used by the redesigned Overview. Install over WS `hacs/repository/download`; resources auto-register in storage mode.
 
 ### Integrations
 ESPHome, TP-Link Kasa, Tapo, UptimeRobot, **Cowboy** (elsbrock), Oral-B BLE, Ookla Speedtest (exposes only an `update` entity, no live speed sensors), HACS, OpenRouter (free LLMs), Piper (TTS), Whisper (STT), Android TV/ADB, Google Cast (projector, 2026-11-22), VLC (`core_vlc` add-on) and Radio Browser (radio, 2026-11-22).
-- **Disabled by user (NOT broken)**: `met` + `metoffice` (weather — so `weather.*` entities are ABSENT), `roomba` (Rumi vacuum), `hildebrandglow_dcc` (energy).
+- **Disabled by user (NOT broken)**: `met` + `metoffice` (weather — so `weather.*` entities are ABSENT), `roomba` (Rumi vacuum).
 - **Failing**: `tplink` **Tapo P100** projector plug — `setup_retry`, 403 KLAP handshake from 192.168.8.108 (plug off / firmware). Left as-is.
 
 ### AI / Voice Assistants
