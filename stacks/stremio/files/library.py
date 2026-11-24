@@ -284,7 +284,13 @@ def make_handler(root: str, token: str, public_url: str, saves: Saves | None = N
                 status = upstream.status
                 headers = upstream.headers
                 self.send_response(status)
-                for name in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
+                # Real-Debrid answers application/force-download; players get the
+                # video type from the file name, as for files on our server.
+                ext = os.path.splitext(str(copy.get("release") or ""))[1].lower()
+                kind = CONTENT_TYPES.get(ext) or headers.get("Content-Type")
+                if kind:
+                    self.send_header("Content-Type", str(kind))
+                for name in ("Content-Length", "Content-Range", "Accept-Ranges"):
                     value = headers.get(name)
                     if value:
                         self.send_header(name, str(value))

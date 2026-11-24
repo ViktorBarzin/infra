@@ -288,7 +288,9 @@ class Base(unittest.TestCase):
 
     def open(self, url, rng):
         self.opened.append((url, rng))
-        return FakeUpstream(self.upstream_bytes, rng)
+        up = FakeUpstream(self.upstream_bytes, rng)
+        up.headers["Content-Type"] = getattr(self, "upstream_type", up.headers["Content-Type"])
+        return up
 
     def tearDown(self):
         self.saves.close()
@@ -820,9 +822,11 @@ class RoutesTests(Base):
         for _ in range(3):
             self.saves.run_cycle()
         self.now += 180
+        self.upstream_type = "application/force-download"  # what Real-Debrid sends (seen 2026-11-24)
         resp, body = self.get(f"/{TOKEN}/a/viktor/v/{vid}", {"Range": "bytes=10-19"})
         self.assertEqual((resp.status, body), (206, self.upstream_bytes[10:20]))
         self.assertEqual(resp.getheader("Content-Range"), "bytes 10-19/1000")
+        self.assertEqual(resp.getheader("Content-Type"), "video/mp4")  # from the file name
         self.get(f"/{TOKEN}/a/viktor/v/{vid}", {"Range": "bytes=20-29"})
         self.assertEqual(len(self.web.rd.unrestricted), 1)  # the link is kept for hours
         self.assertEqual(self.opened[-1], ("https://dl.real-debrid.example/RD11/file.mkv", "bytes=20-29"))
