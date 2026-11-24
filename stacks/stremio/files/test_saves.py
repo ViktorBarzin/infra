@@ -178,6 +178,8 @@ class FakeQB:
             t = self.torrents.get(query["hash"])
             return (200, t["files"]) if t else (404, "Not Found")
         if path == "/torrents/setShareLimits":
+            if "shareLimitAction" not in form or "shareLimitsMode" not in form:
+                return 400, "Missing required parameters: shareLimitAction, shareLimitsMode"  # qBittorrent 5.3
             self.torrents[form["hashes"]]["ratio_limit"] = form["ratioLimit"]
             return 200, ""
         if path == "/torrents/filePrio":

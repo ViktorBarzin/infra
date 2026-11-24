@@ -553,7 +553,12 @@ class QBittorrent:
         return rows if isinstance(rows, list) else []
 
     def share_limits(self, qid: str) -> None:
-        self._post("torrents/setShareLimits", {"hashes": qid, "ratioLimit": "1", "seedingTimeLimit": "-2", "inactiveSeedingTimeLimit": "-2"})
+        # qBittorrent 5.x (WebAPI 2.16) answers 400 without shareLimitAction and
+        # shareLimitsMode (seen 2026-11-24).
+        self._post("torrents/setShareLimits", {
+            "hashes": qid, "ratioLimit": "1", "seedingTimeLimit": "-2", "inactiveSeedingTimeLimit": "-2",
+            "shareLimitAction": "Stop", "shareLimitsMode": "Custom",
+        })
 
     def priority(self, qid: str, ids: list[int], priority: int) -> None:
         self._post("torrents/filePrio", {"hash": qid, "id": "|".join(str(i) for i in ids), "priority": str(priority)})
