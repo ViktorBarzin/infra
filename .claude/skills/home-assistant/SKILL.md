@@ -395,7 +395,7 @@ Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Fr
 ## ha-london Knowledge Map
 
 ### Overview
-- **HA Version**: 2026.5.2 on **Home Assistant OS** (HAOS — managed appliance, NOT a `docker run` container). Latest is 2026.6.4 (update available, deliberately not applied).
+- **HA Version**: 2026.11.2 on **Home Assistant OS** (HAOS — managed appliance, NOT a `docker run` container); 2026.11.3 available (checked 2026-11-24).
 - **Location**: London, UK
 - **Platform**: Raspberry Pi 4, HA OS
 - **Access from the Sofia devvm**: london is **remote**, over the site-to-site WireGuard tunnel. `homelab ha ssh --instance london` connects (verified 2026-11-13; ADR-0012 expected it not to). The API is still the main way to drive it: `homelab ha token --instance london` + `https://ha-london.viktorbarzin.me/api/...`, and the WebSocket API `wss://ha-london.viktorbarzin.me/api/websocket` for dashboards / config-entries / HACS installs.
@@ -404,17 +404,19 @@ Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Fr
 - **3 tracked people**: Viktor Barzin, Anca Milea, Gheorghe Milea
 - **Zone**: London (home)
 
-### Dashboards (redesigned 2026-06-24)
+### Dashboards (Overview reorganised 2026-11-24)
 **Glossary** (HA terms — keep distinct):
-- **Dashboard** = a sidebar entry (Overview, Air Quality, Map). Sidebar *order* is a per-USER frontend preference, not in any dashboard config.
+- **Dashboard** = a sidebar entry (Overview, Air Quality, Location). Sidebar *order* is a per-USER frontend preference, not in any dashboard config.
 - **View** = a tab inside a dashboard. View order is global (stored in the dashboard config).
 - **Card** = a widget inside a view.
 
-- **Overview** (`lovelace`, the default): responsive **sections** views, styled with Mushroom + mini-graph-card.
-  - **Home** tab: *Who's home* · *Comfort & Air* (CO₂/temp/humidity/PM2.5/VOC chips + CO₂ and temp/humidity trend graphs + link to Air Quality) · *Cowboy* (battery/range/last-ride) · *Energy* (5 Kasa plugs + power trend) · *Quick actions* (Netflix/Stremio/Night).
-  - **More** tab: *Network* (GL-MT6000 router) · *System* (HA version/update, last backup, RPi power) · *Phones*.
-- **Air Quality** (`air-quality`): deep-dive (views: Home, Detailed). (`detialed`→`detailed` path typo fixed 2026-06-24.)
-- Built via the WS `lovelace/config/save` API (london is remote — no SSH path).
+- **Overview** (`lovelace`, the default): two **sections** views, styled with Mushroom + mini-graph-card. Home holds ONLY the five things Viktor asked for on 2026-11-24; put anything else on its topic dashboard and ask before adding it here.
+  - **Home** tab: *Who's been home* (history-graph of the 3 `person.*`, 48 h, title links to Location) · *Controls* (Radio & lights = `script.radio_and_lights`, hold opens Radio; Water cooler = `switch.pikkachu` toggle with its watts) · *Bedroom air* (Apollo AIR-1 is in the Bedroom area: CO₂/temp/humidity/PM2.5 chips + CO₂ and temp/humidity 24 h trends, title links to Air Quality) · *Bike* (Cowboy remaining battery, 7-day mini-graph).
+  - **System** tab: *Router health* (GL-iNet MT6000 chips + CPU temp/load/memory tiles with trend graphs) · *Home Assistant* (installed version from `update.home_assistant_core_update`, last backup, RPi power, HA started) · *Batteries* (iPhone 17, Anca's Xiaomi, London tablet).
+- **Location** (`location-map`): map, Who's where, per-person cards, plus the 24 h "Who's been home" timeline and "Recent changes" logbook moved off the old Overview Router tab.
+- **Air Quality** (`air-quality`): deep-dive (views: Home, Detailed).
+- Topic dashboards that used to be duplicated on Overview: Plugs (`smart-plugs`), Yiko (`vacuum-yiko`), Radio (`london-radio`), Livia (`livia-strip`), Health, Anca Health.
+- Built via the WS `lovelace/config/save` API. To try a layout without touching the live one, save it to a hidden draft dashboard (`lovelace/dashboards/create` with `show_in_sidebar: false`, `require_admin: true`), screenshot it, then delete it.
 
 ### Key Systems
 
