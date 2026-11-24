@@ -512,6 +512,30 @@ class FollowTests(Base):
         self.saves.run_cycle()
         self.assertEqual(self.labels("viktor", "series", e2)[0], "Saved")
 
+    def test_episode_lists_are_fetched_at_most_every_6_hours(self):
+        # The episode list comes from a public addon (TMDB on elfhosted); a
+        # follow must not ask it on every 5-minute cycle.
+        asked = []
+        web = self.web
+
+        def counting(method, url, form=None, headers=None, timeout=60):
+            if "/meta/" in url:
+                asked.append(url)
+            return web(method, url, form=form, headers=headers, timeout=timeout)
+
+        self.saves.fetch = counting
+        self.web.metas[("series", UNDERCOVER)]["videos"] = [
+            {"season": 6, "episode": 1, "released": "2027-01-10T20:00:00.000Z"},
+        ]
+        self.saves.tap("viktor", "follow", f"{UNDERCOVER}:6:1")
+        for _ in range(10):
+            self.saves.run_cycle()
+            self.now += 5 * 60
+        self.assertEqual(len(asked), 1)
+        self.now += 6 * 3600
+        self.saves.run_cycle()
+        self.assertEqual(len(asked), 2)
+
     def test_episodes_cinemeta_does_not_list_are_looked_for_one_after_another(self):
         # Cinemeta lists no season 6 of Undercover (seen 2026-11-23), so the
         # follow asks AIOStreams for the next episode number every 6 hours.
@@ -597,6 +621,17 @@ class WatchedAndCleanupTests(Base):
         delete = [f for p, f in self.web.qb.calls if p == "/torrents/delete"]
         self.assertEqual(delete, [{"hashes": h, "deleteFiles": "true"}])
         self.assertEqual(self.labels("viktor", "series", vid)[0], "Save this episode")
+
+    def test_a_torrent_outside_the_stremio_category_is_never_deleted(self):
+        # qBittorrent also holds MAM farming and the arr apps; cleanup may only
+        # remove what this addon put in its own category.
+        vid, copy_id, h = self.server_copy(8)
+        self.web.qb.torrents[h]["category"] = "mam-farming"
+        self.saves.delivered("viktor", copy_id, 0, 1000, 1000)
+        self.now += 8 * DAY
+        self.saves.run_cycle()
+        self.assertIn(h, self.web.qb.torrents)
+        self.assertNotIn("/torrents/delete", [p for p, _ in self.web.qb.calls])
 
     def test_the_300_gb_cap_deletes_the_oldest_unwatched_copies_first(self):
         old, _, h_old = self.server_copy(1, size=400)

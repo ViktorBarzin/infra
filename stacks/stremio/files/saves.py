@@ -55,12 +55,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from base64 import b64encode
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Protocol
 
 DAY = 86400.0
 RETRY_EVERY = 6 * 3600.0
 ADVANCE_EVERY = 300.0
+META_EVERY = 6 * 3600  # metadata (episode lists, air dates) is asked at most this often
 GIVE_UP_AFTER = 14 * DAY
 RD_STALL = 2 * 3600.0
 KEEP_AFTER_WATCHED = 7 * DAY
@@ -563,15 +564,11 @@ class QBittorrent:
 # The saves
 
 
-@dataclass
-class _Cycle:
-    metas: dict[tuple[str, str], dict] = field(default_factory=dict)
-
-
 class Saves:
     def __init__(self, cfg: Config, fetch: Fetch = http_fetch, opener: Opener = http_open,
                  clock: Callable[[], float] = time.time, log: Callable[[str], None] | None = None):
         self.cfg = cfg
+        self._metas: dict[tuple[str, str], tuple[float, dict]] = {}
         self.root = cfg.root
         self.token = cfg.token
         self.accounts = cfg.accounts
@@ -586,7 +583,6 @@ class Saves:
         self.lock = threading.RLock()
         self.wake = threading.Event()
         self._links: dict[int, tuple[str, float]] = {}
-        self._cycle = _Cycle()
         self._thread: threading.Thread | None = None
 
     # -- database helpers ---------------------------------------------------
@@ -836,7 +832,6 @@ class Saves:
 
     def run_cycle(self) -> None:
         now = self.clock()
-        self._cycle = _Cycle()
         try:
             self.adopt(now)
             self.apply_seeds(now)
@@ -851,15 +846,21 @@ class Saves:
             self.log(f"stopped this cycle: {e}")
 
     def meta(self, kind: str, imdb: str) -> dict:
+        """A title's metadata, asked at most every META_EVERY: the source is a
+        public addon, and follows look at it on every cycle."""
         key = (kind, imdb)
-        if key not in self._cycle.metas:
-            try:
-                status, body = self.fetch("GET", f"{self.cfg.cinemeta_base.rstrip('/')}/meta/{kind}/{imdb}.json", timeout=30)
-                self._cycle.metas[key] = (json.loads(body).get("meta") or {}) if status == 200 else {}
-            except (OSError, ValueError) as e:
-                self.log(f"Cinemeta has nothing for {kind} {imdb}: {e!r}")
-                self._cycle.metas[key] = {}
-        return self._cycle.metas[key]
+        now = self.clock()
+        cached = self._metas.get(key)
+        if cached is not None and now - cached[0] < META_EVERY:
+            return cached[1]
+        try:
+            status, body = self.fetch("GET", f"{self.cfg.cinemeta_base.rstrip('/')}/meta/{kind}/{imdb}.json", timeout=30)
+            meta = (json.loads(body).get("meta") or {}) if status == 200 else {}
+        except (OSError, ValueError) as e:
+            self.log(f"no metadata for {kind} {imdb}: {e!r}")
+            meta = {}
+        self._metas[key] = (now, meta)
+        return meta
 
     def adopt(self, now: float) -> None:
         """Files already under /media/<imdb id>/ become server copies, once each."""
@@ -1204,6 +1205,10 @@ class Saves:
             )
         if torrent is None:
             self.log(f"{imdb}/{copy['path']} is not in qBittorrent; its file stays on the share")
+        elif torrent.get("category") != QB_CATEGORY:
+            # Never touch another app's torrent (MAM farming, the arr apps).
+            self.log(f"{imdb}/{copy['path']} belongs to qBittorrent category {torrent.get('category')!r}; kept")
+            return False
         elif siblings:
             # Other copies use this torrent (a season pack): only stop fetching this file.
             files = self.qb.files(str(torrent["hash"]))

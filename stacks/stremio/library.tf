@@ -176,17 +176,27 @@ resource "kubernetes_deployment" "library" {
           }
           env {
             # emo's saves search this variant of Viktor's AIOStreams config,
-            # which puts Bulgarian audio first; Viktor's use the base config.
+            # which puts Bulgarian audio first.
             name  = "AIOSTREAMS_VARIANT_EMO"
             value = "sofia"
+          }
+          env {
+            # Viktor's saves search the "download" variant: the base config keeps
+            # 3 results per resolution, mostly remuxes, so a 1080p file under
+            # 6 GB is often missing there (the tablet's Download row uses it too).
+            name  = "AIOSTREAMS_VARIANT_VIKTOR"
+            value = "download"
           }
           env {
             name  = "QBITTORRENT_URL"
             value = "http://qbittorrent.servarr.svc.cluster.local/api/v2"
           }
           env {
+            # Episode lists and air dates for follows come from the TMDB addon the
+            # shared account uses (no secret in its URL): Cinemeta still lists
+            # Undercover as ended after season 5. Ids stay tt...:S:E.
             name  = "CINEMETA_BASE"
-            value = "http://cinemeta-proxy.stremio.svc.cluster.local"
+            value = "https://tmdb.elfhosted.com/%7B%22language%22%3A%22en-US%22%2C%22provideImdbId%22%3A%22true%22%2C%22returnImdbId%22%3A%22true%22%2C%22catalogs%22%3A%5B%5D%2C%22searchEnabled%22%3A%22false%22%7D"
           }
           env {
             # One-time follows, each applied once (table seeds): Viktor follows
