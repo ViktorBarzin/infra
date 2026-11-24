@@ -1855,10 +1855,9 @@ module "ingress" {
   # say 15.06 Mbit/s and three viewers; that came from one client pulling one
   # object at a time, which measures a single TCP stream and not the line.
   # cloudflare-cache.tf has the concurrent re-measurement and the reasoning,
-  # along with the Cache Rules and the accepted terms risk. Rate limiting was already made tunnel-safe when the
-  # share-link work landed: the shared `rate-limit` middleware has no
-  # sourceCriterion and would key every viewer on the cloudflared pod, so f1
-  # carries its own limiter keyed on X-Real-Ip (see below).
+  # along with the Cache Rules and the accepted terms risk. Rate limiting is
+  # per client behind the tunnel: tv uses its own looser limiter, keyed on
+  # X-Client-Prefix (see below).
   #
   # tv is a proxied name on that `*` CNAME, so it has no record of its own.
   # f1 still resolves through the same wildcard after its cutover to a
@@ -1872,23 +1871,22 @@ module "ingress" {
   service_name     = kubernetes_service.tv.metadata[0].name
   port             = 80
   turnstile_strict = true
-  # real-ip (sets X-Real-Ip, which the Turnstile gate and the rate limiter
-  # below key on) is auto-attached by ingress_factory because the gate is on.
+  # real-ip is auto-attached by ingress_factory because the gate is on. It sets
+  # X-Real-Ip, which the Turnstile gate reads, and X-Client-Prefix, which the
+  # rate limiter below keys on.
   # Both hosts are Cloudflare-proxied through the tunnel (see dns_type above),
   # so the TCP peer is the cloudflared pod and real-ip is what recovers the
   # client address.
   tls_secret_name  = var.tls_secret_name
   anti_ai_scraping = false
   # Video rate limiting, not page-load rate limiting. The shared `rate-limit`
-  # (10/s, burst 50) is detached and `traefik-f1-rate-limit` (200/s, burst
-  # 2000, keyed on X-Real-Ip) attached in its place — the shared one has no
-  # sourceCriterion, so behind the cloudflared tunnel every viewer on the site
-  # shares ONE 10 req/s bucket keyed on the cloudflared pod, and HLS asks for a
-  # segment every 4-6s per viewer. Full arithmetic and the ordering constraint
-  # are in stacks/traefik/modules/traefik/middleware.tf next to the resource.
-  # extra_middlewares are appended LAST by the factory, which is what puts this
-  # after the auto-attached real-ip and guarantees X-Real-Ip is already
-  # stamped when the limiter reads it.
+  # (10/s, burst 50 per client) is detached and `traefik-f1-rate-limit`
+  # (200/s, burst 2000) attached in its place. Both key on X-Client-Prefix:
+  # the client's IPv4 address, or its IPv6 /64. Why video needs the looser
+  # ceiling, and the ordering constraint, are in
+  # stacks/traefik/modules/traefik/middleware.tf next to the resource. extra_middlewares are appended LAST by the factory,
+  # which puts this after the auto-attached real-ip, so X-Client-Prefix is
+  # already stamped when the limiter reads it.
   skip_default_rate_limit = true
   extra_middlewares = [
     "traefik-x402@kubernetescrd",

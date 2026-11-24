@@ -273,7 +273,7 @@ module "ingress_tracker" {
   # client IS a non-browser automated one by nature.
   anti_ai_scraping = false
   # ORDER IS LOAD-BEARING, and getting it wrong fails silently.
-  # `traefik-f1-rate-limit` keys its bucket on the X-Real-Ip header, and
+  # `traefik-f1-rate-limit` keys its bucket on the X-Client-Prefix header, and
   # `real-ip` is the middleware that stamps it. ingress_factory auto-prepends
   # real-ip only for `anubis-*` backends, and this ingress deliberately points
   # at the bare tracker Service, so it has to be listed here BY HAND and

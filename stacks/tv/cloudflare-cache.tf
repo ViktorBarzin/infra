@@ -400,7 +400,7 @@ resource "cloudflare_ruleset" "tv_cache" {
           # from the origin.
           #
           # Ten seconds still collapses a burst of bad requests, which is what the
-          # per-app rate limiter is for anyway (200/s burst 2000 on X-Real-Ip), and
+          # per-app rate limiter is for anyway (200/s burst 2000 per client), and
           # recovers within one playlist reload.
           status_code_ttl = [
             {

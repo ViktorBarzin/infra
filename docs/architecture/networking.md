@@ -272,8 +272,8 @@ VMs tag traffic on vmbr1 to isolate workloads. OPNsense bridges VLAN 20 to the u
 - TP-Link router does NOT support hairpin NAT — LAN clients can't reach the public IP (176.12.22.76) for non-proxied domains
 - Technitium's Split Horizon `AddressTranslation` post-processor translates `176.12.22.76 → 10.0.20.203` (Traefik LB) in DNS responses for 192.168.1.0/24 clients (was `.200` until 2026-05-30 Traefik dedicated-IP move)
 - DNS Rebinding Protection has `viktorbarzin.me` in `privateDomains` to allow the translated private IP
-- Only affects non-proxied domains (ha-sofia, immich, headscale, etc.) — Cloudflare-proxied domains resolve to Cloudflare IPs and are unaffected
-- Other clients (10.0.x.x, K8s pods) are NOT translated — they reach the public IP via OPNsense outbound NAT
+- Only translates non-proxied domains (ha-sofia, immich, headscale, etc.). Cloudflare-proxied domains need no translation: Technitium's internal zone CNAMEs every ingress host, proxied ones included, to the apex, so LAN clients get `10.0.20.203` and skip Cloudflare
+- Other clients (10.0.x.x, K8s pods) need no translation either: since 2026-06-10 their resolvers forward `viktorbarzin.me` to Technitium, which answers with the internal address (see `dns.md`, Split Horizon)
 - Config synced to all 3 Technitium instances by CronJob `technitium-split-horizon-sync` (every 6h)
 - **Known mail-name collision**: the translation also sends `mail.viktorbarzin.me` (and `imap.`/`smtp.`) to `.203`, but Traefik does not listen on mail ports there. iOS Mail on Barzini WiFi silently hangs. Fix in flight: dedicated OPNsense Virtual IP for the mail listener so DNS can point at a stable mail-only IP instead of relying on Traefik's LB IP.
 
