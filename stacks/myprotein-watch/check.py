@@ -36,6 +36,8 @@ Config (all via env):
                           be to be announced (the record is kept regardless)
   WATCH_FLAVOURS          optional comma-separated flavour substrings to narrow
                           to. Empty (the default) means every flavour.
+  EXCLUDE_FLAVOURS        optional comma-separated flavour substrings Viktor has
+                          ruled out on taste. Dropped before any trigger runs.
   DIGEST                  "true" posts the one-line daily heartbeat instead of
                           evaluating triggers. Touches no state.
   DRY_RUN                 "true" prints instead of posting
@@ -391,6 +393,22 @@ def parse_codes(html: str) -> list[Code]:
                 found.setdefault(code.code, code)
                 break
     return sorted(found.values(), key=lambda c: -c.pct)
+
+
+def drop_excluded(variants: list[Variant], exclude: list[str]) -> list[Variant]:
+    """Remove the flavours Viktor has ruled out on taste (EXCLUDE_FLAVOURS).
+
+    Applied once, straight after parsing, so an excluded flavour reaches no
+    trigger, no digest and no relevance bar: a cheap tub he will not drink must
+    not hold back a new-low alert on one he will. Case-insensitive substring
+    match on the flavour, like WATCH_FLAVOURS. Blank terms are ignored, so an
+    empty env var excludes nothing.
+    """
+    terms = [t.strip().lower() for t in exclude if t.strip()]
+    if not terms:
+        return variants
+    return [v for v in variants
+            if not any(term in v.base_flavour.lower() for term in terms)]
 
 
 def _watched(variant: Variant, watch: list[str]) -> bool:
@@ -919,6 +937,7 @@ def main() -> int:
     low_relevance = float(os.environ.get("LOW_RELEVANCE_MARGIN", str(LOW_RELEVANCE_MARGIN)))
     # Empty by default: every flavour is in scope. Set it to narrow.
     watch = os.environ.get("WATCH_FLAVOURS", "").split(",")
+    exclude = os.environ.get("EXCLUDE_FLAVOURS", "").split(",")
     dry_run = os.environ.get("DRY_RUN", "").lower() == "true"
     digest = os.environ.get("DIGEST", "").lower() == "true"
     webhook = os.environ.get("SLACK_WEBHOOK_URL", "")
@@ -937,6 +956,13 @@ def main() -> int:
     if not variants:
         print("parsed 0 variants — the page shape probably changed", file=sys.stderr)
         return 1
+
+    kept = drop_excluded(variants, exclude)
+    if len(kept) < len(variants):
+        gone = sorted({v.base_flavour for v in variants} - {v.base_flavour for v in kept})
+        print(f"{len(variants) - len(kept)} variant(s) excluded by EXCLUDE_FLAVOURS: "
+              f"{', '.join(gone)}")
+    variants = kept
 
     codes = parse_codes(html)
     print_scope(variants, watch, codes=codes)

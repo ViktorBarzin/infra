@@ -225,6 +225,42 @@ def test_previously_watched_flavours_are_unaffected():
     assert check.find_deals(parsed, ALL, 28.0) == check.find_deals(parsed, WATCH, 28.0)
 
 
+# --- flavours Viktor has ruled out ------------------------------------------
+# EXCLUDE_FLAVOURS drops a flavour from every trigger and from the digest. It
+# is taste, not pricing: Brown Rice Tea Latte at half price is still a tub he
+# would not drink (2026-11-24).
+
+BRT_83 = variant(
+    "Impact Whey Protein Powder - 2.5KG - 83servings - Brown Rice Tea Latte",
+    "Brown Rice Tea Latte", "2.5KG - 83servings", "41.49", "82.99", 12506074,
+)
+
+
+def test_an_excluded_flavour_is_dropped():
+    parsed = check.parse_variants(page(BRT_83, VANILLA_90))
+    kept = check.drop_excluded(parsed, ["brown rice tea latte"])
+    assert [v.base_flavour for v in kept] == ["Vanilla"]
+
+
+def test_exclusion_matches_case_insensitively():
+    parsed = check.parse_variants(page(BRT_83))
+    assert check.drop_excluded(parsed, ["Brown Rice TEA Latte"]) == []
+
+
+@pytest.mark.parametrize("env_value", ["", ",", " , "])
+def test_a_blank_exclusion_list_drops_nothing(env_value):
+    """A blank term must not match every flavour, or the job goes silent."""
+    parsed = check.parse_variants(page(BRT_83, VANILLA_90))
+    assert check.drop_excluded(parsed, env_value.split(",")) == parsed
+
+
+def test_an_excluded_flavour_raises_no_alert_of_any_kind():
+    parsed = check.drop_excluded(check.parse_variants(page(BRT_83)),
+                                 ["Brown Rice Tea Latte"])
+    alerts, _ = check.decide(parsed, {}, ALL, 28.0)
+    assert alerts == []
+
+
 # --- protein per serving we can actually stand behind ------------------------
 # The page advertises "up to 23g protein" — a ceiling, not a per-flavour figure,
 # and per-flavour macros are not on the page at all. Assuming the ceiling for a

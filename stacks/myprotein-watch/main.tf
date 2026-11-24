@@ -246,6 +246,12 @@ resource "kubernetes_cron_job_v1" "check" {
                 name  = "WATCH_FLAVOURS"
                 value = ""
               }
+              # Flavours Viktor has ruled out on taste, so no discount makes
+              # them worth an alert (2026-11-24). Comma-separated substrings.
+              env {
+                name  = "EXCLUDE_FLAVOURS"
+                value = "Brown Rice Tea Latte"
+              }
 
               volume_mount {
                 name       = "script"
@@ -375,6 +381,12 @@ resource "kubernetes_cron_job_v1" "digest" {
               env {
                 name  = "WATCH_FLAVOURS"
                 value = ""
+              }
+              # Flavours Viktor has ruled out on taste, so no discount makes
+              # them worth an alert (2026-11-24). Comma-separated substrings.
+              env {
+                name  = "EXCLUDE_FLAVOURS"
+                value = "Brown Rice Tea Latte"
               }
 
               volume_mount {
