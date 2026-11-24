@@ -85,22 +85,25 @@ def page(name, variants, extra="") -> str:
 # --- the scenarios -----------------------------------------------------------
 FULL = "97.49"        # list price of a 90-serving Original tub
 SALE = "55.00"        # £26.57/kg protein — inside Viktor's buying band
-DEEPER = "48.00"      # £23.19/kg — a new low AND >50% off
+DEEPER = "48.00"      # £23.19/kg — a new low AND >50% off, which alone says nothing
 
 STRAWBERRY = lambda price: variant(900001, "Strawberry Cream", "2.7kg - 90servings", price, FULL)
 COOKIES = lambda: variant(900002, "Cookies and Cream", "2.7kg - 90servings", FULL, FULL)
 # Never on the old four-flavour watchlist. Under the all-flavours scope it is
 # exactly what we now expect to hear about. Priced REALISTICALLY (£27.54/kg, just
 # inside his £28 bar): it used to be £20.00 for a 2.7kg tub, a price MyProtein has
-# never charged, and once the low trigger started measuring against the best price
-# on the page that fake bargain set an unreachable bar and suppressed every other
-# variant's new low. A fixture that cannot occur produces failures that cannot either.
+# never charged. A fixture that cannot occur produces failures that cannot either.
 OFFLIST = lambda: variant(900003, "Vanilla", "2.7kg - 90servings", "57.00", FULL)
 # A licensed collab: no published protein figure, so its £/kg is not something
 # we can assert. Priced to qualify on both counts if the guard were missing.
 UNVERIFIED = lambda: variant(900004, "Twix®", "1.05kg - 30servings", "16.00", FULL)
-# 250 g / 8 servings — structurally poor value per kg whatever it costs.
-TASTER = lambda price: variant(900005, "Chocolate Brownie", "250G - 8servings", price, "13.99")
+# Milk Tea, 2026-11-24: the 250 g tester is a 31.25 g scoop and passes the scoop
+# check alone, but its 840 g pack is a 28 g scoop, so the flavour's protein is
+# not known and neither pack may be priced.
+MILK_TEA_250 = lambda: variant(900005, "Milk Tea", "250G - 8servings", "5.00", "13.99")
+MILK_TEA_840 = lambda: variant(900006, "Milk Tea", "840g - 30servings", "28.99", "34.99")
+# A Milkshake tub under the bar, cheaper per gram than the whey one beside it.
+SHAKE = lambda: variant(900007, "Banana (Milkshake)", "2610g - 90servings", "45.00", "105.99")
 
 PROMO = page("promo.html", [STRAWBERRY(SALE), COOKIES(), OFFLIST()])
 DEEP = page("deep.html", [STRAWBERRY(DEEPER), COOKIES(), OFFLIST()])
@@ -125,8 +128,6 @@ def run(url, label, watch="", digest=False):
         "STATE_BACKEND": "file",
         "STATE_TARGET": str(WORK / "state.json"),
         "THRESHOLD_PER_KG_PROTEIN": "28",
-        "DEEP_DISCOUNT_PCT": "40",
-        "NEW_LOW_MARGIN": "0.01",
         "WATCH_FLAVOURS": watch,
         "DIGEST": "true" if digest else "",
     }
@@ -170,15 +171,16 @@ k = kinds(posts)
 expect(r.returncode == 0, "run succeeds")
 expect(len(posts) == 1, "exactly one Slack message (alerts are batched, not spammed)")
 expect(k["deal"], "DEAL fires — the price is inside Viktor's band")
-expect(k["discount"], "DISCOUNT fires — 44% off is past the 40% bar")
+expect(not k["discount"], "no 40%-off alert — that trigger is retired, only protein price speaks")
 expect(k["return"], "RETURN fires — Cookies and Cream is back on the Original line")
-expect(not k["low"], "no NEW LOW on first sighting (nothing to compare against yet)")
+expect(not k["low"], "no record-low alert — that trigger is retired")
 expect("Vanilla" in posts[0]["text"],
        "ALL FLAVOURS — Vanilla, never on the old watchlist, is reported now it is cheapest")
 expect("£26.57/kg protein" in posts[0]["text"], "message leads with £/kg of protein")
 expect(posts[0]["text"].startswith("*Cookies and Cream is back*"),
        "header leads with the C&C return — the bigger news when several triggers batch")
-expect("low:900001" in state(), "cheapest-ever baseline seeded silently")
+expect(not any(k.startswith(("low:", "disc:")) for k in state()),
+       "no state for the retired triggers")
 
 # 2. Nothing changed -----------------------------------------------------------
 r, posts = run(PROMO, "2. same page on the next run (dedup)")
@@ -191,40 +193,30 @@ k = kinds(posts)
 expect(r.returncode == 0, "run succeeds")
 expect(len(posts) == 1, "one Slack message")
 expect(k["deal"], "DEAL re-fires — it got cheaper")
-expect(k["low"], "NEW LOW fires — cheapest we have ever recorded")
+expect(not k["low"] and not k["discount"], "only the deal speaks, not a record or a % off")
 expect(not k["return"], "RETURN stays quiet — already announced")
-expect(abs(state()["low:900001"] - 48.0 / (90 * 23) * 1000) < 0.01, "low ratchets down to the new price")
 
 # 4. The sale ends -------------------------------------------------------------
 r, posts = run(QUIET, "4. sale ends, C&C delisted again")
 expect(r.returncode == 0, "run succeeds")
 expect(len(posts) == 0, "SILENT — nothing qualifies")
 expect("900001" not in state(), "deal state cleared so the next sale is announced afresh")
-expect("low:900001" in state(), "but the cheapest-ever record is kept")
 
 # 5. A later sale --------------------------------------------------------------
 r, posts = run(PROMO, "5. a later, shallower sale returns")
 k = kinds(posts)
 expect(r.returncode == 0, "run succeeds")
 expect(k["deal"], "DEAL fires again — a lapsed deal is re-announced")
-expect(not k["low"], "no NEW LOW — £26.57/kg is not better than the £23.19/kg record")
 expect(posts[0]["text"].startswith("*Impact Whey is at your buying price*"),
        "with no return in the batch, the header names the buying price")
 
 # 6. A flavour whose protein figure is not published ---------------------------
-# The failure this guards against is silent: a Twix tub at £16.00 for 30 servings
-# looks like £23.19/kg protein IF you assume the 23 g ceiling, which would read
-# as inside Viktor's band. We do not know its protein content, so it must not
-# claim to be at his price — while still being reported as a big sale.
+# A Twix tub at £16.00 for 30 servings looks like £23.19/kg protein IF you assume
+# the 23 g ceiling. We do not know its protein content, and an 84% discount is
+# not a protein price, so it says nothing (Viktor, 2026-11-24).
 r, posts = run(UNKNOWN_PROTEIN, "6. a licensed collab flavour, cheap and 84% off")
-k = kinds(posts)
 expect(r.returncode == 0, "run succeeds")
-expect(len(posts) == 1, "one Slack message")
-expect(k["discount"], "DISCOUNT fires — a big sale is a big sale, no protein figure needed")
-expect("Twix" in posts[0]["text"], "the Twix sale is named")
-expect(not k["deal"], "DEAL does NOT fire — we cannot claim it is at his price per gram")
-expect(not k["low"], "no NEW LOW — unverified flavours are kept out of the record")
-expect("low:900004" not in state(), "and out of cheapest-ever state entirely")
+expect(len(posts) == 0, "SILENT — no protein figure, so no protein deal")
 
 # 7. The narrowing filter still works when set ---------------------------------
 # Kept as a supported knob, so it has to keep working: same page as scenario 1,
@@ -267,20 +259,13 @@ expect(len(posts) == 1, "the digest still speaks")
 expect("a deal is live" in posts[0]["text"],
        "and still reports the running offer that alerting has deduped away")
 
-# 11. A personal best that is not worth hearing -------------------------------
-# The 2026-08-28 alert Viktor actually received: a 250 g / 8-serving taster tub
-# beat its own record and announced £54.35/kg protein while £33.33/kg sat on the
-# same page. A record is worth keeping; it is not always worth saying.
-TASTER_HIGH = page("taster_high.html", [STRAWBERRY(SALE), TASTER("13.99")])
-TASTER_LOW = page("taster_low.html", [STRAWBERRY(SALE), TASTER("10.00")])
-
-r, posts = run(TASTER_HIGH, "11a. seed the taster tub's record", watch="Strawberry Cream")
-r, posts = run(TASTER_LOW, "11b. taster tub hits a personal best at a poor price")
+# 11. A tester tub whose bigger packs give the flavour away --------------------
+# The 2026-11-24 false deal: Milk Tea 250 g at £5.00 read as £27.17/kg protein.
+r, posts = run(page("milktea.html", [STRAWBERRY(FULL), MILK_TEA_250(), MILK_TEA_840()]),
+               "11. Milk Tea tester at £5.00, its 840 g pack off-standard")
 expect(r.returncode == 0, "run succeeds")
-expect(len(posts) == 0,
-       "SILENT — a new low 63% worse than the best price on the page is not news")
-expect(any(k.startswith("low:") for k in state()),
-       "but the price record is still kept")
+expect(len(posts) == 0, "SILENT — one off-standard pack holds out the whole flavour")
+expect("held out" in r.stdout and "Milk Tea" in r.stdout, "the run log names it")
 
 # 12. A code that only applies in the basket ---------------------------------
 # 2026-10-27: code EXTRA took 15% off Impact Whey that no shelf price showed.
@@ -306,6 +291,14 @@ r, posts = run(CODE_ENDED, "12d. the code ends")
 expect(not any(k.startswith("code:") for k in state()), "its state is dropped")
 r, posts = run(WITH_CODE, "12e. the code comes back")
 expect(len(posts) == 1 and "BOOST" in posts[0]["text"], "ALERTS again")
+
+# 13. Whey first ---------------------------------------------------------------
+# Viktor 2026-11-24: whey is what he wants, Milkshake will do. Both are said,
+# whey first, even when the Milkshake tub is cheaper per gram.
+r, posts = run(page("both.html", [SHAKE(), STRAWBERRY(SALE)]), "13. whey and Milkshake deals together")
+text = "\n".join(p["text"] for p in posts)
+expect(len(posts) == 1 and "(Milkshake)" in text and "(Original)" in text, "both are reported")
+expect(text.index("(Original)") < text.index("(Milkshake)"), "whey is listed first")
 
 print("\n" + "=" * 70)
 if failures:

@@ -3,8 +3,8 @@
 reaches Viktor's buying price.
 
 Every flavour is in scope. It started as a four-flavour watchlist, which meant a
-genuine bargain on a fifth would pass unmentioned; taste is a reason to skip
-buying, not a reason not to be told. What bounds the net now is whether we can
+genuine bargain on a fifth would pass unmentioned. Flavours Viktor rules out on
+taste go in EXCLUDE_FLAVOURS. What bounds the net otherwise is whether we can
 stand behind a flavour's protein figure — see LICENSED_RE and STANDARD_SCOOP_G.
 
 Why this shape: the product page ships every variant as embedded JSON
@@ -30,10 +30,6 @@ Config (all via env):
   STATE_TARGET            ConfigMap name, or file path when STATE_BACKEND=file
   THRESHOLD_PER_KG_PROTEIN  £/kg of protein at or below which a deal is worth
                           telling (£28 = the dearest Viktor has actually paid)
-  DEEP_DISCOUNT_PCT       displayed discount that counts as a big sale
-  NEW_LOW_MARGIN          how much better than the record a new low must be
-  LOW_RELEVANCE_MARGIN    how close to the best price on the page a new low must
-                          be to be announced (the record is kept regardless)
   WATCH_FLAVOURS          optional comma-separated flavour substrings to narrow
                           to. Empty (the default) means every flavour.
   EXCLUDE_FLAVOURS        optional comma-separated flavour substrings Viktor has
@@ -91,8 +87,7 @@ CRUNCH_RE = re.compile(r"crunch|biscuit pieces", re.I)
 # chocolate-bar pieces would overstate its protein, and therefore understate its
 # £/kg, presenting a worse deal as a better one. So where the figure is an
 # assumption rather than a published claim, the flavour is left out of the value
-# triggers and covered by the big-sale trigger instead, which needs no protein
-# figure to be true.
+# triggers, which are the only triggers that price anything.
 #
 # Two signals mark a figure as an assumption:
 #
@@ -115,25 +110,9 @@ SCOOP_TOLERANCE = 0.05
 # servings overstates the protein, while a bigger scoop can only understate it.
 MILKSHAKE_SCOOP_G = 29.5
 
-# A "big sale" on MyProtein's own reckoning. Note their RRP is their number and
-# it drifts upward over time, which is why this supplements the £/serving
-# trigger rather than replacing it.
-DEEP_DISCOUNT_PCT = 40
-
-# How much better than the previous record a price must be before a new low is
-# worth saying out loud. Guards against announcing a rounding-level dip.
-NEW_LOW_MARGIN = 0.01
-
-# How close to the best price on the page a new low must be before it is worth
-# saying out loud. A record is always worth KEEPING; it is not always worth
-# SAYING. Added 2026-08-28 after a 250 g / 8-serving taster tub alerted at
-# £54.35/kg protein — its own personal best — while £33.33/kg sat on the same
-# page: 63% worse than what was already on the shelf, and nearly double the
-# threshold. £/kg tracks PACK SIZE, and every size is its own SKU, so a sitewide
-# percentage sale makes all six sizes hit a personal record simultaneously and
-# the small ones can never be a good buy. Gating on price rather than pack size
-# keeps a genuinely cheap small tub eligible.
-LOW_RELEVANCE_MARGIN = 0.10
+# Which line Viktor wants first. Whey (Original) is what he buys; Milkshake
+# will do when it is the cheaper protein (2026-11-24). Both are reported.
+LINE_PREFERENCE = ("Original", "Milkshake")
 
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -425,6 +404,19 @@ def _watched(variant: Variant, watch: list[str]) -> bool:
     return any(term in flavour for term in terms)
 
 
+def _unpriceable(variants: list[Variant]) -> set[tuple[str, str]]:
+    """(line, flavour) pairs where ANY pack fails the protein check.
+
+    The scoop check is per pack, but the protein is a property of the recipe.
+    Milk Tea 250 g / 8 servings is a 31.25 g scoop and passed, while its 840 g
+    and 2.52 kg packs are 28 g scoops and failed; the tester tub was then priced
+    at 23 g and called a deal at £27.17/kg (2026-11-24). One off-standard pack
+    means we do not know the flavour's protein, so the whole flavour is held out.
+    Out-of-stock packs count: their listing says as much about the recipe.
+    """
+    return {(v.line, v.base_flavour.lower()) for v in variants if not v.protein_verified}
+
+
 def comparable(variants: list[Variant], watch: list[str]) -> list[Variant]:
     """In-stock variants whose £/kg of protein means the same thing.
 
@@ -435,14 +427,15 @@ def comparable(variants: list[Variant], watch: list[str]) -> list[Variant]:
     whole-whey purchases, so it is not the same product being priced.
 
     Flavours whose protein per serving we would be guessing at — see
-    Variant.protein_verified. Guessing high is what turns a worse deal into an
-    apparent bargain, so those are covered by the big-sale trigger instead.
+    Variant.protein_verified and _unpriceable. Guessing high is what turns a
+    worse deal into an apparent bargain, so those flavours never alert.
     """
+    unpriceable = _unpriceable(variants)
     return [
         v for v in variants
         if v.in_stock
         and v.line in DEAL_LINES
-        and v.protein_verified
+        and (v.line, v.base_flavour.lower()) not in unpriceable
         and _watched(v, watch)
         and v.price_per_kg_protein is not None
     ]
@@ -459,28 +452,6 @@ def find_deals(variants: list[Variant], watch: list[str], threshold: float) -> l
     """
     return [v for v in comparable(variants, watch)
             if v.price_per_kg_protein <= threshold]
-
-
-def find_deep_discounts(variants: list[Variant], watch: list[str], min_pct: int) -> list[Variant]:
-    """Anything where MyProtein's own displayed discount is unusually deep.
-
-    Covers every flavour on the lines Viktor buys, including the ones whose
-    protein figure we cannot stand behind: the question it answers is "is a big
-    sale running", not "is this good value per gram of whey", so it needs no
-    protein figure to be true.
-
-    It does NOT cover the +Collagen line. That is a product exclusion rather than
-    a pricing one, so no discount rescues it (Viktor, 2026-08-29). Note this is
-    the Collagen LINE only — Snickers, Mars and the other flavours we cannot price
-    are still reported here, because a sale on them is still a sale on whey.
-    """
-    return [
-        v for v in variants
-        if v.in_stock
-        and v.line in DEAL_LINES
-        and _watched(v, watch)
-        and v.discount_pct >= min_pct
-    ]
 
 
 def find_returns(variants: list[Variant]) -> list[Variant]:
@@ -504,29 +475,30 @@ def find_code_deals(variants: list[Variant], watch: list[str], threshold: float,
             and best.apply(v.price_per_kg_protein) <= threshold]
 
 
-def decide(variants, state, watch, threshold, deep_pct=DEEP_DISCOUNT_PCT,
-           low_margin=NEW_LOW_MARGIN, low_relevance=LOW_RELEVANCE_MARGIN, codes=()):
+# State keys of the triggers removed on 2026-11-24 (cheapest-recorded, 40% off).
+RETIRED_STATE_PREFIXES = ("low:", "disc:")
+
+
+def decide(variants, state, watch, threshold, codes=()):
     """Work out what is worth saying, given what we already said.
 
-    Returns (alerts, new_state). Five triggers, each de-duplicated on its own
+    Returns (alerts, new_state). Three triggers, each de-duplicated on its own
     key so one can fire without silencing the others:
 
       deal     — at or under the £/kg of protein Viktor actually pays
       code     — at or under it with a code the page announces
-      low      — cheapest we have ever recorded for that variant
-      discount — MyProtein's own displayed discount is unusually deep
       return   — plain Cookies and Cream is back in the Original line
 
-    A deal or a discount re-announces only if it gets better; when it lapses its
-    state is dropped so the next sale is announced afresh. A low is permanent —
-    it only ever ratchets down.
+    Only protein price speaks (Viktor, 2026-11-24). The 40%-off and
+    cheapest-recorded triggers were removed: they sent 10 alerts in one run,
+    mostly small tubs and flavours still dear per gram. Their state keys
+    (disc:, low:) are dropped on the first run that sees them.
 
-    The low trigger additionally has to be worth hearing: a new record is only
-    announced when its £/kg is within low_relevance of the best comparable price
-    on this run. The record is written either way — suppressing the sentence must
-    not suppress the history, or the same dip would alert again later.
+    A deal re-announces only if it gets better; when it lapses its state is
+    dropped so the next sale is announced afresh.
     """
-    new_state = dict(state)
+    new_state = {k: v for k, v in state.items()
+                 if not k.startswith(RETIRED_STATE_PREFIXES)}
     alerts: list[Alert] = []
 
     deals = {v.sku: v for v in find_deals(variants, watch, threshold)}
@@ -556,39 +528,6 @@ def decide(variants, state, watch, threshold, deep_pct=DEEP_DISCOUNT_PCT,
         else:
             new_state.pop(key, None)
 
-    # Cheapest-ever, on the comparable lines only. A first sighting seeds the
-    # record silently — we have no history to call it a low against.
-    #
-    # The bar is drawn from comparable variants only: an unverified flavour we
-    # cannot honestly price must not set the standard everything else is judged
-    # against.
-    cmp_now = comparable(variants, watch)
-    page_best = min((v.price_per_kg_protein for v in cmp_now), default=None)
-    for v in cmp_now:
-        key = f"low:{v.sku}"
-        pps = v.price_per_kg_protein
-        previous = new_state.get(key)
-        if previous is None:
-            new_state[key] = pps
-        elif pps < float(previous):
-            beats_own_record = pps <= float(previous) * (1 - low_margin)
-            competitive = page_best is not None and pps <= page_best * (1 + low_relevance)
-            if beats_own_record and competitive:
-                alerts.append(Alert("low", v))
-            # Unconditional: the record follows the price, not the alerting.
-            new_state[key] = pps
-
-    deep = {v.sku: v for v in find_deep_discounts(variants, watch, deep_pct)}
-    for v in variants:
-        key = f"disc:{v.sku}"
-        if v.sku in deep:
-            previous = new_state.get(key)
-            if previous is None or v.price < float(previous):
-                alerts.append(Alert("discount", v))
-                new_state[key] = v.price
-        else:
-            new_state.pop(key, None)
-
     for v in find_returns(variants):
         key = f"return:{v.sku}"
         if key not in new_state:
@@ -598,27 +537,20 @@ def decide(variants, state, watch, threshold, deep_pct=DEEP_DISCOUNT_PCT,
     return alerts, new_state
 
 
-UNVERIFIED_CAVEAT = (
-    " _(protein per serving is not published for this flavour, so this is a sale "
-    "worth knowing about rather than a verified price per gram of protein)_"
-)
-
 # Ordered by how much they should draw the eye.
 HEADERS = {
     "return": "Cookies and Cream is back",
     "deal": "Impact Whey is at your buying price",
     "code": "Impact Whey is at your buying price with a code",
-    "low": "Cheapest we have seen it",
-    "discount": "Big discount running",
 }
 
 
 def _detail(v: Variant) -> str:
     """The price facts. Quotes £/kg of protein only where that figure is real.
 
-    A flavour can reach here through the big-sale trigger without a published
-    protein figure. Printing an inferred £/kg for it would put back exactly the
-    claim the value triggers declined to make, in the more convincing place.
+    Every trigger that reaches here prices only flavours we can stand behind,
+    so the unverified branch is a guard: printing an inferred £/kg would make
+    the claim the triggers declined to make, in the more convincing place.
     """
     size = f", {v.pack_size}" if v.pack_size else ""
     head = (f"{v.servings} servings{size} — *£{v.price:.2f}* "
@@ -662,14 +594,21 @@ def _code_detail(v: Variant, code: Code) -> str:
             f"the basket total._")
 
 
-ALERT_ORDER = ("return", "deal", "code", "low", "discount")
+ALERT_ORDER = ("return", "deal", "code")
+
+
+def _alert_rank(a: Alert) -> tuple:
+    """Whey before Milkshake, then cheapest protein first."""
+    line = LINE_PREFERENCE.index(a.variant.line) if a.variant.line in LINE_PREFERENCE \
+        else len(LINE_PREFERENCE)
+    return (line, a.variant.price_per_kg_protein or float("inf"))
 
 
 def format_slack(alerts: list[Alert]) -> dict[str, Any]:
     lines: list[str] = []
     for kind in ALERT_ORDER:
         groups: dict[tuple, list[Variant]] = {}
-        for a in [x for x in alerts if x.kind == kind]:
+        for a in sorted((x for x in alerts if x.kind == kind), key=_alert_rank):
             groups.setdefault(_group_key(a.variant), []).append(a.variant)
         for members in groups.values():
             v = members[0]
@@ -687,17 +626,6 @@ def format_slack(alerts: list[Alert]) -> dict[str, Any]:
                             if a.kind == "code" and a.variant is v)
                 lines.append(f":ticket: *{flavours}* ({v.line}) — {v.servings} servings"
                              f" — {_code_detail(v, code)}")
-            elif kind == "low":
-                lines.append(
-                    f":chart_with_downwards_trend: *{flavours}* ({v.line}) "
-                    f"— cheapest recorded — {_detail(v)}"
-                )
-            else:
-                caveat = "" if v.protein_verified else UNVERIFIED_CAVEAT
-                lines.append(
-                    f":fire: *{flavours}* ({v.line}) — *{v.discount_pct}% off* "
-                    f"— {_detail(v)}{caveat}"
-                )
 
     present = [k for k in ALERT_ORDER if any(a.kind == k for a in alerts)]
     header = HEADERS[present[0]] if present else ""
@@ -722,9 +650,11 @@ def print_scope(variants: list[Variant], watch: list[str], out=None, codes=()) -
     """
     say = print if out is None else out
     cmp_ = sorted(comparable(variants, watch), key=lambda v: v.price_per_kg_protein)
+    unpriceable = _unpriceable(variants)
     unverified = sorted({
         v.base_flavour for v in variants
-        if v.in_stock and v.line in DEAL_LINES and not v.protein_verified
+        if v.in_stock and v.line in DEAL_LINES
+        and (v.line, v.base_flavour.lower()) in unpriceable
         and _watched(v, watch)
     })
     in_stock = sum(1 for v in variants if v.in_stock)
@@ -747,8 +677,8 @@ def print_scope(variants: list[Variant], watch: list[str], out=None, codes=()) -
         say("no discount code announced on the page")
     if unverified:
         say(f"{len(unverified)} flavour(s) held out of the value triggers — protein "
-            f"per serving not published for them, big-sale trigger still covers "
-            f"them: {', '.join(unverified)}")
+            f"per serving not known for them, so no alert prices them: "
+            f"{', '.join(unverified)}")
     collagen = sum(1 for v in variants if v.in_stock and v.line == "Collagen")
     if collagen:
         say(f"{collagen} +Collagen variant(s) out of scope entirely — that line swaps "
@@ -932,9 +862,6 @@ def main() -> int:
         "STATE_TARGET", "myprotein-watch-state" if backend == "configmap" else "/tmp/state.json"
     )
     threshold = float(os.environ.get("THRESHOLD_PER_KG_PROTEIN", "28"))
-    deep_pct = int(os.environ.get("DEEP_DISCOUNT_PCT", str(DEEP_DISCOUNT_PCT)))
-    low_margin = float(os.environ.get("NEW_LOW_MARGIN", str(NEW_LOW_MARGIN)))
-    low_relevance = float(os.environ.get("LOW_RELEVANCE_MARGIN", str(LOW_RELEVANCE_MARGIN)))
     # Empty by default: every flavour is in scope. Set it to narrow.
     watch = os.environ.get("WATCH_FLAVOURS", "").split(",")
     exclude = os.environ.get("EXCLUDE_FLAVOURS", "").split(",")
@@ -981,13 +908,11 @@ def main() -> int:
         return 0
 
     state = load_state(state_target, backend)
-    alerts, new_state = decide(variants, state, watch, threshold, deep_pct, low_margin,
-                               low_relevance, codes)
+    alerts, new_state = decide(variants, state, watch, threshold, codes)
 
     if not alerts:
         print(f"nothing at or under £{threshold:.2f}/kg protein (with or without a "
-              f"code), no new low, "
-              f"nothing at {deep_pct}%+ off — no alert")
+              f"code) — no alert")
         save_state(state_target, new_state, backend)
         return 0
 

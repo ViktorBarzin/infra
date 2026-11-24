@@ -386,34 +386,6 @@ def test_unverified_flavours_never_fire_the_value_triggers():
     assert check.comparable(parsed, ALL) == []
 
 
-def test_unverified_flavours_still_fire_the_big_sale_trigger():
-    """That trigger answers "is a sale running", which needs no protein figure."""
-    v = variant(
-        "Impact Whey Protein Powder - 1.05kg - 30servings - Twix®",
-        "Twix®", "1.05kg - 30servings", "19.99", "39.99", 18000016,
-    )
-    got = check.find_deep_discounts(check.parse_variants(page(v)), ALL, 40)
-    assert [d.base_flavour for d in got] == ["Twix®"]
-
-
-def test_unverified_flavours_are_left_out_of_cheapest_ever_tracking():
-    v = variant(
-        "Impact Whey Protein Powder - 1.05kg - 30servings - Twix®",
-        "Twix®", "1.05kg - 30servings", "10.00", "39.99", 18000017,
-    )
-    _, new_state = check.decide(
-        check.parse_variants(page(v)), {}, ALL, 28.0)
-    assert "low:18000017" not in new_state
-
-
-def test_a_new_flavour_seeds_its_low_silently_on_first_sighting():
-    """Widening scope adds ~76 unseen SKUs; none of them may alert on sight."""
-    alerts, new_state = check.decide(
-        check.parse_variants(page(VANILLA_90)), {}, ALL, 28.0)
-    assert alerts == []
-    assert new_state["low:17712192"] == pytest.approx(47.10, abs=0.01)
-
-
 # --- one line per price, not per flavour -------------------------------------
 # MyProtein prices by pack size, not by flavour: every 150-serving Milkshake tub
 # is the same £113.99. With all flavours in scope a single price point matches
@@ -463,14 +435,6 @@ def test_a_long_flavour_list_is_summarised_with_an_explicit_count():
     assert line.count("Flavour") == check.MAX_FLAVOURS_NAMED
 
 
-def test_grouping_does_not_merge_different_triggers():
-    parsed = check.parse_variants(page(*_same_price_shake(["Banana", "Salted Caramel"])))
-    alerts = [check.Alert("deal", parsed[0]), check.Alert("low", parsed[1])]
-    text = check.format_slack(alerts)["text"]
-    assert len([ln for ln in text.split("\n") if ":moneybag:" in ln]) == 1
-    assert len([ln for ln in text.split("\n") if ":chart_with_downwards_trend:" in ln]) == 1
-
-
 def test_grouping_keeps_lines_whose_protein_per_serving_differs_apart():
     """Same price and serving count, but the biscuit-pieces flavour is 20 g and
     the plain one 23 g — so their £/kg differs and they are not one price."""
@@ -490,27 +454,6 @@ def test_grouping_keeps_lines_whose_protein_per_serving_differs_apart():
 
 
 # --- the message must not assert what we do not know -------------------------
-
-def _twix_sale_message():
-    v = variant(
-        "Impact Whey Protein Powder - 1.05kg - 30servings - Twix®",
-        "Twix®", "1.05kg - 30servings", "16.00", "97.49", 18000020,
-    )
-    alerts = [check.Alert("discount", check.parse_variants(page(v))[0])]
-    return check.format_slack(alerts)["text"]
-
-
-def test_a_sale_on_an_unverified_flavour_quotes_no_price_per_kg_protein():
-    """Excluding it from the value triggers but still printing a £/kg figure
-    would hand back the very number we said we could not stand behind."""
-    text = _twix_sale_message()
-    assert "/kg protein" not in text
-    assert "84% off" in text and "£16.00" in text
-
-
-def test_a_sale_on_an_unverified_flavour_says_why_the_figure_is_missing():
-    assert "not published" in _twix_sale_message()
-
 
 def test_a_verified_flavour_still_leads_with_price_per_kg_protein():
     alerts = [check.Alert("deal", check.parse_variants(page(VANILLA_90))[0])]
@@ -620,81 +563,117 @@ def test_price_going_back_up_clears_state_so_the_next_sale_alerts():
     assert len(kinds(alerts, "deal")) == 1
 
 
-# --- cheapest-ever ("new low") ----------------------------------------------
-# Self-calibrating: it ignores MyProtein's RRP entirely and compares a variant
-# only against its own history, so RRP drift and pack-size changes cannot fool it.
+# --- only protein price speaks ----------------------------------------------
+# Viktor 2026-11-24: "I'm only interested in protein deals." The 40%-off and
+# cheapest-recorded triggers sent 10 alerts in one run, mostly small tubs and
+# flavours that were still dear per gram. What alerts now: a tub at or under
+# his £/kg of protein (shelf or with a code), and Cookies and Cream returning.
 
-def at(price, sku=18000003, servings="2.7kg - 90servings"):
-    return check.parse_variants(page(variant(
+def _shake(sku, servings, price, rrp="153.99", flavour="Banana"):
+    return variant(
+        f"Impact Whey Protein Powder - {servings}servings - {flavour} (Milkshake)",
+        f"{flavour} (Milkshake)", f"4350g - {servings}servings", price, rrp, sku,
+    )
+
+
+def test_a_deep_discount_above_his_price_says_nothing():
+    half_off = check.parse_variants(page(variant(
         "Impact Whey Protein Powder - 2.7kg - 90servings - Strawberry Cream",
-        "Strawberry Cream", servings, price, "97.49", sku)))
+        "Strawberry Cream", "2.7kg - 90servings", "60.00", "120.00", 18000003)))
+    alerts, _ = check.decide(half_off, {}, ALL, 28.0)   # 50% off, £28.99/kg
+    assert alerts == []
 
 
-def test_first_sighting_seeds_the_low_without_alerting():
-    alerts, state = check.decide(at("90.00"), {}, WATCH, 28.0)
-    assert kinds(alerts, "low") == []
-    assert state["low:18000003"] == pytest.approx(90.00 / (90 * 23) * 1000)
+def test_a_sale_on_a_flavour_we_cannot_price_says_nothing():
+    twix = check.parse_variants(page(variant(
+        "Impact Whey Protein Powder - 1.05kg - 30servings - Twix®",
+        "Twix®", "1.05kg - 30servings", "10.00", "40.00", 18000015)))
+    alerts, _ = check.decide(twix, {}, ALL, 28.0)
+    assert alerts == []
 
 
-def test_a_new_low_alerts():
-    _, state = check.decide(at("90.00"), {}, WATCH, 28.0)
-    alerts, state = check.decide(at("80.00"), state, WATCH, 28.0)
-    assert len(kinds(alerts, "low")) == 1
-    assert state["low:18000003"] == pytest.approx(80.00 / (90 * 23) * 1000)
+def test_a_record_low_above_his_price_says_nothing():
+    parsed = check.parse_variants(page(_shake(18400001, 150, "99.99")))
+    alerts, _ = check.decide(parsed, {"low:18400001": 40.0}, ALL, 28.0)
+    assert alerts == []
 
 
-def test_a_price_above_the_recorded_low_does_not_alert():
-    _, state = check.decide(at("80.00"), {}, WATCH, 28.0)
-    alerts, _ = check.decide(at("90.00"), state, WATCH, 28.0)
-    assert kinds(alerts, "low") == []
+def test_state_from_the_retired_triggers_is_dropped():
+    parsed = check.parse_variants(page(_shake(18400001, 150, "99.99")))
+    prior = {"low:18400001": 40.0, "disc:18400001": 99.99, "return:1": 97.49}
+    _, state = check.decide(parsed, prior, ALL, 28.0)
+    assert not any(k.startswith(("low:", "disc:")) for k in state)
+    assert state["return:1"] == 97.49
 
 
-def test_a_trivially_lower_price_is_not_worth_an_alert():
-    """A 0.1% dip is noise, not news — record it, stay quiet."""
-    _, state = check.decide(at("90.00"), {}, WATCH, 28.0)
-    alerts, state = check.decide(at("89.95"), state, WATCH, 28.0)
-    assert kinds(alerts, "low") == []
-    assert state["low:18000003"] == pytest.approx(89.95 / (90 * 23) * 1000)
+# --- a flavour's protein is judged across all its pack sizes -----------------
+# 2026-11-24: Milk Tea 250 g / 8 servings is a 31.25 g scoop, inside tolerance,
+# so it was priced at 23 g and called a deal at £27.17/kg. Its 840 g / 30 and
+# 2.52 kg / 90 packs are 28 g scoops, which marks the flavour as one whose
+# protein we do not know. One off-standard pack now holds out the whole flavour.
+
+MILK_TEA_250 = variant(
+    "Impact Whey Protein Powder - 250G - 8servings - Milk Tea",
+    "Milk Tea", "250G - 8servings", "5.00", "13.99", 11777850,
+)
+MILK_TEA_840 = variant(
+    "Impact Whey Protein Powder - 840g - 30servings - Milk Tea",
+    "Milk Tea", "840g - 30servings", "28.99", "34.99", 17712132,
+)
 
 
-def test_lows_are_tracked_per_sku_not_per_flavour():
-    _, state = check.decide(at("90.00", sku=1), {}, WATCH, 28.0)
-    alerts, _ = check.decide(at("95.00", sku=2), state, WATCH, 28.0)
-    assert kinds(alerts, "low") == []          # sku 2 is new — seeded, not alerted
-    assert "low:1" in state
+def test_one_off_standard_pack_holds_out_the_whole_flavour():
+    parsed = check.parse_variants(page(MILK_TEA_250, MILK_TEA_840))
+    assert check.comparable(parsed, ALL) == []
+    alerts, _ = check.decide(parsed, {}, ALL, 28.0)
+    assert alerts == []
 
 
-def test_collagen_lows_are_not_tracked():
-    """Same reason it is excluded from the price trigger: half its protein is
-    collagen, so 'cheapest ever' would invite a purchase that is poor value."""
-    v = check.parse_variants(page(variant(
-        "Impact Whey Protein Powder - 2340g - 90servings - Cookies and Cream (+Collagen)",
-        "Cookies and Cream (+Collagen)", "2340g - 90servings", "61.99", "83.49", 18000001)))
-    _, state = check.decide(v, {}, WATCH, 28.0)
-    assert not any(k.startswith("low:") for k in state)
+def test_a_flavour_held_out_by_one_pack_is_named_in_the_run_log():
+    lines = _scope_lines(check.parse_variants(page(MILK_TEA_250, MILK_TEA_840)))
+    held = [ln for ln in lines if "held out of the value triggers" in ln]
+    assert held and "Milk Tea" in held[0]
 
 
-# --- deep discount ----------------------------------------------------------
-# Unlike the two triggers above, this one covers ALL lines including +Collagen:
-# it answers "is a big sale running", not "is this good value".
-
-def discounted(pct_price, rrp="100.00", sku=18000003, flavour="Strawberry Cream"):
-    return check.parse_variants(page(variant(
-        f"Impact Whey Protein Powder - 2.7kg - 90servings - {flavour}",
-        flavour, "2.7kg - 90servings", pct_price, rrp, sku)))
-
-
-def test_deep_discount_fires_at_the_threshold():
-    alerts, _ = check.decide(discounted("60.00"), {}, WATCH, 28.0)   # 40% off
-    assert len(kinds(alerts, "discount")) == 1
+def test_a_flavour_whose_packs_all_match_stays_comparable():
+    vanilla_250 = variant(
+        "Impact Whey Protein Powder - 250G - 8servings - Vanilla",
+        "Vanilla", "250G - 8servings", "5.00", "13.99", 17712100,
+    )
+    parsed = check.parse_variants(page(vanilla_250, VANILLA_90))
+    assert len(check.comparable(parsed, ALL)) == 2
 
 
-def test_deep_discount_does_not_fire_just_below_the_threshold():
-    alerts, _ = check.decide(discounted("61.00"), {}, WATCH, 28.0)   # 39% off
-    assert kinds(alerts, "discount") == []
+def test_the_same_flavour_on_another_line_is_judged_separately():
+    """Milk Tea (Milkshake) has its own scoop; an Original pack must not hold it out."""
+    shake = _shake(18400020, 150, "55.00", flavour="Milk Tea")
+    parsed = check.parse_variants(page(MILK_TEA_840, shake))
+    assert [v.line for v in check.comparable(parsed, ALL)] == ["Milkshake"]
 
 
-def test_the_collagen_line_never_reaches_the_big_sale_trigger():
+# --- whey first ----------------------------------------------------------------
+# Viktor 2026-11-24: whey (Original) is what he wants; Milkshake will do. Both
+# are reported, whey first.
+
+def test_whey_deals_are_listed_before_milkshake_deals():
+    shake = check.parse_variants(page(_shake(18400030, 150, "50.00")))[0]
+    whey = check.parse_variants(page(variant(
+        "Impact Whey Protein Powder - 2.7kg - 90servings - Vanilla",
+        "Vanilla", "2.7kg - 90servings", "55.00", "97.49", 17712192)))[0]
+    text = check.format_slack([check.Alert("deal", shake), check.Alert("deal", whey)])["text"]
+    assert text.index("(Original)") < text.index("(Milkshake)")
+
+
+def test_within_a_line_the_cheaper_deal_comes_first():
+    cheap = check.parse_variants(page(_shake(18400031, 150, "50.00", flavour="Banana")))[0]
+    dear = check.parse_variants(page(_shake(18400032, 150, "55.00", flavour="Chocolate")))[0]
+    text = check.format_slack([check.Alert("deal", dear), check.Alert("deal", cheap)])["text"]
+    assert text.index("Banana") < text.index("Chocolate")
+
+
+# --- the +Collagen line stays out of every message ----------------------
+
+def test_the_collagen_line_never_alerts():
     """Viktor 2026-08-29: the +Collagen line swaps whey for collagen peptides,
     which is not the product he wants at any discount. It was already out of the
     value triggers; the sale trigger was the last way it could reach him."""
@@ -714,42 +693,6 @@ def test_no_collagen_variant_can_appear_in_any_message():
     alerts, _ = check.decide(v, {}, ALL, 28.0)
     assert alerts == []
     assert "Collagen" not in check.format_slack(alerts)["text"]
-
-
-def test_an_unverified_original_flavour_still_fires_the_big_sale_trigger():
-    """The exclusion is the Collagen LINE, not "anything we cannot price".
-    Snickers and friends stay covered."""
-    v = check.parse_variants(page(variant(
-        "Impact Whey Protein Powder - 1.05kg - 30servings - Twix®",
-        "Twix®", "1.05kg - 30servings", "20.00", "40.00", 18000003)))
-    alerts, _ = check.decide(v, {}, ALL, 28.0)
-    assert len(kinds(alerts, "discount")) == 1
-
-
-def test_deep_discount_is_not_re_alerted_at_the_same_price():
-    v = discounted("60.00")
-    alerts, state = check.decide(v, {}, WATCH, 28.0)
-    assert len(kinds(alerts, "discount")) == 1
-    again, _ = check.decide(v, state, WATCH, 28.0)
-    assert kinds(again, "discount") == []
-
-
-def test_deep_discount_re_alerts_when_it_gets_deeper():
-    _, state = check.decide(discounted("60.00"), {}, WATCH, 28.0)
-    alerts, _ = check.decide(discounted("45.00"), state, WATCH, 28.0)
-    assert len(kinds(alerts, "discount")) == 1
-
-
-def test_discount_ending_clears_state_so_the_next_sale_alerts():
-    _, state = check.decide(discounted("60.00"), {}, WATCH, 28.0)
-    _, state = check.decide(discounted("95.00"), state, WATCH, 28.0)   # 5% off
-    alerts, _ = check.decide(discounted("60.00"), state, WATCH, 28.0)
-    assert len(kinds(alerts, "discount")) == 1
-
-
-def test_unwatched_flavour_never_deep_discount_alerts():
-    alerts, _ = check.decide(discounted("40.00", flavour="Vanilla"), {}, WATCH, 28.0)
-    assert kinds(alerts, "discount") == []
 
 
 # --- message ----------------------------------------------------------------
@@ -910,90 +853,13 @@ def test_the_digest_names_a_weightless_variant_cleanly():
     assert ", 120servings" not in line
 
 
-# --- a new low has to be worth hearing --------------------------------------
-# 2026-08-28: a 250 g / 8-serving taster tub dropped to £10.00, hit its own
-# personal record and alerted at £54.35/kg protein — while £33.33/kg sat on the
-# same page. 4 of the 6 alert lines ever sent were worse than what was already
-# available, because £/kg tracks pack size and every size is its own SKU, so a
-# sitewide percentage sale makes all of them hit a personal best at once.
-# A record is still worth KEEPING; it is not always worth SAYING.
-
-def _shake(sku, servings, price, rrp="153.99", flavour="Banana"):
-    return variant(
-        f"Impact Whey Protein Powder - {servings}servings - {flavour} (Milkshake)",
-        f"{flavour} (Milkshake)", f"4350g - {servings}servings", price, rrp, sku,
-    )
-
-
-def _taster(sku, price, rrp="13.99"):
-    """250 g / 8 servings — structurally poor value per kg, whatever it costs."""
-    return variant(
-        "Impact Whey Protein Powder - 250G - 8servings - Chocolate Brownie",
-        "Chocolate Brownie", "250G - 8servings", price, rrp, sku,
-    )
-
-
-def test_a_new_low_on_the_best_price_still_alerts():
-    page_ = page(_shake(18400001, 150, "99.99"))
-    prior = {"low:18400001": 40.0}
-    alerts, _ = check.decide(check.parse_variants(page_), prior, ALL, 28.0)
-    assert [a.kind for a in alerts] == ["low"]
-
-
-def test_the_taster_tub_regression_does_not_alert():
-    """The exact 2026-08-28 shape: taster hits a personal low at £54.35/kg while
-    £33.33/kg is on the same page."""
-    parsed = check.parse_variants(page(_shake(18400002, 150, "99.99"),
-                                       _taster(18400003, "10.00")))
-    # Both already on record; only the taster is dropping.
-    prior = {"low:18400002": 33.33, "low:18400003": 60.0}
-    alerts, new_state = check.decide(parsed, prior, ALL, 28.0)
-    assert alerts == []
-    # The record still ratchets down — history is kept, only the shout is dropped.
-    assert new_state["low:18400003"] == pytest.approx(54.35, abs=0.01)
-
-
-def test_a_suppressed_low_is_recorded_so_it_cannot_alert_again_later():
-    parsed = check.parse_variants(page(_shake(18400004, 150, "99.99"),
-                                       _taster(18400005, "10.00")))
-    prior = {"low:18400004": 33.33, "low:18400005": 60.0}
-    _, state1 = check.decide(parsed, prior, ALL, 28.0)
-    alerts2, _ = check.decide(parsed, state1, ALL, 28.0)
-    assert alerts2 == []
-
-
-@pytest.mark.parametrize("taster_price,should_alert", [
-    ("6.15", True),    # ~£33.4/kg — level with the page best, genuinely news
-    ("10.00", False),  # £54.35/kg — today's case
-])
-def test_the_gate_is_about_price_not_pack_size(taster_price, should_alert):
-    """A small pack is not banned — it just has to be competitive to speak."""
-    parsed = check.parse_variants(page(_shake(18400006, 150, "99.99"),
-                                       _taster(18400007, taster_price)))
-    prior = {"low:18400006": 33.33, "low:18400007": 99.0}
-    alerts, _ = check.decide(parsed, prior, ALL, 28.0)
-    assert bool(alerts) is should_alert
-
-
 def test_a_deal_at_his_price_alerts_even_if_it_is_not_the_page_best():
-    """The relevance gate guards the LOW trigger only. Hitting his actual
-    buying price is news regardless of what else is on the page."""
+    """Hitting his actual buying price is news regardless of what else is on
+    the page."""
     parsed = check.parse_variants(page(_shake(18400008, 150, "60.00"),
                                        _shake(18400009, 150, "83.00", flavour="Chocolate")))
     alerts, _ = check.decide(parsed, {}, ALL, 28.0)
     assert "deal" in [a.kind for a in alerts]
-
-
-def test_the_page_best_ignores_variants_we_cannot_price():
-    """An unverified flavour must not set the bar the gate measures against."""
-    twix = variant(
-        "Impact Whey Protein Powder - 1.05kg - 30servings - Twix®",
-        "Twix®", "1.05kg - 30servings", "5.00", "5.00", 18400010,
-    )
-    parsed = check.parse_variants(page(_shake(18400011, 150, "99.99"), twix))
-    prior = {"low:18400011": 40.0}
-    alerts, _ = check.decide(parsed, prior, ALL, 28.0)
-    assert [a.kind for a in alerts] == ["low"]
 
 
 def test_the_run_log_states_the_collagen_line_is_out_of_scope():

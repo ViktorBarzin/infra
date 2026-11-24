@@ -12,10 +12,12 @@
 # normalised per kg of PROTEIN because a serving is not a fixed amount of it
 # (Original 23g, Milkshake 20g, +Collagen 10g of whey).
 #
-# Four triggers (2026-08-15): the £/serving one above; "cheapest we have ever
-# recorded" per SKU, which ignores RRP entirely and so cannot be fooled by RRP
-# drift or pack-size changes; MyProtein's own displayed discount at 40%+; and
-# plain Cookies and Cream returning to the Original line.
+# Three triggers (since 2026-11-24, "I'm only interested in protein deals"): a
+# tub at or under the £/kg-of-protein price above; the same with a checkout code
+# the page announces; and plain Cookies and Cream returning to the Original line.
+# Whey (Original) deals are listed before Milkshake ones. The 40%-off and
+# cheapest-recorded triggers were removed: they alerted on small tubs and on
+# flavours still dear per gram.
 #
 # Shape: stock python:3.12-alpine running pure-stdlib check.py from a ConfigMap.
 # No pip/apk at runtime (the status-page-pusher disk anti-pattern, memory #559),
@@ -224,20 +226,6 @@ resource "kubernetes_cron_job_v1" "check" {
               env {
                 name  = "THRESHOLD_PER_KG_PROTEIN"
                 value = "28"
-              }
-              # A big sale on MyProtein's own reckoning. Supplements the
-              # £/serving trigger rather than replacing it: RRP is their number
-              # and it drifts upward, and the Original line currently reads 0%
-              # off while still being the dearest per serving.
-              env {
-                name  = "DEEP_DISCOUNT_PCT"
-                value = "40"
-              }
-              # Cheapest-ever needs a price to be meaningfully better than the
-              # record before it is worth saying — 1% keeps rounding noise quiet.
-              env {
-                name  = "NEW_LOW_MARGIN"
-                value = "0.01"
               }
               # Every flavour is in scope (2026-08-17): the four-flavour list
               # meant a bargain on a fifth went unmentioned. Left unset rather
