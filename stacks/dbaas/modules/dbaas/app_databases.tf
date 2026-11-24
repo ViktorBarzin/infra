@@ -64,6 +64,10 @@ locals {
     # the 3D map of the homelab. Drizzle migrations run from the `migrate`
     # init container.
     infra_map = {}
+    # wealth (TanStack Start, Forgejo viktor/wealth, private): Wealth, the
+    # household finance planner that replaces fire-planner. Drizzle
+    # migrations run from the `migrate` init container.
+    wealth = {}
   }
 }
 

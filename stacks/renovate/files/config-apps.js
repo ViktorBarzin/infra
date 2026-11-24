@@ -45,6 +45,10 @@ module.exports = {
       repository: 'viktor/cloud',
       baseBranchPatterns: ['master'],
     },
+    {
+      repository: 'viktor/wealth',
+      baseBranchPatterns: ['master'],
+    },
   ],
   autodiscover: false,
 

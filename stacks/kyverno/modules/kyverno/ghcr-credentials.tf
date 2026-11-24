@@ -117,6 +117,10 @@ locals {
     # the homelab; Forgejo viktor/infra-map, private GitHub mirror). The
     # Deployment references the cloned secret.
     "infra-map",
+    # wealth: PRIVATE ghcr.io/viktorbarzin/wealth (Wealth, the household
+    # finance planner; Forgejo viktor/wealth, private GitHub mirror). The
+    # Deployment and its job pods reference the cloned secret.
+    "wealth",
   ]
 }
 

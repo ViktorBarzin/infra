@@ -23,9 +23,10 @@ same name with underscores.
    the role and database once.
 3. Password rotation: add an entry to `var.pg_app_roles` in
    `stacks/vault/app_db_roles.tf`, keyed by `<slug>`:
-   `<slug> = { username = "<db>", rotation_schedule = "0 10 * * WED", rotation_window = 3600 }`.
-   The role is appended to the postgresql connection's `allowed_roles`
-   automatically.
+   `<slug> = { username = "<db>", rotation_schedule = "<m> 10 * * TUE", rotation_window = 3600 }`,
+   with `<m>` a free minute from the slot table in `stacks/vault/main.tf`
+   ("Static role rotation slots"; add the role there too). The role is
+   appended to the postgresql connection's `allowed_roles` automatically.
 4. Stack: create `stacks/<slug>/` with
    - `terragrunt.hcl` including root and depending on `platform`, `vault` and
      `external-secrets` (copy `stacks/tasks/terragrunt.hcl`),
@@ -79,6 +80,11 @@ same name with underscores.
    `FORGEJO_GIT_TOKEN` and `SLACK_WEBHOOK` secrets, registers the mirror in
    Woodpecker and sets the `WOODPECKER_REPO_ID` repo variable that the
    template's `build.yml` reads.
+7. Deploy rights: the script prints the app's Woodpecker repo id. Add
+   `"<id>" = "<slug>"` to `ci_deploy_repos` in
+   `stacks/woodpecker/repo-accounts.tf` and apply woodpecker before the first
+   build ends, or the deploy step runs with no rights
+   (`docs/agents/ci-cd.md`).
 
 A private repo publishes a private ghcr image, which the cluster cannot pull
 anonymously: add the namespace to `ghcr_private_namespaces` in
