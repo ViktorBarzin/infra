@@ -395,7 +395,7 @@ locals {
   # into an 18 server badly, so renovate.json5 holds majors in stacks/cloud.
   cloud_pg_task = {
     container = "pg"
-    image     = "docker.io/library/postgres:18.7-trixie@sha256:f5cbc081c25690710f3fc6f4c61a7565382bae01ca0d0f2028a53d7926b85a20"
+    image     = "docker.io/library/postgres:18.7-trixie@sha256:a47637053e65dc7112aeb7353feb8b87954982ad5fd4524908c284d90d71b5e3"
     # The image's postgres user, who owns the manual dump directory
     # (stacks/dbaas postgresql-backup makes it).
     uid = 999
