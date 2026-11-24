@@ -1,0 +1,5 @@
+#!/bin/sh
+# /etc/firewall.london-bittorrent: firewall include that rebuilds the
+# BitTorrent WAN block after every firewall reload (scripts/london-flint/london-bittorrent.sh).
+[ -x /usr/bin/london-bittorrent ] && /usr/bin/london-bittorrent apply
+exit 0

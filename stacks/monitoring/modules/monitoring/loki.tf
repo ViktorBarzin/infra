@@ -725,20 +725,6 @@ resource "kubernetes_config_map" "loki_alert_rules" {
                 summary = "London Flint Wi-Fi firmware reset (SER): clients paused while staying associated. If these line up with internet drops, send the kernel log to GL.iNet support."
               }
             },
-            {
-              # The projector's NordVPN tunnel (scripts/london-flint/london-nordvpn.sh).
-              # The watchdog renews a dead tunnel at most every 10 minutes, so two
-              # lines in 30 minutes mean it stayed down; a refusal (401/403/429)
-              # stops renewals for an hour. While it is down the kill switch keeps
-              # the projector offline rather than on the WAN.
-              alert  = "LondonMediaVpnDown"
-              expr   = "sum by (host) (count_over_time({job=\"syslog\", host=\"flint-london\", app=\"london-nordvpn\"} |~ \"tunnel down|refresh failed|refresh stopped\" [30m])) >= 2"
-              for    = "0s"
-              labels = { severity = "warning", subsystem = "london" }
-              annotations = {
-                summary = "London projector's NordVPN tunnel is down and not renewing, so the projector has no internet. On the Flint: logread -e london-nordvpn, wg show nordvpn, then london-nordvpn refresh."
-              }
-            },
           ]
         },
         {

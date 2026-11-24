@@ -102,7 +102,7 @@ flowchart TD
 | storage | 192.168.1.13 TCP 445 | sign-in by a member of `london-storage`, or Viktor |
 | infra-ha | 192.168.1.127 TCP 2049 (backups), 10.0.20.200 TCP 19532 (journal upload), 8554 and 8080 (vacuum camera) | Viktor (ha-london) |
 | infra-k8s | 10.0.20.0/24 | Viktor (dell-worker) |
-| media | 10.0.20.203 TCP 443, Traefik's web services. Its internet traffic goes through NordVPN (next section) | Viktor (the projector, for ImmichFrame) |
+| media | 10.0.20.203 TCP 443, Traefik's web services | Viktor (the projector, for ImmichFrame; the tablet) |
 | iot | nothing; same as guest | Viktor (plugs, air sensor) |
 | guest | only the sign-in page, 10.0.20.215 TCP 443 | default |
 
@@ -168,68 +168,47 @@ and Macs: Rotating changes the MAC too.
 `iptables -S london_roles`, `uci show dhcp | grep lr_`. In the app: `/` shows the device you are on, and
 `/admin` lists every device.
 
-## Media players via NordVPN
+## BitTorrent
 
-The ISP objects to BitTorrent. Stremio on the projector plays a raw torrent
-when Real-Debrid has no copy, so since 2026-11-23 (Viktor) every device with
-the role `media` sends all its internet traffic through a NordVPN WireGuard
-tunnel on the Flint. The Flint's WAN then carries only the encrypted tunnel
-for that device. Traffic to Sofia (ImmichFrame, Traefik) still uses
-`wgclient1`, and LAN traffic and casting stay local. Other London devices are
-not affected.
+The flat's ISP objects to BitTorrent, and no London device should torrent.
+Stremio's shared account shows torrent rows on every device (Viktor), but
+they play from the Sofia streaming server: the "P2P via Sofia" addon
+(`stacks/servarr/aiostreams`, `files/p2p_row.py`, host
+`aiostreams-p2p.viktorbarzin.me`) turns each torrent row into an HTTPS row
+whose video it relays from the `stremio` server in the cluster, which
+torrents on the Sofia line. Viktor's main AIOStreams config returns no torrent
+rows, and the hourly `stremio-torrent-guard` CronJob alerts
+`StremioTorrentRowsOnAccount` if any addon on the account returns one again.
 
-```mermaid
-flowchart LR
-  proj["projector (role media)"] -->|"mark 0x10000"| rule["rule 5995<br/>0x18000/0x1f000 to table 1100"]
-  rule --> nord["nordvpn (10.5.0.2)<br/>Bulgarian server"] --> wan["eth1, encrypted"]
-  proj -->|"to 10.0.0.0/8, GL mark 0x1000"| wg1["wgclient1 to Sofia"]
-  rule -.->|"tunnel down"| bh["blackhole, metric 254"]
-```
-
-| piece | where | what |
-|---|---|---|
-| tunnel | uci `network.nordvpn` (proto wireguard, 10.5.0.2/32, MTU 1420, `ip4table 1100`) and peer `network.nordvpn_server` (allowed 0.0.0.0/0, keepalive 25 s) | The key and the server come from NordVPN's API: `/v1/users/services/credentials` with the account token, and the least-loaded Bulgarian WireGuard server from `/v1/servers/recommendations` (country 33; UK until 2026-11-23, changed by Viktor). NordVPN has four servers there, all in Sofia. NordVPN carries IPv4 only. |
-| routing | uci rule `nordvpn_media` (mark `0x18000/0x1f000`, table 1100, priority 5995) and route `nordvpn_blackhole` (table 1100, metric 254) | The mangle rule marks packets from `lr_media` MACs with bit 0x10000, which GL's marks (0xf000, 0xf00, 0xf00000) leave free. GL marks internet-bound LAN traffic 0x8000 and Sofia-bound traffic 0x1000, so only internet traffic matches. With the tunnel down only the blackhole is left in table 1100, and media traffic is dropped, not sent out of the WAN. |
-| kill switch | chain `london_nordvpn` (IPv4 and IPv6), hooked into `forwarding_lan_rule` for `lr_media` sources | A second guard: a media player may leave only through `nordvpn`, `wgclient1`, `br-lan` or `br-guest`. Everything else is rejected and logged with prefix `london-nordvpn-blocked`. This refuses the projector's IPv6 internet, so its apps use IPv4. |
-| IPv4-only DNS | a second dnsmasq on `br-lan` port 2154 (`--filter-AAAA`, no DHCP, forwards to the main dnsmasq on 127.0.0.1:53; pid `/var/run/london-nordvpn-dns.pid`), started by `apply`; nat `PREROUTING` redirects `lr_media` DNS (UDP and TCP 53, IPv4 and IPv6) to it; chain `london_media_dns`, first in `FORWARD`, refuses `lr_media` connections to public resolvers (Google, Cloudflare, Quad9) on 443 and 853 | The kill switch refuses media players' IPv6 internet, and not every client then falls back to IPv4. Stremio's streaming server 4.21 on the projector does not: it failed every fetch from a dual-stack host, so English subtitles from subs5.strem.io never loaded (2026-11-23). With no AAAA answers the players use IPv4 only. The projector's Android resolver sent its queries over HTTPS to 8.8.4.4 and never asked the router, which is why the public resolvers are refused: Android then falls back to plain DNS. If the forwarder does not start, `apply` removes the redirect and logs it, so the players keep the main dnsmasq. |
-| watchdog | cron, every minute: `/usr/bin/london-nordvpn watchdog` | Renews the key and the server when the last handshake is older than 5 minutes, or when there is no handshake 3 minutes after a renewal. It renews at most every 10 minutes, because NordVPN refuses an over-limit reconnect for about that long. After a 401, 403 or 429 it stops for an hour. Alert `LondonMediaVpnDown` (Loki, `stacks/monitoring/modules/monitoring/loki.tf`) fires on two failure lines in 30 minutes. |
-| files | `/usr/bin/london-nordvpn` (`scripts/london-flint/london-nordvpn.sh`, tests in `london_nordvpn_test.py`), `/etc/firewall.london-nordvpn` (firewall include, runs `apply` on every reload), `/etc/london-nordvpn.token` (Vault `secret/proxy` `nordvpn_token`, the token the cluster's NordVPN gateways use) | All installed by `provision.sh` and listed in `/etc/sysupgrade.conf`, as is `/etc/crontabs/root`. |
-
-**BitTorrent from other devices.** Since 2026-11-23 (Viktor) Stremio shows
-P2P rows on every device, so devices outside the tunnel get a best-effort
-block. GL's DPI agent netifyd has a flow action of ours, `london-bittorrent`
-(target `ctmark_london_bittorrent`, in `/etc/netifyd/netify-proc-flow-actions.json`),
-with criteria in `/etc/netifyd/nfa-block.d/20-london-bittorrent.conf`:
+As a net under that, GL's DPI agent netifyd has a flow action of ours,
+`london-bittorrent` (target `ctmark_london_bittorrent`, in
+`/etc/netifyd/netify-proc-flow-actions.json`), with criteria in
+`/etc/netifyd/nfa-block.d/20-london-bittorrent.conf`:
 `protocol == 'bittorrent'`, `application == 'netify.bittorrent'` and
 `'netify.utorrent'`. It marks such a flow with connmark 0x1000000. The chain
-`london_bittorrent`, first in `FORWARD` (IPv4 and IPv6), lets a marked flow
-into `nordvpn`, `wgclient1` or the LANs and rejects it on the WAN, logging
-`london-bittorrent-blocked`. netifyd recognises a flow from its first payload,
-so the first handshake packet of each connection still leaves, and torrents it
-cannot recognise are not blocked. The tunnel is the guarantee; this only
-catches devices without it. Tested 2026-11-23 from ha-london: three
-connections sending a BitTorrent handshake to portquiz.net:6881 were all
-marked, and their later packets were rejected. The criteria grammar is
-netifyd's: an unknown name such as `detected_protocol` is a parse error that
-stops netifyd (traffic still flows, its queue has `--queue-bypass`), so check
-`logread -e proc-nfa` after a change. `provision.sh` restores the action after
-a firmware upgrade or a GL UI change to DPI.
+`london_bittorrent` (`scripts/london-flint/london-bittorrent.sh`, tests in
+`london_bittorrent_test.py`, firewall include `/etc/firewall.london-bittorrent`),
+first in `FORWARD` for IPv4 and IPv6, lets a marked flow into `wgclient1` or
+the LANs and rejects it on the WAN, logging `london-bittorrent-blocked`.
+netifyd recognises a flow from its first payload, so the first handshake
+packet of each connection still leaves, and torrents it cannot recognise are
+not blocked. Tested 2026-11-23 from ha-london: three connections sending a
+BitTorrent handshake to portquiz.net:6881 were all marked, and their later
+packets were rejected.
 
-The London tablet (Xiaomi Pad 7, on the shared Stremio account) has the role
-`media` too since 2026-11-23, so all its internet traffic also exits through
-NordVPN Bulgaria.
+The criteria grammar is netifyd's: an unknown name such as
+`detected_protocol` is a parse error that stops netifyd (traffic still flows,
+its queue has `--queue-bypass`), so check `logread -e proc-nfa` after a
+change. GL stops netifyd when QoS, flow statistics and content protection are
+all off in its UI, and a firmware upgrade reinstalls it: `provision.sh`
+restores the action, and its last check fails while netifyd is not running.
 
-**Checks.** On the router: `wg show nordvpn` (a handshake under 2 minutes
-old), `logread -e london-nordvpn`, `ip route get 1.1.1.1 from 192.168.8.100 iif br-lan mark 0x18000`
-(answers `dev nordvpn table 1100`), and the projector's flows in
-`/proc/net/nf_conntrack`, whose reply address is 10.5.0.2 and never the WAN
-address. Renew by hand with `london-nordvpn refresh`.
-
-**Limits.** DNS for the projector still goes through the Flint's dnsmasq to
-AdGuard over the WAN, so tracker names are visible there, but no torrent
-traffic is. A NordVPN account allows about 10 tunnels at once, shared with
-the cluster's gateways (`stacks/proxy`). The NordVPN app on the projector is
-not needed. If it is on, its tunnel runs inside this one.
+History: on 2026-11-23 media players briefly sent all their traffic through a
+NordVPN tunnel on the Flint (`london-nordvpn`, with a kill switch, an
+IPv4-only DNS forwarder and a watchdog). Two reviews found it fragile (MAC
+membership empty at boot, kill switch after the ESTABLISHED accept, IPv6
+refused, a shared NordLynx key), and P2P via Sofia replaced it the same night.
+`provision.sh` makes sure none of it is left.
 
 ## Monitoring
 

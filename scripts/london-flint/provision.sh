@@ -391,107 +391,35 @@ else
 fi
 EOF
 
-# Media players via NordVPN (docs/architecture/london-site.md, "Media players
-# via NordVPN"): every device with the role media sends its internet traffic
-# through a NordVPN WireGuard tunnel, so BitTorrent never crosses the WAN in
-# the clear. The token is the one the cluster's NordVPN gateways use.
-for f in london-nordvpn.sh:london-nordvpn london-nordvpn.firewall:london-nordvpn.firewall; do
+# BitTorrent (docs/architecture/london-site.md, "BitTorrent"). The flat's ISP
+# objects to it, and no London device should torrent: Stremio plays torrent
+# rows from the Sofia streaming server ("P2P via Sofia", stacks/servarr/aiostreams).
+# As a net, GL's DPI agent marks flows it recognises as BitTorrent and the
+# london_bittorrent chain rejects them on the WAN.
+for f in london-bittorrent.sh:london-bittorrent london-bittorrent.firewall:london-bittorrent.firewall; do
 	# shellcheck disable=SC2086
 	ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" "cat > /tmp/${f#*:}.new" <"$HERE/${f%%:*}"
 done
-# shellcheck disable=SC2086
-vault kv get -field=nordvpn_token secret/proxy | ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'umask 077; cat > /tmp/london-nordvpn.token.new'
 # shellcheck disable=SC2086
 ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'sh -s' <<'EOF'
 set -eu
 place() { # new-file target mode
 	if ! cmp -s "$1" "$2"; then
 		mv "$1" "$2"
-		echo "london-nordvpn: installed $2"
+		echo "london-bittorrent: installed $2"
 	else
 		rm -f "$1"
 	fi
 	chmod "$3" "$2"
 	grep -qxF "$2" /etc/sysupgrade.conf || echo "$2" >>/etc/sysupgrade.conf
 }
-place /tmp/london-nordvpn.new /usr/bin/london-nordvpn 755
-place /tmp/london-nordvpn.firewall.new /etc/firewall.london-nordvpn 755
-place /tmp/london-nordvpn.token.new /etc/london-nordvpn.token 600
-
-# The tunnel's routes go to table 1100. Media players' packets carry GL's
-# "use main" mark 0x8000 plus our bit 0x10000, and the rule sends them to
-# 1100 before GL's own rules at 6000. Traffic to Sofia carries GL's 0x1000
-# instead and keeps using wgclient1. With the tunnel down only the blackhole
-# is left in 1100, so nothing falls through to the WAN.
-net=0
-want() { # uci-option value
-	if [ "$(uci -q get "$1")" != "$2" ]; then uci set "$1=$2"; net=1; fi
-}
-want network.nordvpn interface
-want network.nordvpn.proto wireguard
-want network.nordvpn.ip4table 1100
-want network.nordvpn.mtu 1420
-if [ "$(uci -q get network.nordvpn.addresses)" != 10.5.0.2/32 ]; then
-	uci -q delete network.nordvpn.addresses || true
-	uci add_list network.nordvpn.addresses=10.5.0.2/32
-	net=1
-fi
-want network.nordvpn_server wireguard_nordvpn
-want network.nordvpn_server.endpoint_port 51820
-want network.nordvpn_server.route_allowed_ips 1
-want network.nordvpn_server.persistent_keepalive 25
-if [ "$(uci -q get network.nordvpn_server.allowed_ips)" != 0.0.0.0/0 ]; then
-	uci -q delete network.nordvpn_server.allowed_ips || true
-	uci add_list network.nordvpn_server.allowed_ips=0.0.0.0/0
-	net=1
-fi
-want network.nordvpn_media rule
-want network.nordvpn_media.mark 0x18000/0x1f000
-want network.nordvpn_media.lookup 1100
-want network.nordvpn_media.priority 5995
-want network.nordvpn_blackhole route
-want network.nordvpn_blackhole.type blackhole
-want network.nordvpn_blackhole.interface loopback
-want network.nordvpn_blackhole.target 0.0.0.0
-want network.nordvpn_blackhole.netmask 0.0.0.0
-want network.nordvpn_blackhole.metric 254
-want network.nordvpn_blackhole.table 1100
-if [ "$net" = 1 ]; then
-	uci commit network
-	ubus call network reload
-	echo "network: nordvpn interface, rule and blackhole set"
-fi
-
-fw=0
-wantfw() { # uci-option value
-	if [ "$(uci -q get "$1")" != "$2" ]; then uci set "$1=$2"; fw=1; fi
-}
-wantfw firewall.nordvpn zone
-wantfw firewall.nordvpn.name nordvpn
-wantfw firewall.nordvpn.network nordvpn
-wantfw firewall.nordvpn.input REJECT
-wantfw firewall.nordvpn.output ACCEPT
-wantfw firewall.nordvpn.forward REJECT
-wantfw firewall.nordvpn.masq 1
-wantfw firewall.nordvpn.mtu_fix 1
-wantfw firewall.nordvpn_lan forwarding
-wantfw firewall.nordvpn_lan.src lan
-wantfw firewall.nordvpn_lan.dest nordvpn
-wantfw firewall.london_nordvpn include
-wantfw firewall.london_nordvpn.type script
-wantfw firewall.london_nordvpn.path /etc/firewall.london-nordvpn
-wantfw firewall.london_nordvpn.reload 1
-if [ "$fw" = 1 ]; then
-	uci commit firewall
-	/etc/init.d/firewall reload
-	echo "firewall: nordvpn zone, forwarding and include set"
-fi
+place /tmp/london-bittorrent.new /usr/bin/london-bittorrent 755
+place /tmp/london-bittorrent.firewall.new /etc/firewall.london-bittorrent 755
 
 # BitTorrent safety net for the other London devices: GL's DPI agent
 # (netifyd, flow-actions plugin) marks flows it recognises as BitTorrent
 # (protocol bittorrent, apps netify.bittorrent and netify.utorrent) with connmark
-# 0x1000000, and london-nordvpn's london_bittorrent chain rejects them on the
-# WAN. A GL firmware upgrade or a GL UI change to DPI can rewrite the JSON:
+# 0x1000000, and london-bittorrent's chain rejects them on the WAN. A GL firmware upgrade or a GL UI change to DPI can rewrite the JSON:
 # provision.sh puts the action back.
 crit=/etc/netifyd/nfa-block.d/20-london-bittorrent.conf
 printf "protocol == 'bittorrent';\napplication == 'netify.bittorrent';\napplication == 'netify.utorrent';\n" >/tmp/london-bittorrent.conf
@@ -525,20 +453,60 @@ if [ "$dpi" = 1 ]; then
 	/etc/init.d/netifyd restart
 	echo "netifyd: action london-bittorrent set"
 fi
-/usr/bin/london-nordvpn apply
+if [ "$(uci -q get firewall.london_bittorrent.path)" != /etc/firewall.london-bittorrent ]; then
+	uci set firewall.london_bittorrent=include
+	uci set firewall.london_bittorrent.type='script'
+	uci set firewall.london_bittorrent.path='/etc/firewall.london-bittorrent'
+	uci set firewall.london_bittorrent.reload='1'
+	uci commit firewall
+	echo "firewall: include /etc/firewall.london-bittorrent"
+fi
 
-# A key or server change since the last run: renew now. The watchdog renews
-# a stale tunnel every minute after that.
-if [ -z "$(uci -q get network.nordvpn.private_key)" ] || ! wg show nordvpn >/dev/null 2>&1; then
-	/usr/bin/london-nordvpn refresh
-fi
-cron='* * * * * /usr/bin/london-nordvpn watchdog'
-if ! grep -qxF "$cron" /etc/crontabs/root 2>/dev/null; then
-	echo "$cron" >>/etc/crontabs/root
+# From 2026-11-23 20:54 to the next night, media players sent all their
+# traffic through a NordVPN tunnel on the Flint (london-nordvpn); P2P via
+# Sofia replaced it. Make sure none of it is left.
+net=0
+fw=0
+for sec in network.nordvpn network.nordvpn_server network.nordvpn_media network.nordvpn_blackhole; do
+	if uci -q get "$sec" >/dev/null; then uci delete "$sec"; net=1; fi
+done
+for sec in firewall.nordvpn firewall.nordvpn_lan firewall.london_nordvpn; do
+	if uci -q get "$sec" >/dev/null; then uci delete "$sec"; fw=1; fi
+done
+if grep -q 'london-nordvpn' /etc/crontabs/root 2>/dev/null; then
+	sed -i '/london-nordvpn/d' /etc/crontabs/root
 	/etc/init.d/cron restart
-	echo "cron: london-nordvpn watchdog every minute"
+	echo "cron: london-nordvpn watchdog removed"
 fi
-grep -qxF /etc/crontabs/root /etc/sysupgrade.conf || echo /etc/crontabs/root >>/etc/sysupgrade.conf
+pid=/var/run/london-nordvpn-dns.pid
+if [ -f "$pid" ]; then kill "$(cat "$pid")" 2>/dev/null || true; rm -f "$pid"; echo "london-nordvpn: DNS forwarder stopped"; fi
+for ipt in iptables ip6tables; do
+	for table in filter nat mangle; do
+		$ipt -t "$table" -S 2>/dev/null | grep -E 'london_nordvpn|london_media_dns|lr_media src -j MARK --set-xmark 0x10000/0x10000|--to-ports 2154' | grep '^-A' |
+			while read -r rule; do
+				# shellcheck disable=SC2086 # the rule is a list of words
+				$ipt -t "$table" -D ${rule#-A } 2>/dev/null || true
+			done
+	done
+	for chain in london_nordvpn london_media_dns; do
+		$ipt -F "$chain" 2>/dev/null && $ipt -X "$chain" 2>/dev/null || true
+	done
+done
+for f in /usr/bin/london-nordvpn /etc/firewall.london-nordvpn /etc/london-nordvpn.token; do
+	if [ -e "$f" ]; then rm -f "$f"; echo "london-nordvpn: removed $f"; fi
+	sed -i "\\|^$f\$|d" /etc/sysupgrade.conf
+done
+if [ "$net" = 1 ]; then
+	uci commit network
+	ubus call network reload
+	echo "network: nordvpn interface, rule and blackhole removed"
+fi
+if [ "$fw" = 1 ]; then
+	uci commit firewall
+	/etc/init.d/firewall reload
+	echo "firewall: nordvpn zone, forwarding and include removed"
+fi
+/usr/bin/london-bittorrent apply
 EOF
 
 # Verify from this side of the tunnel, the same path Prometheus uses.
@@ -560,8 +528,8 @@ echo "WAN brute-force bans: $bans"
 # shellcheck disable=SC2086
 roles=$(ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'pgrep -f "/usr/bin/london-roles run" >/dev/null && iptables -C forwarding_lan_rule -o wgclient1 -j london_roles 2>/dev/null && echo running || echo missing')
 echo "london-roles: $roles"
-# A handshake in the last 5 minutes and the kill switch hooked in.
+# The BitTorrent block hooked in, netifyd running, and no NordVPN tunnel left.
 # shellcheck disable=SC2086
-nordvpn=$(ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'hs=$(wg show nordvpn latest-handshakes 2>/dev/null | awk "{print \$2; exit}"); [ -n "$hs" ] && [ $(($(date +%s) - hs)) -lt 300 ] && iptables -C forwarding_lan_rule -m set --match-set lr_media src -j london_nordvpn 2>/dev/null && echo up || echo down')
-echo "media players via NordVPN: $nordvpn"
-[ "$metrics" -gt 0 ] && [ "$probe" = running ] && [ "$ring" = 8192 ] && [ "$auth" = publickey ] && [ "$bans" = loaded ] && [ "$roles" = running ] && [ "$nordvpn" = up ]
+bt=$(ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'iptables -C FORWARD -m connmark --mark 0x1000000/0x1000000 -j london_bittorrent 2>/dev/null && ip6tables -C FORWARD -m connmark --mark 0x1000000/0x1000000 -j london_bittorrent 2>/dev/null && pgrep netifyd >/dev/null && ! ip link show nordvpn >/dev/null 2>&1 && echo loaded || echo missing')
+echo "BitTorrent WAN block: $bt"
+[ "$metrics" -gt 0 ] && [ "$probe" = running ] && [ "$ring" = 8192 ] && [ "$auth" = publickey ] && [ "$bans" = loaded ] && [ "$roles" = running ] && [ "$bt" = loaded ]
