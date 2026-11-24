@@ -71,6 +71,31 @@ module "opnsense" {
   depends_on = [kubernetes_namespace.reverse-proxy]
 }
 
+# Rate limit for the Synology DSM UI. One cold DSM load fires ~280 JS/CSS/PNG
+# requests; the global 10/50 default answered 33 of them 429, which tripped
+# crowdsecurity/http-429-abuse and banned Viktor's London /64 for 4h
+# (2026-11-24). Same generous limit as ha-london.
+resource "kubernetes_manifest" "nas_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "nas-rate-limit"
+      namespace = "reverse-proxy"
+    }
+    spec = {
+      rateLimit = {
+        average = 200
+        burst   = 500
+        # Bucket per IPv6 /64 (IPv4 unchanged); the key stays the TCP peer.
+        sourceCriterion = {
+          ipStrategy = { ipv6Subnet = 64 }
+        }
+      }
+    }
+  }
+}
+
 # https://nas.viktorbarzin.me/
 module "nas" {
   source           = "./factory"
@@ -81,7 +106,16 @@ module "nas" {
   tls_secret_name  = var.tls_secret_name
   backend_protocol = "HTTPS"
   max_body_size    = "0m"
-  depends_on       = [kubernetes_namespace.reverse-proxy]
+  # depends_on on the rate-limit manifest avoids a dangling-reference window
+  # that would 404 nas traffic (see ha-sofia / memory 768).
+  depends_on = [
+    kubernetes_namespace.reverse-proxy,
+    kubernetes_manifest.nas_rate_limit,
+  ]
+  skip_global_rate_limit = true
+  extra_middlewares = [
+    "reverse-proxy-nas-rate-limit@kubernetescrd",
+  ]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Synology NAS"
