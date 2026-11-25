@@ -142,7 +142,7 @@ resource "kubernetes_cron_job_v1" "remover" {
               name = "remove-offline"
               # bitnami/kubectl publishes only :latest on Docker Hub; the digest
               # pins it and Renovate bumps it (same pin as stacks/kured).
-              image             = "bitnami/kubectl:latest@sha256:ae71f848f057a71029d092e98548cabf7cd17b11da0adad0a8f4145a9c87c830"
+              image             = "bitnami/kubectl:latest@sha256:a34afebf8bf3b99cac63c1ff5d449b0cc66ce636c7451b95a00e91d3bab1330d"
               image_pull_policy = "IfNotPresent"
               command           = ["/bin/bash", "/script/remove-offline.sh"]
               volume_mount {
