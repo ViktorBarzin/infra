@@ -948,6 +948,8 @@ serverFiles:
           # your metric prefix here.
           # reels_.+ is the Reels web app's (worker lane heartbeats and queue age, read
           # by ReelsWorkerDown and ReelsQueueStuck).
+          # wealth_.+ is the wealth app's job processes (stacks/wealth jobs.tf): queue
+          # state, job runs and connector runs, read by the Wealth alert group.
           # wifi_.+ is the London Wi-Fi role manager's (stacks/wifi), read by
           # LondonRoleSyncStale.
           # cloud_.+ is Cloud's (stacks/cloud): the reconciler's reconcile, queue and
@@ -963,7 +965,7 @@ serverFiles:
           # (allowlisted on kube-state-metrics above), which every node-down and
           # capacity rule uses to leave Opportunistic workers out.
           - source_labels: [__name__]
-            regex: 'memory_.+|tripit_.+|reels_.+|wifi_.+|cloud_.+|notify_.+|realtime_listen_connected|realtime_last_notify_age_seconds|tasks_ops_total|sablier_.+|qbittorrent_.+|trivy_.+|kube_ingress_annotations|kube_deployment_annotations|kube_replicaset_annotations|kube_cronjob_status_last_successful_time|kube_cronjob_spec_suspend|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_labels|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_disk_discards_completed_total|node_disk_discarded_sectors_total|node_disk_read_time_seconds_total|node_disk_write_time_seconds_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
+            regex: 'memory_.+|tripit_.+|reels_.+|wealth_.+|wifi_.+|cloud_.+|notify_.+|realtime_listen_connected|realtime_last_notify_age_seconds|tasks_ops_total|sablier_.+|qbittorrent_.+|trivy_.+|kube_ingress_annotations|kube_deployment_annotations|kube_replicaset_annotations|kube_cronjob_status_last_successful_time|kube_cronjob_spec_suspend|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_labels|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_disk_discards_completed_total|node_disk_discarded_sectors_total|node_disk_read_time_seconds_total|node_disk_write_time_seconds_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
             action: keep
       - job_name: kubernetes-service-endpoints-slow
         honor_labels: true
@@ -8409,6 +8411,52 @@ serverFiles:
             annotations:
               summary: "Reels {{ $labels.lane }} jobs have waited over 15 minutes"
               description: "The oldest queued job in the {{ $labels.lane }} lane is over 15 minutes old while the worker is up. A long import or render may be hogging the slow lane, or the worker is failing every claim; check the worker logs (homelab logs query '{namespace=\"reels\", container=\"worker\"}') and the job table (status running, heartbeat_at)."
+      - name: Wealth
+        # The wealth app's job processes (stacks/wealth jobs.tf; wealth repo
+        # src/server/jobs/README.md). The main worker reads the queue state
+        # from pg-boss's table every 30 s, so these hold across restarts. A
+        # household's failing connector is not here: its card turns red, and
+        # it is the household's to fix.
+        rules:
+          - alert: WealthJobsNotRunning
+            # system.schedules completes every 10 minutes while the main
+            # worker runs its cron. No completion in 30 minutes, or no series
+            # at all (the worker is down or not scraped), means no connector,
+            # quote, FX or ledger job is running.
+            expr: |
+              (time() - max(wealth_queue_last_completed_timestamp_seconds{queue="system.schedules"}) > 1800)
+                or absent(wealth_queue_last_completed_timestamp_seconds{queue="system.schedules"})
+            for: 15m
+            labels:
+              severity: warning
+              subsystem: wealth
+            annotations:
+              summary: "wealth's background jobs are not running"
+              description: "The wealth main worker has not completed its 10-minute system.schedules job for over 30 minutes, or exports no queue metrics, so connectors, quotes, FX rates and ledger revalues are not running. Check the pod (kubectl -n wealth get pods -l app=wealth-worker) and its logs (homelab logs query '{namespace=\"wealth\", container=\"jobs\"}'). Design: wealth repo src/server/jobs/README.md."
+          - alert: WealthQueueStuck
+            # A due job no worker has started. Connector jobs are worked one
+            # at a time per queue and take seconds; an hour is a stuck worker.
+            expr: max by (queue) (wealth_queue_oldest_ready_seconds) > 3600
+            for: 15m
+            labels:
+              severity: warning
+              subsystem: wealth
+            annotations:
+              summary: "wealth queue {{ $labels.queue }} has a job waiting over an hour"
+              description: "The oldest due job on the wealth queue {{ $labels.queue }} has waited over an hour. Its process is down or stuck: engine.fire and engine.sweep are wealth-fire and wealth-sweep, every other queue is wealth-worker (kubectl -n wealth get pods -l component=jobs). Jobs are never retried, so nothing is lost but time."
+          - alert: WealthEngineWorkerDown
+            # The FIRE and Sweep processes work only their queues, so with no
+            # job queued nothing else notices them gone.
+            expr: |
+              sum(up{namespace="wealth", service=~"wealth-(fire|sweep)"}) < 2
+                or absent(up{namespace="wealth", service=~"wealth-(fire|sweep)"})
+            for: 15m
+            labels:
+              severity: warning
+              subsystem: wealth
+            annotations:
+              summary: "A wealth engine worker is down"
+              description: "wealth-fire or wealth-sweep has not been scraped up for 15 minutes, so FIRE numbers or Sweeps queued for it will wait. Check kubectl -n wealth get pods -l component=jobs and the pod's logs."
       - name: Vermont access archive
         # stacks/vermont-access (infra#176): every Monday 00:00 Sofia the
         # acs-archive CronJob copies the Vermont complex access-control events
