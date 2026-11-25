@@ -2543,6 +2543,45 @@ resource "null_resource" "pg_goldmane_edges_read" {
   }
 }
 
+# wealth_grafana: Grafana's read-only login on the wealth database
+# (datasource wealth-app-pg, stacks/monitoring wealth_app_datasource.tf). It
+# reads schema "grafana" only: views of one household that a wealth migration
+# makes (the household is the row in grafana.settings). It has no grant on
+# public or pgboss, so it cannot read another household's rows or the tables.
+# The schema is made here too, owned by wealth, so the default privileges
+# below are in place whichever runs first, this or the migration. Every
+# session is read-only with a 30 s statement timeout; connection limit 5.
+# The password is set by Vault (static role `pg-wealth-grafana`, stacks/vault)
+# and reaches Grafana via ESO.
+resource "null_resource" "pg_wealth_grafana" {
+  depends_on = [null_resource.pg_app_db]
+
+  triggers = {
+    username = "wealth_grafana"
+    grants   = "connect:wealth;schema-grafana:usage,select,default-select;readonly;timeout30s;limit5"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          set -e
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'wealth_grafana'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE wealth_grafana WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"' CONNECTION LIMIT 5"
+          psql -U postgres -c "ALTER ROLE wealth_grafana NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOINHERIT CONNECTION LIMIT 5"
+          psql -U postgres -c "ALTER ROLE wealth_grafana SET default_transaction_read_only = on"
+          psql -U postgres -c "ALTER ROLE wealth_grafana SET statement_timeout = '"'"'30s'"'"'"
+          psql -U postgres -c "GRANT CONNECT ON DATABASE wealth TO wealth_grafana"
+          psql -U postgres -d wealth -c "CREATE SCHEMA IF NOT EXISTS grafana AUTHORIZATION wealth"
+          psql -U postgres -d wealth -c "GRANT USAGE ON SCHEMA grafana TO wealth_grafana"
+          psql -U postgres -d wealth -c "GRANT SELECT ON ALL TABLES IN SCHEMA grafana TO wealth_grafana"
+          psql -U postgres -d wealth -c "ALTER DEFAULT PRIVILEGES FOR ROLE wealth IN SCHEMA grafana GRANT SELECT ON TABLES TO wealth_grafana"
+        '
+    EOT
+  }
+}
+
 # Old PostgreSQL deployment — kept commented for rollback reference
 # resource "kubernetes_deployment" "postgres" {
 #   metadata {

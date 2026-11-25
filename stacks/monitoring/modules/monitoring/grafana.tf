@@ -143,11 +143,13 @@ locals {
     "alexa-assistant.json"      = "Applications"
     # tv streaming phases and the Cloudflare cache profile (tv repo,
     # tv/cf_cache.py; stacks/tv/cloudflare-analytics.tf).
-    "tv-streaming.json"   = "Applications"
-    "uk-payslip.json"     = "Finance (Personal)"
-    "wealth.json"         = "Finance (Personal)"
-    "job-hunter.json"     = "Finance"
-    "fire-planner.json"   = "Finance"
+    "tv-streaming.json" = "Applications"
+    "uk-payslip.json"   = "Finance (Personal)"
+    "wealth.json"       = "Finance (Personal)"
+    "job-hunter.json"   = "Finance"
+    # Viktor's household from wealth (Plans, FIRE results, Sweeps, account
+    # values), so owner-only like wealth.json.
+    "fire-planner.json"   = "Finance (Personal)"
     "cost-of-living.json" = "Finance"
     # Security (owner-only — see admin_only_folders; proxy users' browsing)
     "proxy_visits.json" = "Security (Personal)"

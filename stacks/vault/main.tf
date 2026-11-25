@@ -1507,6 +1507,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-technitium",
     "pg-goldmane-edges",
     "pg-goldmane-edges-read",
+    "pg-wealth-grafana",
     "pg-tasks",
     "pg-goodreads-sync",
     "pg-paperless-ngx",
@@ -1543,7 +1544,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
 #         pg-fire-planner,        10:26 pg-tripit              10:38 pg-recruiter-responder
 #         pg-wealthfolio-sync,    10:28 pg-affine              10:39 pg-tasks (app_db_roles.tf)
 #         pg-goldmane-edges,      10:30 pg-claude-memory       10:40 pg-trading
-#                                                              10:41 pg-alexa-assistant (app_db_roles.tf)
+#         pg-wealth-grafana,                                   10:41 pg-alexa-assistant (app_db_roles.tf)
 #                                                              10:42 pg-glitchtip (app_db_roles.tf)
 #                                                              10:43 pg-learning (app_db_roles.tf)
 #                                                              10:44 pg-ntfy (app_db_roles.tf)
@@ -1861,6 +1862,19 @@ resource "vault_database_secret_backend_static_role" "pg_goldmane_edges_read" {
   name              = "pg-goldmane-edges-read"
   username          = "goldmane_edges_read"
   rotation_schedule = "21 10 * * TUE"
+  rotation_window   = 3600
+}
+
+# Grafana's SELECT-only login on the wealth database (stacks/dbaas,
+# pg_wealth_grafana): the views in schema grafana, datasource wealth-app-pg
+# (stacks/monitoring wealth_app_datasource.tf). In Grafana's slot, so Grafana
+# restarts once for all its sources.
+resource "vault_database_secret_backend_static_role" "pg_wealth_grafana" {
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-wealth-grafana"
+  username          = "wealth_grafana"
+  rotation_schedule = "2 10 * * TUE"
   rotation_window   = 3600
 }
 

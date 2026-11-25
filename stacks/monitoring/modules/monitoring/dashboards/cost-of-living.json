@@ -3,7 +3,10 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": {"type": "datasource", "uid": "grafana"},
+        "datasource": {
+          "type": "datasource",
+          "uid": "grafana"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -12,7 +15,7 @@
       }
     ]
   },
-  "description": "Cost-of-living per city — Numbeo + Expatistan snapshots cached in fire_planner.col_snapshot (1-year TTL). Powers the FIRE simulator's auto-COL adjustment. Use the city dropdown to drill into one city; the bottom panels rank all cities.",
+  "description": "Cost of living per city from wealth (wealth.viktorbarzin.me): the newest Numbeo and Expatistan rows the weekly col.refresh job stores, reconciled with the hand-curated baseline, as wealth's engine reads them (view grafana.cost_of_living, datasource wealth-app-pg). Pick a city above; the tables at the bottom rank every city.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "id": null,
@@ -22,23 +25,39 @@
         "name": "city",
         "type": "query",
         "label": "City",
-        "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
-        "query": "SELECT DISTINCT city_slug AS __value, city_display AS __text FROM fire_planner.col_snapshot ORDER BY city_display",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "wealth-app-pg"
+        },
+        "query": "SELECT slug AS __value, city AS __text FROM grafana.cost_of_living WHERE chosen ORDER BY city",
         "refresh": 1,
         "includeAll": false,
         "multi": false,
-        "current": {"selected": false, "text": "Sofia", "value": "sofia"}
+        "current": {
+          "selected": false,
+          "text": "Sofia",
+          "value": "sofia"
+        },
+        "options": []
       },
       {
         "name": "baseline_city",
         "type": "query",
         "label": "Baseline city (for ratio)",
-        "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
-        "query": "SELECT DISTINCT city_slug AS __value, city_display AS __text FROM fire_planner.col_snapshot ORDER BY city_display",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "wealth-app-pg"
+        },
+        "query": "SELECT slug AS __value, city AS __text FROM grafana.cost_of_living WHERE chosen ORDER BY city",
         "refresh": 1,
         "includeAll": false,
         "multi": false,
-        "current": {"selected": false, "text": "London", "value": "london"}
+        "current": {
+          "selected": false,
+          "text": "London",
+          "value": "london"
+        },
+        "options": []
       }
     ]
   },
@@ -46,223 +65,665 @@
   "panels": [
     {
       "id": 1,
-      "title": "$city — Total monthly cost (with rent, single person)",
       "type": "stat",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
-      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "title": "$city: total monthly cost (with rent, one person)",
+      "description": "1-bed rent plus the basket without rent, monthly GBP for one person: the row wealth's engine uses (Numbeo, then Expatistan, then the hand-curated baseline).",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-app-pg"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "currencyGBP",
           "decimals": 0,
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 1500},
-              {"color": "orange", "value": 2500},
-              {"color": "red", "value": 3500}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1500
+              },
+              {
+                "color": "orange",
+                "value": 2500
+              },
+              {
+                "color": "red",
+                "value": 3500
+              }
             ]
           }
         },
         "overrides": []
       },
-      "options": {"colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-app-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT total_with_rent_gbp FROM fire_planner.col_snapshot WHERE city_slug = '$city' ORDER BY fetched_at DESC LIMIT 1"
+          "rawSql": "SELECT total AS \"Total monthly\" FROM grafana.cost_of_living WHERE slug = '$city' AND chosen"
         }
       ]
     },
     {
       "id": 2,
-      "title": "$city — Without rent",
       "type": "stat",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
-      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
-      "fieldConfig": {"defaults": {"unit": "currencyGBP", "decimals": 0}, "overrides": []},
-      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "title": "$city: without rent",
+      "description": "The basket without rent, monthly GBP for one person.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-app-pg"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-app-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT total_no_rent_gbp FROM fire_planner.col_snapshot WHERE city_slug = '$city' ORDER BY fetched_at DESC LIMIT 1"
+          "rawSql": "SELECT essentials AS \"Without rent\" FROM grafana.cost_of_living WHERE slug = '$city' AND chosen"
         }
       ]
     },
     {
       "id": 3,
-      "title": "$city — 1-bed rent (center)",
       "type": "stat",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
-      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
-      "fieldConfig": {"defaults": {"unit": "currencyGBP", "decimals": 0}, "overrides": []},
-      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "title": "$city: 1-bed rent",
+      "description": "A 1-bed flat in the city centre, monthly GBP (wealth does not keep the rent outside the centre).",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-app-pg"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-app-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT rent_1bed_center_gbp FROM fire_planner.col_snapshot WHERE city_slug = '$city' ORDER BY fetched_at DESC LIMIT 1"
+          "rawSql": "SELECT rent_1bed AS \"1-bed rent\" FROM grafana.cost_of_living WHERE slug = '$city' AND chosen"
         }
       ]
     },
     {
       "id": 4,
-      "title": "COL ratio vs $baseline_city",
       "type": "stat",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
-      "description": "Multiplier the simulator applies to spending_gbp when moving from $baseline_city to $city. 0.5x = half-the-price; 1.0x = same; 2.0x = double.",
-      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "title": "COL ratio vs $baseline_city",
+      "description": "$city's total monthly cost over $baseline_city's.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-app-pg"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "none",
           "decimals": 2,
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 0.6},
-              {"color": "orange", "value": 0.85},
-              {"color": "red", "value": 1.0}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.6
+              },
+              {
+                "color": "orange",
+                "value": 0.85
+              },
+              {
+                "color": "red",
+                "value": 1.0
+              }
             ]
           }
         },
         "overrides": []
       },
-      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "table",
-          "rawSql": "SELECT (c.total_with_rent_gbp / b.total_with_rent_gbp)::numeric(8,3) AS ratio FROM (SELECT total_with_rent_gbp FROM fire_planner.col_snapshot WHERE city_slug = '$city' ORDER BY fetched_at DESC LIMIT 1) c, (SELECT total_with_rent_gbp FROM fire_planner.col_snapshot WHERE city_slug = '$baseline_city' ORDER BY fetched_at DESC LIMIT 1) b"
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
         }
-      ]
-    },
-    {
-      "id": 5,
-      "title": "$city — Snapshot metadata",
-      "type": "table",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
-      "description": "Provenance for the current city. Snapshot date is when the source page was crawled; expires_at is when the cache row will be re-scraped (1-year TTL).",
-      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 5},
-      "fieldConfig": {
-        "defaults": {"custom": {"align": "left"}},
-        "overrides": [
-          {
-            "matcher": {"id": "byName", "options": "source_url"},
-            "properties": [{"id": "links", "value": [{"title": "Open source on $1", "url": "${__value.text}", "targetBlank": true}]}]
-          }
-        ]
       },
-      "options": {"showHeader": true},
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-app-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT city_display, country, source_name, source_url, snapshot_date, fetched_at, expires_at, raw_currency, gbp_per_unit FROM fire_planner.col_snapshot WHERE city_slug = '$city' ORDER BY fetched_at DESC LIMIT 1"
+          "rawSql": "SELECT (c.total / b.total)::numeric(8,3) AS \"Ratio\"\nFROM (SELECT total FROM grafana.cost_of_living WHERE slug = '$city' AND chosen) c,\n     (SELECT total FROM grafana.cost_of_living WHERE slug = '$baseline_city' AND chosen) b"
         }
       ]
     },
     {
       "id": 6,
-      "title": "$city — Cost breakdown (single person, monthly)",
       "type": "barchart",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
-      "description": "Categories from baseline.py (Phase 1) — 0 for cities where the live scraper hasn't populated per-category yet. Rent and headline totals are always populated.",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
-      "fieldConfig": {"defaults": {"unit": "currencyGBP", "decimals": 0}, "overrides": []},
-      "options": {"orientation": "horizontal", "showValue": "auto", "stacking": "none", "legend": {"displayMode": "list"}, "xTickLabelRotation": 0},
+      "title": "$city: cost breakdown (one person, monthly)",
+      "description": "The two parts of the total.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-app-pg"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xField": "Part",
+        "showValue": "auto",
+        "stacking": "none",
+        "barWidth": 0.6,
+        "groupWidth": 0.7,
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        },
+        "xTickLabelRotation": 0
+      },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-app-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT 'rent_center' AS category, rent_1bed_center_gbp AS amount_gbp FROM fire_planner.col_snapshot WHERE city_slug = '$city' ORDER BY fetched_at DESC LIMIT 1 UNION ALL SELECT 'rent_outside', rent_1bed_outside_gbp FROM fire_planner.col_snapshot WHERE city_slug = '$city' AND rent_1bed_outside_gbp IS NOT NULL ORDER BY fetched_at DESC LIMIT 1 UNION ALL SELECT 'all_other', total_no_rent_gbp FROM fire_planner.col_snapshot WHERE city_slug = '$city' ORDER BY fetched_at DESC LIMIT 1"
+          "rawSql": "SELECT 'Rent, 1-bed centre' AS \"Part\", rent_1bed AS \"GBP a month\" FROM grafana.cost_of_living WHERE slug = '$city' AND chosen\nUNION ALL\nSELECT 'Everything else', essentials FROM grafana.cost_of_living WHERE slug = '$city' AND chosen"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "$city: where the figures come from",
+      "description": "The row the engine uses. A scraped row has its fetch time; a baseline row has the page and rate fire-planner recorded.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-app-pg"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Page"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open the page",
+                    "url": "${__value.text}",
+                    "targetBlank": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-app-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT city AS \"City\", country AS \"Country\", source AS \"Source\", snapshot_date AS \"Snapshot\", fetched_at AS \"Fetched\", expires_at AS \"Expires\", source_url AS \"Page\", page_currency AS \"Page currency\", gbp_per_unit AS \"GBP per unit\"\nFROM grafana.cost_of_living WHERE slug = '$city' AND chosen"
         }
       ]
     },
     {
       "id": 7,
-      "title": "All cities — ranked by Total monthly (with rent)",
       "type": "table",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
-      "description": "Sortable table of every city in the cache. Click a column header to sort. Lower = cheaper.",
-      "gridPos": {"h": 16, "w": 24, "x": 0, "y": 13},
+      "title": "All cities, cheapest first (with rent)",
+      "description": "Every city in wealth's cost-of-living table, the row the engine uses, with its ratio to $baseline_city.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-app-pg"
+      },
+      "gridPos": {
+        "h": 16,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
       "fieldConfig": {
         "defaults": {
-          "custom": {"align": "left", "displayMode": "auto"},
-          "decimals": 0
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
         },
         "overrides": [
-          {"matcher": {"id": "byName", "options": "total_with_rent_gbp"}, "properties": [{"id": "unit", "value": "currencyGBP"}, {"id": "custom.displayMode", "value": "gradient-gauge"}, {"id": "color", "value": {"mode": "thresholds"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1500}, {"color": "orange", "value": 2500}, {"color": "red", "value": 3500}]}}]},
-          {"matcher": {"id": "byName", "options": "total_no_rent_gbp"}, "properties": [{"id": "unit", "value": "currencyGBP"}]},
-          {"matcher": {"id": "byName", "options": "rent_1bed_center_gbp"}, "properties": [{"id": "unit", "value": "currencyGBP"}]},
-          {"matcher": {"id": "byName", "options": "ratio_vs_baseline"}, "properties": [{"id": "decimals", "value": 2}, {"id": "custom.displayMode", "value": "color-text"}, {"id": "color", "value": {"mode": "thresholds"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "orange", "value": 0.85}, {"color": "red", "value": 1.0}]}}]},
-          {"matcher": {"id": "byName", "options": "source_url"}, "properties": [{"id": "links", "value": [{"title": "Open source", "url": "${__value.text}", "targetBlank": true}]}]}
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Total monthly"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 1500
+                    },
+                    {
+                      "color": "orange",
+                      "value": 2500
+                    },
+                    {
+                      "color": "red",
+                      "value": 3500
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Without rent"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "1-bed rent"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Ratio vs baseline"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          }
         ]
       },
-      "options": {"showHeader": true, "sortBy": [{"displayName": "total_with_rent_gbp", "desc": false}]},
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-app-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH latest AS (SELECT DISTINCT ON (city_slug) city_slug, city_display, country, total_no_rent_gbp, total_with_rent_gbp, rent_1bed_center_gbp, source_name, source_url, snapshot_date, fetched_at FROM fire_planner.col_snapshot ORDER BY city_slug, fetched_at DESC), baseline AS (SELECT total_with_rent_gbp AS b FROM fire_planner.col_snapshot WHERE city_slug = '$baseline_city' ORDER BY fetched_at DESC LIMIT 1) SELECT l.city_display, l.country, l.total_with_rent_gbp, l.total_no_rent_gbp, l.rent_1bed_center_gbp, (l.total_with_rent_gbp / b.b)::numeric(8,3) AS ratio_vs_baseline, l.source_name, l.snapshot_date, l.source_url FROM latest l CROSS JOIN baseline b ORDER BY l.total_with_rent_gbp ASC"
+          "rawSql": "SELECT l.city AS \"City\", l.country AS \"Country\", l.total AS \"Total monthly\", l.essentials AS \"Without rent\", l.rent_1bed AS \"1-bed rent\",\n  (l.total / b.total)::numeric(8,3) AS \"Ratio vs baseline\", l.source AS \"Source\", l.snapshot_date AS \"Snapshot\"\nFROM grafana.cost_of_living l\nCROSS JOIN (SELECT total FROM grafana.cost_of_living WHERE slug = '$baseline_city' AND chosen) b\nWHERE l.chosen\nORDER BY l.total"
         }
       ]
     },
     {
       "id": 8,
-      "title": "Cache freshness — fetched_at across all cities",
       "type": "table",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
-      "description": "When each city was last refreshed. Rows turning red are within 30 days of expiry (1-year TTL) — the refresh CronJob should pick them up before they go stale.",
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 29},
+      "title": "Cache freshness",
+      "description": "Every scraped row (newest per city and site) and every baseline row. A scraped row counts for 365 days after its fetch; the weekly col.refresh job fetches again. Baseline rows do not expire.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-app-pg"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
       "fieldConfig": {
-        "defaults": {"custom": {"align": "left"}},
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
         "overrides": [
-          {"matcher": {"id": "byName", "options": "expires_in_days"}, "properties": [{"id": "unit", "value": "d"}, {"id": "decimals", "value": 0}, {"id": "custom.displayMode", "value": "color-background-solid"}, {"id": "color", "value": {"mode": "thresholds"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 30}, {"color": "yellow", "value": 90}, {"color": "green", "value": 180}]}}]}
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Expires in"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "d"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 30
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 90
+                    },
+                    {
+                      "color": "green",
+                      "value": 180
+                    }
+                  ]
+                }
+              }
+            ]
+          }
         ]
       },
-      "options": {"showHeader": true, "sortBy": [{"displayName": "expires_in_days", "desc": false}]},
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-app-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT DISTINCT ON (city_slug) city_display, country, source_name, snapshot_date, fetched_at, expires_at, EXTRACT(DAY FROM expires_at - NOW())::int AS expires_in_days FROM fire_planner.col_snapshot ORDER BY city_slug, fetched_at DESC"
+          "rawSql": "SELECT city AS \"City\", country AS \"Country\", source AS \"Source\", chosen AS \"In use\", snapshot_date AS \"Snapshot\", fetched_at AS \"Fetched\",\n  fetched_at + interval '7 days' AS \"Refresh due\", expires_at AS \"Expires\", (expires_at::date - current_date) AS \"Expires in\"\nFROM grafana.cost_of_living\nORDER BY \"Expires in\" NULLS LAST, city, source"
         }
       ]
     }
   ],
   "refresh": "",
   "schemaVersion": 39,
-  "tags": ["fire-planner", "col", "cost-of-living"],
-  "time": {"from": "now-30d", "to": "now"},
+  "tags": [
+    "wealth",
+    "col",
+    "cost-of-living"
+  ],
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "Europe/London",
   "title": "Cost of Living",

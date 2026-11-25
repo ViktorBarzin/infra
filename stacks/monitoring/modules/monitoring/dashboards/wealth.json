@@ -1988,31 +1988,32 @@
     {
       "id": 90001,
       "type": "text",
-      "title": "FIRE \u2014 methodology & safety",
+      "title": "FIRE: methodology",
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 24,
         "x": 0,
         "y": 102
       },
       "options": {
         "mode": "markdown",
-        "content": "### \ud83d\udd25 FIRE Countdown \u2014 **$country**\nTarget = smallest **liquid** net worth where Guyton-Klinger hits **99%** success (Monte-Carlo), in **today's money**. Spend = real budget \u00d7 **1.5**, cost-of-living re-scaled to $country; tax modelled per country (unmodelled \u2192 neutral **nomad 1%**). Workplace pension is **excluded** from current NW and joins as a separate tranche at ~57 \u2192 see the **Pension @57** stat. _Current NW = liquid bridge pot; Household/Family include an **estimated** figure for Anca (pending live re-pull)._\n\n**Safety:** Anca's income covers the early sequence-risk years, so the household never draws the full plan from day one. Written **re-entry trigger** \u2014 take a contract if the portfolio is **< \u00a31.0M** for two quarters (see the **Re-entry buffer** stat). Keep a cash buffer \u2248 **2.5\u00d7** solo annual spend."
+        "content": "### FIRE countdown: **$country**\nFrom wealth (wealth.viktorbarzin.me), one row per Plan. A Plan's **FIRE number** is the smallest **liquid** net worth at which its withdrawal strategy reaches the Plan's success bar in a Monte Carlo, in today's money. In the country the Plan retires in, it is the Plan's own FIRE result; in another country, the Plan's newest Sweep variant with the same strategy and glide path that moves first. Progress and still needed compare it with liquid net worth now. Pensions are not liquid: they join at the Plan's pension access age (**Pension tranche**). **Re-entry buffer** is liquid net worth now less the Plan's re-entry floor. Each Plan's success bar, safety multiplier and floor are in the table."
       }
     },
     {
       "id": 90021,
       "type": "stat",
-      "title": "Re-entry buffer (vs \u00a31.0M)",
+      "title": "Re-entry buffer (liquid net worth less the floor)",
+      "description": "Liquid net worth now less each Plan's re-entry floor (assumptions.reentry.floor), from wealth's ledger. One value per floor, named by its Plans. Below zero: the written re-entry trigger applies.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
-        "uid": "fire-planner-pg"
+        "uid": "wealth-app-pg"
       },
       "gridPos": {
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 112
+        "y": 106
       },
       "fieldConfig": {
         "defaults": {
@@ -2043,12 +2044,13 @@
         "justifyMode": "center",
         "orientation": "auto",
         "textMode": "auto",
+        "wideLayout": true,
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
           "fields": "",
-          "values": false
+          "values": true
         }
       },
       "targets": [
@@ -2056,28 +2058,29 @@
           "refId": "A",
           "datasource": {
             "type": "grafana-postgresql-datasource",
-            "uid": "fire-planner-pg"
+            "uid": "wealth-app-pg"
           },
           "rawQuery": true,
-          "rawSql": "SELECT liq.nw - 1000000 AS buffer FROM (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
           "editorMode": "code",
-          "format": "table"
+          "format": "table",
+          "rawSql": "SELECT string_agg(plan, ', ' ORDER BY is_main DESC, plan) AS \"Plans\", reentry_buffer AS \"Buffer\"\nFROM grafana.plans\nWHERE reentry_buffer IS NOT NULL\nGROUP BY reentry_buffer\nORDER BY bool_or(is_main) DESC, reentry_buffer"
         }
       ]
     },
     {
       "id": 90023,
       "type": "stat",
-      "title": "Pension tranche @57",
+      "title": "Pension tranche at access age",
+      "description": "Every member's pensions as they join liquid net worth at the Plan's pension access age, added up, in today's money: the Plan's newest FIRE result (pensionTranches).",
       "datasource": {
         "type": "grafana-postgresql-datasource",
-        "uid": "fire-planner-pg"
+        "uid": "wealth-app-pg"
       },
       "gridPos": {
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 112
+        "y": 106
       },
       "fieldConfig": {
         "defaults": {
@@ -2096,12 +2099,13 @@
         "justifyMode": "center",
         "orientation": "auto",
         "textMode": "auto",
+        "wideLayout": true,
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
           "fields": "",
-          "values": false
+          "values": true
         }
       },
       "targets": [
@@ -2109,12 +2113,12 @@
           "refId": "A",
           "datasource": {
             "type": "grafana-postgresql-datasource",
-            "uid": "fire-planner-pg"
+            "uid": "wealth-app-pg"
           },
           "rawQuery": true,
-          "rawSql": "SELECT pension_at_unlock_gbp FROM fire_planner.fire_target WHERE country_slug='$country' AND bar=0.99 ORDER BY id LIMIT 1",
           "editorMode": "code",
-          "format": "table"
+          "format": "table",
+          "rawSql": "SELECT plan AS \"Plan\", pension_tranche AS \"Pension tranche\"\nFROM grafana.plans\nWHERE pension_tranche IS NOT NULL\nORDER BY is_main DESC, plan"
         }
       ]
     },
@@ -2128,10 +2132,10 @@
         "uid": "wealth-pg"
       },
       "gridPos": {
-        "h": 18,
+        "h": 17,
         "w": 12,
         "x": 0,
-        "y": 105
+        "y": 106
       },
       "fieldConfig": {
         "defaults": {
@@ -2209,18 +2213,18 @@
     },
     {
       "id": 90100,
-      "title": "FIRE targets \u2014 Solo / Household / Family",
-      "description": "Liquid net worth needed for a 99% Guyton-Klinger success (today's money), by scenario. Progress = current liquid NW \u00f7 target (gauge). Projected FIRE assumes \u00a3$savings_per_year/yr added. Runway = current liquid NW \u00f7 annual spend. Pension excluded (see Pension @57).",
       "type": "table",
+      "title": "FIRE targets by Plan: $country",
+      "description": "Liquid net worth each Plan needs in $country to reach its success bar (today's money), from wealth. Progress = liquid net worth now / FIRE number. Projected FIRE = the first tax year the Plan's projection reaches its own FIRE number. Runway = years of the Plan's planned spending this year that liquid net worth now covers. Pensions excluded (see Pension tranche).",
       "datasource": {
         "type": "grafana-postgresql-datasource",
-        "uid": "fire-planner-pg"
+        "uid": "wealth-app-pg"
       },
       "gridPos": {
-        "h": 7,
+        "h": 13,
         "w": 12,
         "x": 12,
-        "y": 105
+        "y": 110
       },
       "fieldConfig": {
         "defaults": {
@@ -2235,7 +2239,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Scenario"
+              "options": "Plan"
             },
             "properties": [
               {
@@ -2247,7 +2251,51 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Target NW"
+              "options": "From"
+            },
+            "properties": [
+              {
+                "id": "custom.align",
+                "value": "left"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "FIRE number"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Still needed"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Re-entry floor"
             },
             "properties": [
               {
@@ -2286,48 +2334,16 @@
                 "id": "custom.cellOptions",
                 "value": {
                   "type": "gauge",
-                  "mode": "gradient"
+                  "mode": "basic",
+                  "valueDisplayMode": "text"
                 }
               },
               {
-                "id": "thresholds",
+                "id": "color",
                 "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "red",
-                      "value": null
-                    },
-                    {
-                      "color": "orange",
-                      "value": 50
-                    },
-                    {
-                      "color": "yellow",
-                      "value": 80
-                    },
-                    {
-                      "color": "green",
-                      "value": 99
-                    }
-                  ]
+                  "mode": "fixed",
+                  "fixedColor": "blue"
                 }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Still needed"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "currencyGBP"
-              },
-              {
-                "id": "decimals",
-                "value": 0
               }
             ]
           },
@@ -2358,6 +2374,38 @@
                 "value": 1
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Success bar %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Safety x"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
           }
         ]
       },
@@ -2378,12 +2426,12 @@
           "refId": "A",
           "datasource": {
             "type": "grafana-postgresql-datasource",
-            "uid": "fire-planner-pg"
+            "uid": "wealth-app-pg"
           },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH liq AS (\n  SELECT COALESCE(SUM(market_value_gbp),0) AS nw\n  FROM fire_planner.account_snapshot\n  WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot)\n    AND account_type<>'WORKPLACE_PENSION'\n)\nSELECT\n  initcap(ft.\"case\") AS \"Scenario\",\n  ft.target_nw_gbp AS \"Target NW\",\n  LEAST(100, ROUND(100.0*liq.nw/NULLIF(ft.target_nw_gbp,0),1)) AS \"Progress %\",\n  GREATEST(0, ft.target_nw_gbp - liq.nw) AS \"Still needed\",\n  CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached'\n       WHEN COALESCE(NULLIF('$savings_per_year','')::numeric,0) <= 0 THEN 'Set savings \u00a3/yr'\n       ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF(NULLIF('$savings_per_year','')::numeric,0)*365)::int, 'Mon YYYY') END AS \"Projected FIRE\",\n  ROUND(liq.nw/NULLIF(ft.annual_spend_gbp,0),1) AS \"Runway (yrs)\"\nFROM fire_planner.fire_target ft, liq\nWHERE ft.country_slug='$country' AND ft.bar=0.99\n  AND ( (ft.\"case\" IN ('solo','household') AND ft.with_home=false)\n     OR (ft.\"case\"='family' AND ft.with_home=$with_home) )\nORDER BY CASE ft.\"case\" WHEN 'solo' THEN 1 WHEN 'household' THEN 2 WHEN 'family' THEN 3 ELSE 4 END"
+          "rawSql": "WITH t AS (\n  SELECT DISTINCT ON (plan_id) *\n  FROM grafana.fire_targets\n  WHERE country = '$country'\n  ORDER BY plan_id, (source = 'fire') DESC\n)\nSELECT\n  p.plan AS \"Plan\",\n  CASE t.source\n    WHEN 'fire' THEN 'FIRE result'\n    WHEN 'sweep' THEN 'Sweep variant' || coalesce(', moves ' || t.move_tax_year || '/' || lpad(((t.move_tax_year + 1) % 100)::text, 2, '0'), '')\n    ELSE 'No FIRE number for this country'\n  END AS \"From\",\n  t.fire_number AS \"FIRE number\",\n  round(100 * t.progress, 1) AS \"Progress %\",\n  t.still_needed AS \"Still needed\",\n  CASE\n    WHEN t.plan_id IS NULL THEN NULL\n    WHEN t.reached THEN 'Reached'\n    WHEN NOT t.reached_bar THEN 'Bar not reached'\n    WHEN t.source = 'fire' AND p.projected_tax_year IS NOT NULL THEN p.projected_tax_year || '/' || lpad(((p.projected_tax_year + 1) % 100)::text, 2, '0')\n    WHEN t.source = 'fire' THEN 'Not within the Plan'\n  END AS \"Projected FIRE\",\n  CASE WHEN t.source = 'fire' THEN round(p.runway_years, 1) END AS \"Runway (yrs)\",\n  round(100 * p.success_bar, 1) AS \"Success bar %\",\n  p.safety_multiplier AS \"Safety x\",\n  p.reentry_floor AS \"Re-entry floor\"\nFROM grafana.plans p\nLEFT JOIN t ON t.plan_id = p.plan_id\nORDER BY p.is_main DESC, p.plan"
         }
       ]
     },
@@ -2496,55 +2544,16 @@
         "label": "Country",
         "datasource": {
           "type": "grafana-postgresql-datasource",
-          "uid": "fire-planner-pg"
+          "uid": "wealth-app-pg"
         },
-        "definition": "fire_target countries",
-        "query": "SELECT DISTINCT country_display AS __text, country_slug AS __value FROM fire_planner.fire_target ORDER BY country_display",
+        "definition": "countries with a FIRE number (wealth)",
+        "description": "Where the Plans retire. The main Plan's own country comes first.",
+        "query": "SELECT country AS __value, CASE country WHEN 'uk' THEN 'UK' WHEN 'uae' THEN 'UAE' WHEN 'usa' THEN 'USA' ELSE initcap(replace(country, '_', ' ')) END AS __text FROM grafana.fire_targets GROUP BY country ORDER BY bool_or(is_main AND source = 'fire') DESC, country",
         "refresh": 1,
-        "sort": 1,
+        "sort": 0,
         "includeAll": false,
         "multi": false,
-        "current": {
-          "selected": true,
-          "text": "Sofia",
-          "value": "sofia"
-        },
-        "options": []
-      },
-      {
-        "name": "with_home",
-        "type": "custom",
-        "label": "Family: buy home?",
-        "query": "false,true",
-        "current": {
-          "selected": true,
-          "text": "false",
-          "value": "false"
-        },
-        "options": [
-          {
-            "selected": true,
-            "text": "false",
-            "value": "false"
-          },
-          {
-            "selected": false,
-            "text": "true",
-            "value": "true"
-          }
-        ],
-        "includeAll": false,
-        "multi": false
-      },
-      {
-        "name": "savings_per_year",
-        "type": "textbox",
-        "label": "Savings \u00a3/yr (for ETA)",
-        "query": "170000",
-        "current": {
-          "text": "170000",
-          "value": "170000"
-        },
+        "current": {},
         "options": []
       },
       {
