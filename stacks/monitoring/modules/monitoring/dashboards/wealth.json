@@ -1997,7 +1997,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "### FIRE countdown: **$country**\nFrom wealth (wealth.viktorbarzin.me), one row per Plan. A Plan's **FIRE number** is the smallest **liquid** net worth at which its withdrawal strategy reaches the Plan's success bar in a Monte Carlo, in today's money. In the country the Plan retires in, it is the Plan's own FIRE result; in another country, the Plan's newest Sweep variant with the same strategy and glide path that moves first. Progress and still needed compare it with liquid net worth now. Pensions are not liquid: they join at the Plan's pension access age (**Pension tranche**). **Re-entry buffer** is liquid net worth now less the Plan's re-entry floor. Each Plan's success bar, safety multiplier and floor are in the table."
+        "content": "### FIRE countdown: **${country:text}**\nFrom wealth, one row per Plan. **FIRE number**: the smallest **liquid** net worth at which the Plan's withdrawal strategy reaches its success bar (Monte Carlo, today's money). In the country the Plan retires in it is the Plan's own FIRE result; elsewhere, its newest Sweep variant with the same strategy and glide path that moves first. Pensions join at the access age (**Pension tranche**). **Re-entry buffer** = liquid net worth now less the Plan's floor."
       }
     },
     {
@@ -2214,7 +2214,7 @@
     {
       "id": 90100,
       "type": "table",
-      "title": "FIRE targets by Plan: $country",
+      "title": "FIRE targets by Plan: ${country:text}",
       "description": "Liquid net worth each Plan needs in $country to reach its success bar (today's money), from wealth. Progress = liquid net worth now / FIRE number. Projected FIRE = the first tax year the Plan's projection reaches its own FIRE number. Runway = years of the Plan's planned spending this year that liquid net worth now covers. Pensions excluded (see Pension tranche).",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -2268,7 +2268,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "currencyGBP"
+                "value": "prefix:\u00a3"
               },
               {
                 "id": "decimals",
@@ -2284,7 +2284,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "currencyGBP"
+                "value": "prefix:\u00a3"
               },
               {
                 "id": "decimals",
@@ -2300,7 +2300,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "currencyGBP"
+                "value": "prefix:\u00a3"
               },
               {
                 "id": "decimals",
@@ -2431,7 +2431,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH t AS (\n  SELECT DISTINCT ON (plan_id) *\n  FROM grafana.fire_targets\n  WHERE country = '$country'\n  ORDER BY plan_id, (source = 'fire') DESC\n)\nSELECT\n  p.plan AS \"Plan\",\n  CASE t.source\n    WHEN 'fire' THEN 'FIRE result'\n    WHEN 'sweep' THEN 'Sweep variant' || coalesce(', moves ' || t.move_tax_year || '/' || lpad(((t.move_tax_year + 1) % 100)::text, 2, '0'), '')\n    ELSE 'No FIRE number for this country'\n  END AS \"From\",\n  t.fire_number AS \"FIRE number\",\n  round(100 * t.progress, 1) AS \"Progress %\",\n  t.still_needed AS \"Still needed\",\n  CASE\n    WHEN t.plan_id IS NULL THEN NULL\n    WHEN t.reached THEN 'Reached'\n    WHEN NOT t.reached_bar THEN 'Bar not reached'\n    WHEN t.source = 'fire' AND p.projected_tax_year IS NOT NULL THEN p.projected_tax_year || '/' || lpad(((p.projected_tax_year + 1) % 100)::text, 2, '0')\n    WHEN t.source = 'fire' THEN 'Not within the Plan'\n  END AS \"Projected FIRE\",\n  CASE WHEN t.source = 'fire' THEN round(p.runway_years, 1) END AS \"Runway (yrs)\",\n  round(100 * p.success_bar, 1) AS \"Success bar %\",\n  p.safety_multiplier AS \"Safety x\",\n  p.reentry_floor AS \"Re-entry floor\"\nFROM grafana.plans p\nLEFT JOIN t ON t.plan_id = p.plan_id\nORDER BY p.is_main DESC, p.plan"
+          "rawSql": "WITH t AS (\n  SELECT DISTINCT ON (plan_id) *\n  FROM grafana.fire_targets\n  WHERE country = '$country'\n  ORDER BY plan_id, (source = 'fire') DESC\n)\nSELECT\n  p.plan AS \"Plan\",\n  CASE t.source\n    WHEN 'fire' THEN 'FIRE result'\n    WHEN 'sweep' THEN 'Sweep' || coalesce(', ' || t.move_tax_year || '/' || lpad(((t.move_tax_year + 1) % 100)::text, 2, '0'), '')\n    ELSE 'Not solved'\n  END AS \"From\",\n  t.fire_number AS \"FIRE number\",\n  round(100 * t.progress, 1) AS \"Progress %\",\n  t.still_needed AS \"Still needed\",\n  CASE\n    WHEN t.plan_id IS NULL THEN NULL\n    WHEN t.reached THEN 'Reached'\n    WHEN NOT t.reached_bar THEN 'Bar not reached'\n    WHEN t.source = 'fire' AND p.projected_tax_year IS NOT NULL THEN p.projected_tax_year || '/' || lpad(((p.projected_tax_year + 1) % 100)::text, 2, '0')\n    WHEN t.source = 'fire' THEN 'Not within the Plan'\n  END AS \"Projected FIRE\",\n  CASE WHEN t.source = 'fire' THEN round(p.runway_years, 1) END AS \"Runway (yrs)\",\n  round(100 * p.success_bar, 1) AS \"Success bar %\",\n  p.safety_multiplier AS \"Safety x\",\n  p.reentry_floor AS \"Re-entry floor\"\nFROM grafana.plans p\nLEFT JOIN t ON t.plan_id = p.plan_id\nORDER BY p.is_main DESC, p.plan"
         }
       ]
     },

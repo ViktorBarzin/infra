@@ -80,7 +80,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "currencyGBP",
+          "unit": "prefix:\u00a3",
           "decimals": 0,
           "color": {
             "mode": "thresholds"
@@ -155,7 +155,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "currencyGBP",
+          "unit": "prefix:\u00a3",
           "decimals": 0,
           "color": {
             "mode": "fixed",
@@ -210,7 +210,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "currencyGBP",
+          "unit": "prefix:\u00a3",
           "decimals": 0,
           "color": {
             "mode": "fixed",
@@ -340,7 +340,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "currencyGBP",
+          "unit": "prefix:\u00a3",
           "decimals": 0,
           "color": {
             "mode": "fixed",
@@ -452,7 +452,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT city AS \"City\", country AS \"Country\", source AS \"Source\", snapshot_date AS \"Snapshot\", fetched_at AS \"Fetched\", expires_at AS \"Expires\", source_url AS \"Page\", page_currency AS \"Page currency\", gbp_per_unit AS \"GBP per unit\"\nFROM grafana.cost_of_living WHERE slug = '$city' AND chosen"
+          "rawSql": "SELECT city AS \"City\", country AS \"Country\", source AS \"Source\", to_char(snapshot_date, 'YYYY-MM-DD') AS \"Snapshot\", fetched_at AS \"Fetched\", expires_at AS \"Expires\", source_url AS \"Page\", page_currency AS \"Page currency\", gbp_per_unit AS \"GBP per unit\"\nFROM grafana.cost_of_living WHERE slug = '$city' AND chosen"
         }
       ]
     },
@@ -489,7 +489,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "currencyGBP"
+                "value": "prefix:\u00a3"
               },
               {
                 "id": "decimals",
@@ -542,7 +542,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "currencyGBP"
+                "value": "prefix:\u00a3"
               },
               {
                 "id": "decimals",
@@ -558,7 +558,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "currencyGBP"
+                "value": "prefix:\u00a3"
               },
               {
                 "id": "decimals",
@@ -602,7 +602,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT l.city AS \"City\", l.country AS \"Country\", l.total AS \"Total monthly\", l.essentials AS \"Without rent\", l.rent_1bed AS \"1-bed rent\",\n  (l.total / b.total)::numeric(8,3) AS \"Ratio vs baseline\", l.source AS \"Source\", l.snapshot_date AS \"Snapshot\"\nFROM grafana.cost_of_living l\nCROSS JOIN (SELECT total FROM grafana.cost_of_living WHERE slug = '$baseline_city' AND chosen) b\nWHERE l.chosen\nORDER BY l.total"
+          "rawSql": "SELECT l.city AS \"City\", l.country AS \"Country\", l.total AS \"Total monthly\", l.essentials AS \"Without rent\", l.rent_1bed AS \"1-bed rent\",\n  (l.total / b.total)::numeric(8,3) AS \"Ratio vs baseline\", l.source AS \"Source\", to_char(l.snapshot_date, 'YYYY-MM-DD') AS \"Snapshot\"\nFROM grafana.cost_of_living l\nCROSS JOIN (SELECT total FROM grafana.cost_of_living WHERE slug = '$baseline_city' AND chosen) b\nWHERE l.chosen\nORDER BY l.total"
         }
       ]
     },
@@ -681,6 +681,22 @@
                     }
                   ]
                 }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "never (baseline)",
+                        "color": "transparent",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
               }
             ]
           }
@@ -708,7 +724,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT city AS \"City\", country AS \"Country\", source AS \"Source\", chosen AS \"In use\", snapshot_date AS \"Snapshot\", fetched_at AS \"Fetched\",\n  fetched_at + interval '7 days' AS \"Refresh due\", expires_at AS \"Expires\", (expires_at::date - current_date) AS \"Expires in\"\nFROM grafana.cost_of_living\nORDER BY \"Expires in\" NULLS LAST, city, source"
+          "rawSql": "SELECT city AS \"City\", country AS \"Country\", source AS \"Source\", chosen AS \"In use\", to_char(snapshot_date, 'YYYY-MM-DD') AS \"Snapshot\", fetched_at AS \"Fetched\",\n  fetched_at + interval '7 days' AS \"Refresh due\", expires_at AS \"Expires\", (expires_at::date - current_date) AS \"Expires in\"\nFROM grafana.cost_of_living\nORDER BY \"Expires in\" NULLS LAST, city, source"
         }
       ]
     }

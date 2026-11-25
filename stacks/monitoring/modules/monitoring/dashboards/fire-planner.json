@@ -97,7 +97,7 @@
           "calcs": [
             "lastNotNull"
           ],
-          "fields": "",
+          "fields": "/^Best move$/",
           "values": false
         }
       },
@@ -194,8 +194,7 @@
             "lineWidth": 1,
             "fillOpacity": 0,
             "showPoints": "never",
-            "lineInterpolation": "smooth",
-            "axisSoftMin": 0
+            "lineInterpolation": "smooth"
           }
         },
         "overrides": [
