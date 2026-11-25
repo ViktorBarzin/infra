@@ -104,6 +104,17 @@ resource "kubernetes_manifest" "external_secret" {
             property = "webhook_bearer_token"
           }
         },
+        # The read API's token (GET /api/v1/payslips, /api/v1/rsu-vests).
+        # wealth's payslip connector holds the same Vault key through its own
+        # ExternalSecret (stacks/wealth/payslip-ingest.tf), so one Vault value
+        # feeds both apps. Unset, the read API refuses every request.
+        {
+          secretKey = "READ_API_BEARER_TOKEN"
+          remoteRef = {
+            key      = "payslip-ingest"
+            property = "read_api_token"
+          }
+        },
         {
           secretKey = "ACTUALBUDGET_API_KEY"
           remoteRef = {
