@@ -420,6 +420,43 @@ resource "kubernetes_service" "this" {
 
 # Kyverno ClusterPolicy `sync-tls-secret` clones the wildcard TLS secret into
 # every namespace, so there is no setup_tls_secret module here.
+
+locals {
+  # An own limiter replaces the default one. real-ip comes first, because the
+  # limiter keys on its X-Client-Prefix and Better Auth on its X-Real-Ip.
+  ingress_middlewares = concat(
+    var.ingress.rate_limit == null ? [] : [
+      "traefik-real-ip@kubernetescrd",
+      "${kubernetes_namespace.this.metadata[0].name}-${var.name}-rate-limit@kubernetescrd",
+    ],
+    var.ingress.extra_middlewares,
+  )
+}
+
+# The per-client limiter for var.ingress.rate_limit, the same shape as the
+# default one in stacks/traefik but with this app's numbers.
+resource "kubernetes_manifest" "rate_limit" {
+  count = var.ingress.rate_limit == null ? 0 : 1
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "${var.name}-rate-limit"
+      namespace = kubernetes_namespace.this.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = var.ingress.rate_limit.average
+        burst   = var.ingress.rate_limit.burst
+        sourceCriterion = {
+          # Set by real-ip: the client's IPv4 address, or its IPv6 /64.
+          requestHeaderName = "X-Client-Prefix"
+        }
+      }
+    }
+  }
+}
+
 module "ingress" {
   source = "../ingress_factory"
   # auth = "app": the app runs its own OIDC sign-in against the Authentik
@@ -435,11 +472,13 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   root_domain     = var.root_domain
   full_host       = var.host
-  # Keeps the default rate-limit middleware: it runs the real-ip plugin, and
-  # Better Auth's rate limiter keys on the X-Real-Ip that sets. Reasons for
+  # The default rate-limit middleware runs the real-ip plugin, and Better
+  # Auth's rate limiter keys on the X-Real-Ip that sets. An own limiter
+  # (var.ingress.rate_limit) replaces it and lists real-ip itself. Reasons for
   # the CSP, middleware, anti-AI and Turnstile defaults: var.ingress.
+  skip_default_rate_limit        = var.ingress.rate_limit != null
   custom_content_security_policy = var.ingress.custom_content_security_policy
-  extra_middlewares              = var.ingress.extra_middlewares
+  extra_middlewares              = local.ingress_middlewares
   anti_ai_scraping               = var.ingress.anti_ai_scraping
   turnstile                      = var.ingress.turnstile
   homepage_group                 = var.ingress.homepage_group

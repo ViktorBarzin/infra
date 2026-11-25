@@ -49,5 +49,10 @@ module "app" {
     homepage_description = "Household net worth, investments and lifetime financial plans"
     homepage_icon        = "mdi-finance"
     homepage_group       = "Finance & Personal"
+    # A cold Plan page makes about 60 requests, about 51 of them hashed JS
+    # chunks in the first 400 ms. That is over the default burst of 50, and
+    # a 429 on the engine worker's script stopped the page's Monte Carlo
+    # (2026-11-25). 100/1000 is the level of the other SPA carve-outs.
+    rate_limit = { average = 100, burst = 1000 }
   }
 }

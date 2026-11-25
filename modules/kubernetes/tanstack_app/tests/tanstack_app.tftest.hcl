@@ -284,3 +284,38 @@ run "unknown_strategy_is_refused" {
   }
   expect_failures = [var.strategy]
 }
+
+run "default_rate_limit_by_default" {
+  command = plan
+  assert {
+    condition     = length(kubernetes_manifest.rate_limit) == 0
+    error_message = "no own limiter by default"
+  }
+  assert {
+    condition     = local.ingress_middlewares == tolist(["traefik-strip-auth-headers@kubernetescrd"])
+    error_message = "default middlewares changed"
+  }
+}
+
+run "own_rate_limit_keys_on_the_client_after_real_ip" {
+  command = plan
+  variables {
+    ingress = { rate_limit = { average = 100, burst = 1000 } }
+  }
+  assert {
+    condition     = kubernetes_manifest.rate_limit[0].manifest.metadata.name == "demo-one-rate-limit"
+    error_message = "limiter name"
+  }
+  assert {
+    condition     = kubernetes_manifest.rate_limit[0].manifest.spec.rateLimit.average == 100 && kubernetes_manifest.rate_limit[0].manifest.spec.rateLimit.burst == 1000
+    error_message = "limiter numbers"
+  }
+  assert {
+    condition     = kubernetes_manifest.rate_limit[0].manifest.spec.rateLimit.sourceCriterion.requestHeaderName == "X-Client-Prefix"
+    error_message = "limiter key"
+  }
+  assert {
+    condition     = local.ingress_middlewares == tolist(["traefik-real-ip@kubernetescrd", "demo-one-demo-one-rate-limit@kubernetescrd", "traefik-strip-auth-headers@kubernetescrd"])
+    error_message = "real-ip, then the limiter, then the rest"
+  }
+}

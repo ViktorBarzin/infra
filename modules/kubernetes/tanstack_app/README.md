@@ -94,7 +94,7 @@ module "app" {
 | Setting | Default | Reason |
 |---|---|---|
 | ingress `auth` | `"app"` (fixed) | The app runs its own OIDC sign-in and answers `/api` with 401 without a session or bearer token. Forward-auth would break the bearer-token API and the OAuth callback. |
-| rate limit | ingress_factory default | Its real-ip plugin sets `X-Real-Ip`, which Better Auth's rate limiter keys on. |
+| `ingress.rate_limit` | `null`: the ingress_factory default, 10/50 per client | Its real-ip plugin sets `X-Real-Ip`, which Better Auth's rate limiter keys on. Set `{ average, burst }` when a cold page load is over 50 requests: the module then makes Middleware `<name>-rate-limit` in the app namespace (keyed on `X-Client-Prefix`), skips the default one and puts `traefik-real-ip` in front of its own. `wealth` uses 100/1000. |
 | `ingress.custom_content_security_policy` | `frame-ancestors 'none'` | The default csp-headers middleware lets any `*.viktorbarzin.me` page frame the app. |
 | `ingress.extra_middlewares` | `traefik-strip-auth-headers@kubernetescrd` | No public route may carry a client-sent `X-authentik-*` identity. |
 | `ingress.anti_ai_scraping` | `false` | Every page past the sign-in wall needs a session, so there is nothing to mine, and the bot-block forwardAuth would sit on every API call. |

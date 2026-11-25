@@ -209,6 +209,10 @@ variable "ingress" {
     homepage_description           = optional(string)
     homepage_icon                  = optional(string)
     homepage_group                 = optional(string)
+    rate_limit = optional(object({
+      average = number
+      burst   = number
+    }))
   })
   default     = {}
   description = <<-EOT
@@ -229,6 +233,11 @@ variable "ingress" {
                                       the network that solved it, so a phone
                                       changing networks would meet the
                                       challenge page mid-session.
+      rate_limit = null               the default 10/50 per-client limiter.
+                                      Set { average, burst } for an app whose
+                                      cold load is over 50 requests: the
+                                      module then makes its own per-client
+                                      limiter and puts real-ip in front of it.
   EOT
 }
 
