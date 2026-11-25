@@ -440,7 +440,7 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
           # bitnami/kubectl publishes only :latest on Docker Hub (versioned
           # tags moved to bitnamilegacy in 2025), so this is latest@digest:
           # the digest makes the pin immutable and Renovate bumps it.
-          image             = "bitnami/kubectl:latest@sha256:ae71f848f057a71029d092e98548cabf7cd17b11da0adad0a8f4145a9c87c830"
+          image             = "bitnami/kubectl:latest@sha256:a34afebf8bf3b99cac63c1ff5d449b0cc66ce636c7451b95a00e91d3bab1330d"
           image_pull_policy = "IfNotPresent"
           command = [
             "/bin/bash",
