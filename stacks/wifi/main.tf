@@ -120,7 +120,7 @@ resource "kubernetes_deployment" "proxy" {
       spec {
         container {
           name  = "nginx"
-          image = "nginx:1.31.9"
+          image = "nginx:1.31.10"
           port {
             name           = "https"
             container_port = 8443
