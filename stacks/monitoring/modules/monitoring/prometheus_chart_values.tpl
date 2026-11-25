@@ -8517,6 +8517,56 @@ serverFiles:
             annotations:
               summary: "wealth's shared job {{ $labels.queue }} has not completed on schedule"
               description: "No {{ $labels.queue }} job has completed within its schedule (market.fx weekdays 17:30 UK, market.quotes weekdays 22:30 UK, ledger.revalue nightly 23:15 UK, col.refresh Sundays 04:20 UK), while the main worker is running. Prices, FX rates or the daily values are going stale for every household. Look for expired or stuck jobs on the queue (homelab k8s db wealth -- \"select state, count(*) from pgboss.job where name = '{{ $labels.queue }}' group by state\") and the worker logs (homelab logs query '{namespace=\"wealth\", container=\"jobs\"}'). Design: wealth repo src/server/jobs/README.md."
+          - alert: WealthEngineJobFailed
+            # A FIRE or Sweep job ran and threw: the engine rejected the Plan
+            # (a schema the solver does not take, a bad withdrawal order) or
+            # the job ran out of time (engine.fire 15 min, engine.sweep 60
+            # min). FIRE numbers then stay stale for that Plan, and a monthly
+            # run that throws for every Plan leaves every household's stale.
+            # Jobs are never retried. Same shape as WealthSharedJobFailed: the
+            # second branch catches the first failure after the process
+            # started, which increase() cannot see.
+            expr: |
+              sum by (queue) (increase(wealth_job_runs_total{outcome="failed", queue=~"engine.fire|engine.sweep"}[26h])) > 0
+                or
+              count by (queue) (
+                wealth_job_runs_total{outcome="failed", queue=~"engine.fire|engine.sweep"}
+                  unless last_over_time(wealth_job_runs_total{outcome="failed", queue=~"engine.fire|engine.sweep"}[1h] offset 26h)
+              )
+            labels:
+              severity: warning
+              subsystem: wealth
+            annotations:
+              summary: "wealth's {{ $labels.queue }} jobs failed"
+              description: "A wealth {{ $labels.queue }} job failed in the last 26 hours (engine.fire solves a Plan's FIRE numbers on save and monthly; engine.sweep runs a Sweep from the Sweeps tab). The Plan's FIRE numbers or Sweep did not update. The error is in the logs: homelab logs query '{namespace=\"wealth\", container=\"jobs\"} |= \"job failed\"'; failed jobs: homelab k8s db wealth -- \"select id, data->>'planId', output from pgboss.job where name = '{{ $labels.queue }}' and state = 'failed' order by created_on desc limit 10\". Jobs are not retried: a save or Solve now runs FIRE again. Design: wealth repo src/server/jobs/README.md."
+          - alert: WealthFireMonthlyStale
+            # Every scheduled Plan (each household's main Plan at least) gets
+            # an engine.fire job on the 1st between 03:00 and 04:59 UK
+            # (syncFireSchedules), so from the 2nd (UTC) on some engine.fire
+            # job must have completed since the month began. The fire queue
+            # keeps completed jobs 30 days, so the newest completion is still
+            # in pg-boss's table. The absent() branch covers a queue with no
+            # completed job at all while the main worker reads the queues.
+            # Not repeated while WealthEngineJobFailed fires for engine.fire.
+            expr: |
+              (
+                (time() - max(wealth_queue_last_completed_timestamp_seconds{queue="engine.fire"}))
+                  > on() ((day_of_month() - 1) * 86400 + hour() * 3600 + minute() * 60)
+                or
+                (
+                  absent(wealth_queue_last_completed_timestamp_seconds{queue="engine.fire"})
+                    and on() (max(wealth_queue_metrics_scrape_ok) == 1)
+                )
+              )
+                and on() (day_of_month() >= 2)
+                unless on() ALERTS{alertname="WealthEngineJobFailed", queue="engine.fire", alertstate="firing"}
+            for: 1h
+            labels:
+              severity: warning
+              subsystem: wealth
+            annotations:
+              summary: "wealth's monthly FIRE run has not completed this month"
+              description: "No engine.fire job has completed since the 1st of this month, so the monthly FIRE run (the 1st, 03:00 to 04:59 UK, one job per scheduled Plan) did not run or did not finish, and every household's FIRE numbers are a month old or more. Check the schedules and jobs (homelab k8s db wealth -- \"select name, key, cron from pgboss.schedule where name = 'engine.fire'\" and \"select state, count(*) from pgboss.job where name = 'engine.fire' group by state\"), the wealth-fire pod (kubectl -n wealth get pods -l app=wealth-fire) and the logs (homelab logs query '{namespace=\"wealth\", container=\"jobs\"}'). Design: wealth repo src/server/jobs/README.md."
           - alert: WealthConnectorKindFailing
             # One household's failing connector is its red card, not an
             # alert. This fires when a connector kind had failed runs in the
