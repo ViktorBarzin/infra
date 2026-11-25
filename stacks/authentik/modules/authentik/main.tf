@@ -68,7 +68,7 @@ resource "helm_release" "authentik" {
   # version    = "2026.8.0"
   # version    = "2026.8.1"
   # version    = "2026.8.2"
-  version         = "2026.8.6"
+  version         = "2026.8.7"
   atomic          = true
   cleanup_on_fail = true
   timeout         = 6000
