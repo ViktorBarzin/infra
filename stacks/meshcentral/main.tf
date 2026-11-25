@@ -194,7 +194,7 @@ resource "kubernetes_deployment" "meshcentral" {
           # 1.1.53 (Oct 2025), so Renovate had no newer tag to offer while
           # upstream shipped security releases (1.3.1 fixed an actively
           # exploited hole). Switched 2026-10-24.
-          image = "ghcr.io/ylianst/meshcentral:1.3.1"
+          image = "ghcr.io/ylianst/meshcentral:1.3.2"
           name  = "meshcentral"
           port {
             name           = "http"
