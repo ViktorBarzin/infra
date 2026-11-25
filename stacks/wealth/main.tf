@@ -40,6 +40,16 @@ module "app" {
 
   app_secret_env = { CONNECTOR_SECRETS_KEY = "connector_secrets_key" }
 
+  # A household restore is one request of up to 32 MiB (the app's
+  # RESTORE_BODY_LIMIT, src/start.ts). A 10 MB backup, 16 MB on the wire,
+  # took the web process from 69 to 229 MiB, so the 256Mi default would be
+  # OOM-killed near the cap (council review, wealth phase 4). Idle is about
+  # 90 MiB.
+  resources = {
+    requests = { cpu = "50m", memory = "128Mi" }
+    limits   = { memory = "768Mi" }
+  }
+
   # Viktor signs in as a member and approves everyone else. Request mode
   # refuses to plan without an admin.
   initial_user_pks = [data.authentik_user.viktor.id]
