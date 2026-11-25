@@ -16,6 +16,13 @@
 # mirrors it into `monitoring`; Grafana reads it through envFromSecrets in
 # grafana_chart_values.yaml, and Reloader restarts Grafana when ESO updates
 # the secret, so the $__env{} substitution never holds a rotated-out password.
+#
+# FIRST APPLY: Reloader runs without --reload-on-create, so it restarts Grafana
+# when ESO updates this secret, not when ESO first creates it. Grafana pods
+# started before the secret existed hold an empty WEALTH_APP_PG_PASSWORD and
+# every query fails with 28P01 until one restart (`homelab k8s restart grafana
+# -n monitoring`). grafana_chart_values.yaml's envFromSecrets note says
+# "created or rotated"; only rotation restarts it.
 # -----------------------------------------------------------------------------
 
 resource "kubernetes_manifest" "grafana_wealth_app_db_external_secret" {
