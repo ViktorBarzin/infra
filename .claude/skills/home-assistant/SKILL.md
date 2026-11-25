@@ -415,7 +415,9 @@ Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Fr
   - **System** tab: *Router health* (GL-iNet MT6000 chips + CPU temp/load/memory tiles with trend graphs) · *Home Assistant* (installed version from `update.home_assistant_core_update`, last backup, RPi power, HA started) · *Batteries* (iPhone 17, Anca's Xiaomi, London tablet).
 - **Location** (`location-map`): map, Who's where, per-person cards, plus the 24 h "Who's been home" timeline and "Recent changes" logbook moved off the old Overview Router tab.
 - **Air Quality** (`air-quality`): deep-dive (views: Home, Detailed).
-- Topic dashboards that used to be duplicated on Overview: Plugs (`smart-plugs`), Yiko (`vacuum-yiko`), Radio (`london-radio`), Livia (`livia-strip`), Health, Anca Health.
+- **Health** (`viktor-health`, admin-only): one dashboard, tabs *Viktor* (Apple Health via the iPhone 17 companion app) and *Anca* (Whoop, cycle, RENPHO body). Merged 2026-11-25; the separate `anca-health` dashboard is deleted.
+- Other topic dashboards, kept separate on purpose (Viktor, 2026-11-25): Plugs (`smart-plugs`, the 5 working Kasa plugs only; LED toggles and the dead Tapo P100 removed), Yiko (`vacuum-yiko`), Radio (`london-radio`), Livia (`livia-strip`), Location, Air Quality. 8 dashboards in all. Ask before merging any of them.
+- Viktor's own sidebar hides the built-in Activity (`logbook`), History and Media panels (`frontend/set_user_data` key `sidebar`, per user; Anca's sidebar is unchanged).
 - Built via the WS `lovelace/config/save` API. To try a layout without touching the live one, save it to a hidden draft dashboard (`lovelace/dashboards/create` with `show_in_sidebar: false`, `require_admin: true`), screenshot it, then delete it.
 
 ### Key Systems
