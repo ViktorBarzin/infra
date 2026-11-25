@@ -2263,12 +2263,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "FIRE number"
+              "options": "FIRE number (\u00a3)"
             },
             "properties": [
               {
                 "id": "unit",
-                "value": "prefix:\u00a3"
+                "value": "locale"
               },
               {
                 "id": "decimals",
@@ -2279,12 +2279,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Still needed"
+              "options": "Still needed (\u00a3)"
             },
             "properties": [
               {
                 "id": "unit",
-                "value": "prefix:\u00a3"
+                "value": "locale"
               },
               {
                 "id": "decimals",
@@ -2295,12 +2295,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Re-entry floor"
+              "options": "Re-entry floor (\u00a3)"
             },
             "properties": [
               {
                 "id": "unit",
-                "value": "prefix:\u00a3"
+                "value": "locale"
               },
               {
                 "id": "decimals",
@@ -2431,7 +2431,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH t AS (\n  SELECT DISTINCT ON (plan_id) *\n  FROM grafana.fire_targets\n  WHERE country = '$country'\n  ORDER BY plan_id, (source = 'fire') DESC\n)\nSELECT\n  p.plan AS \"Plan\",\n  CASE t.source\n    WHEN 'fire' THEN 'FIRE result'\n    WHEN 'sweep' THEN 'Sweep' || coalesce(', ' || t.move_tax_year || '/' || lpad(((t.move_tax_year + 1) % 100)::text, 2, '0'), '')\n    ELSE 'Not solved'\n  END AS \"From\",\n  t.fire_number AS \"FIRE number\",\n  round(100 * t.progress, 1) AS \"Progress %\",\n  t.still_needed AS \"Still needed\",\n  CASE\n    WHEN t.plan_id IS NULL THEN NULL\n    WHEN t.reached THEN 'Reached'\n    WHEN NOT t.reached_bar THEN 'Bar not reached'\n    WHEN t.source = 'fire' AND p.projected_tax_year IS NOT NULL THEN p.projected_tax_year || '/' || lpad(((p.projected_tax_year + 1) % 100)::text, 2, '0')\n    WHEN t.source = 'fire' THEN 'Not within the Plan'\n  END AS \"Projected FIRE\",\n  CASE WHEN t.source = 'fire' THEN round(p.runway_years, 1) END AS \"Runway (yrs)\",\n  round(100 * p.success_bar, 1) AS \"Success bar %\",\n  p.safety_multiplier AS \"Safety x\",\n  p.reentry_floor AS \"Re-entry floor\"\nFROM grafana.plans p\nLEFT JOIN t ON t.plan_id = p.plan_id\nORDER BY p.is_main DESC, p.plan"
+          "rawSql": "WITH t AS (\n  SELECT DISTINCT ON (plan_id) *\n  FROM grafana.fire_targets\n  WHERE country = '$country'\n  ORDER BY plan_id, (source = 'fire') DESC\n)\nSELECT\n  p.plan AS \"Plan\",\n  CASE t.source\n    WHEN 'fire' THEN 'FIRE result'\n    WHEN 'sweep' THEN 'Sweep' || coalesce(', ' || t.move_tax_year || '/' || lpad(((t.move_tax_year + 1) % 100)::text, 2, '0'), '')\n    ELSE 'Not solved'\n  END AS \"From\",\n  t.fire_number AS \"FIRE number (\u00a3)\",\n  round(100 * t.progress, 1) AS \"Progress %\",\n  t.still_needed AS \"Still needed (\u00a3)\",\n  CASE\n    WHEN t.plan_id IS NULL THEN NULL\n    WHEN t.reached THEN 'Reached'\n    WHEN NOT t.reached_bar THEN 'Bar not reached'\n    WHEN t.source = 'fire' AND p.projected_tax_year IS NOT NULL THEN p.projected_tax_year || '/' || lpad(((p.projected_tax_year + 1) % 100)::text, 2, '0')\n    WHEN t.source = 'fire' THEN 'Not within the Plan'\n  END AS \"Projected FIRE\",\n  CASE WHEN t.source = 'fire' THEN round(p.runway_years, 1) END AS \"Runway (yrs)\",\n  round(100 * p.success_bar, 1) AS \"Success bar %\",\n  p.safety_multiplier AS \"Safety x\",\n  p.reentry_floor AS \"Re-entry floor (\u00a3)\"\nFROM grafana.plans p\nLEFT JOIN t ON t.plan_id = p.plan_id\nORDER BY p.is_main DESC, p.plan"
         }
       ]
     },
