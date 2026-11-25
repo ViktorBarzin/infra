@@ -535,6 +535,11 @@ loads its photos from `highlights-immich.viktorbarzin.me` (10.0.20.203), so
 the projector needs a device role that reaches that address ("Device roles"
 above). Without one it shows "Connecting to server".
 
+The frame shows only photos with Viktor, with Anca, or with no faces. It
+skips the album "Frame: hidden (other people only)", and the daily
+`frame-sync-viktor` CronJob keeps that album current
+(`stacks/immich/frame-viktor-sync.tf`).
+
 ## Robot vacuum camera
 
 The robot vacuum Yiko (Ecovacs DEEBOT X8 PRO OMNI, 192.168.8.175) is

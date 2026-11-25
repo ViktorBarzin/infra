@@ -35,6 +35,10 @@ resource "kubernetes_config_map" "mailserver_config" {
           # 25,950 of 57,001 images and gave 29 repeats in 10.2h measured 2026-09-12;
           # 1460 gives 47,983 over 954 days and about half that.
           ImagesFromDays: 1460
+          # Photos of only other people (no Viktor, no Anca), kept current by
+          # frame-viktor-sync.tf. Landscapes and photos of either of us stay.
+          ExcludedAlbums:
+            - ${local.frame_viktor_excluded_album}
     EOF
   }
 }
