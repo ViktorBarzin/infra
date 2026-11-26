@@ -37,7 +37,7 @@ terraform {
     vault = {
       source = "hashicorp/vault"
       # renovate: datasource=terraform-provider depName=hashicorp/vault
-      version = "5.13.0"
+      version = "5.14.0"
     }
     proxmoxbpg = {
       source = "bpg/proxmox"
