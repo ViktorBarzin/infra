@@ -125,7 +125,7 @@ resource "kubernetes_deployment" "matrix" {
           fs_group     = 1000
         }
         container {
-          image = "ghcr.io/matrix-construct/tuwunel:v2.0.0"
+          image = "ghcr.io/matrix-construct/tuwunel:v2.1.0"
           name  = "matrix"
           port {
             container_port = 8008
