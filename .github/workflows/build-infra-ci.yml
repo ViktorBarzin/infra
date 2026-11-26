@@ -9,6 +9,7 @@ on:
     branches: [master]
     paths:
       - 'ci/Dockerfile'
+      - 'ci/route/ci_route.py'
   workflow_dispatch: {}
 
 permissions:

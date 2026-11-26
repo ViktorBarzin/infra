@@ -1,0 +1,38 @@
+name: Build gha-runner
+
+# ADR-0002: infra-owned image built off-infra on GHA -> ghcr (public). The
+# one-shot self-hosted GitHub runner that .woodpecker/gha-runner.yml starts
+# when the private GitHub minutes are used up (plan
+# docs/plans/2026-11-26-gha-quota-fallback.md). infra is public, so this build
+# runs even while private builds are blocked.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'images/gha-runner/**'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: images/gha-runner
+          platforms: linux/amd64
+          provenance: false
+          push: true
+          tags: |
+            ghcr.io/viktorbarzin/gha-runner:latest
+            ghcr.io/viktorbarzin/gha-runner:${{ github.sha }}

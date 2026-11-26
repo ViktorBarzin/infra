@@ -1,0 +1,92 @@
+{
+ "usageItems": [
+  {
+   "date": "2026-11-24T00:49:17Z",
+   "product": "actions",
+   "sku": "Actions Linux",
+   "quantity": 9.0,
+   "unitType": "Minutes",
+   "repositoryName": "cloud"
+  },
+  {
+   "date": "2026-11-24T00:49:29Z",
+   "product": "actions",
+   "sku": "Actions Linux",
+   "quantity": 4.0,
+   "unitType": "Minutes",
+   "repositoryName": "trip-reel"
+  },
+  {
+   "date": "2026-11-24T20:19:37Z",
+   "product": "actions",
+   "sku": "Actions Linux",
+   "quantity": 11.0,
+   "unitType": "Minutes",
+   "repositoryName": "tv"
+  },
+  {
+   "date": "2026-11-24T21:21:20Z",
+   "product": "actions",
+   "sku": "Actions Linux",
+   "quantity": 28.0,
+   "unitType": "Minutes",
+   "repositoryName": "wealth"
+  },
+  {
+   "date": "2026-11-25T00:19:59Z",
+   "product": "actions",
+   "sku": "Actions Linux",
+   "quantity": 223.0,
+   "unitType": "Minutes",
+   "repositoryName": "wealth"
+  },
+  {
+   "date": "2026-11-25T07:07:11Z",
+   "product": "actions",
+   "sku": "Actions Linux",
+   "quantity": 6.0,
+   "unitType": "Minutes",
+   "repositoryName": "payslip-ingest"
+  },
+  {
+   "date": "2026-11-25T11:01:37Z",
+   "product": "actions",
+   "sku": "Actions Linux",
+   "quantity": 20.0,
+   "unitType": "Minutes",
+   "repositoryName": "terminal-lobby"
+  },
+  {
+   "date": "2026-11-26T00:43:48Z",
+   "product": "actions",
+   "sku": "Actions Linux",
+   "quantity": 39.0,
+   "unitType": "Minutes",
+   "repositoryName": "wealth"
+  },
+  {
+   "date": "2026-11-26T00:49:52Z",
+   "product": "actions",
+   "sku": "Actions Linux",
+   "quantity": 5.0,
+   "unitType": "Minutes",
+   "repositoryName": "tasks"
+  },
+  {
+   "date": "2026-11-26T06:48:56Z",
+   "product": "actions",
+   "sku": "Actions Linux",
+   "quantity": 3.0,
+   "unitType": "Minutes",
+   "repositoryName": "trip-reel"
+  },
+  {
+   "date": "2026-11-26T06:52:32Z",
+   "product": "actions",
+   "sku": "Actions Linux",
+   "quantity": 4.0,
+   "unitType": "Minutes",
+   "repositoryName": "cloud"
+  }
+ ]
+}

@@ -1,0 +1,78 @@
+# Runs a repo's GitHub Actions jobs on one-shot self-hosted runners in the
+# cluster, when the private GitHub minutes are used up (plan
+# docs/plans/2026-11-26-gha-quota-fallback.md).
+#
+# ci-route (in each repo's .woodpecker/build.yml) dispatches the workflow with
+# runner=homelab and starts this pipeline with
+#   {"variables": {"PIPELINE": "gha-runner", "RUNNER_REPO": "<repo name>"}}
+# gha-runner then registers just-in-time runners labelled homelab until none
+# of the repo's homelab jobs waits.
+#
+# One at a time: the labels below send it only to woodpecker-agent-builder
+# (stacks/woodpecker/builder.tf), which has one slot. Docker-in-Docker needs
+# a privileged service, which Woodpecker allows only in a trusted repo; infra
+# (repo 1) is set trusted through the Woodpecker API:
+#   PATCH /api/repos/1 {"trusted": {"security": true}}
+when:
+  - event: manual
+    evaluate: 'PIPELINE == "gha-runner" && RUNNER_REPO != ""'
+
+labels:
+  builder: "true"
+
+skip_clone: true
+
+services:
+  - name: docker
+    image: docker:29-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    commands:
+      - dockerd-entrypoint.sh --host=tcp://0.0.0.0:2375 --tls=false
+    ports:
+      - 2375
+    backend_options:
+      kubernetes:
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            memory: 8Gi
+
+steps:
+  - name: run-jobs
+    image: ghcr.io/viktorbarzin/gha-runner:latest
+    pull: true
+    environment:
+      DOCKER_HOST: tcp://docker:2375
+      GITHUB_RUNNER_TOKEN:
+        from_secret: github_runner_token
+    commands:
+      - for i in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 2; done
+      - docker info --format 'dind {{.ServerVersion}}'
+      - gha-runner
+    backend_options:
+      kubernetes:
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            memory: 4Gi
+
+  - name: notify
+    image: alpine:3.20
+    when:
+      - status: failure
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    commands:
+      - apk add --no-cache curl
+      - test -n "$SLACK_WEBHOOK" || exit 0
+      - >-
+        curl -sf -X POST -H 'Content-Type: application/json'
+        -d "{\"text\":\"gha-runner FAILED for $${RUNNER_REPO}: homelab builds stopped while GitHub minutes are out. See Woodpecker infra pipeline $${CI_PIPELINE_NUMBER}.\"}"
+        "$SLACK_WEBHOOK" || true

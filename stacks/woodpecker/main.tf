@@ -286,6 +286,10 @@ locals {
     "slack_webhook"     = ["1", "82"]            # ViktorBarzin/infra, viktor/infra
     "slack-webhook-url" = ["2", "6", "87", "88"] # Website, webhook-handler, audiobook-search, insta2spotify
     "dockerhub-token"   = ["77"]                 # viktor/claude-memory
+    # One-shot GitHub runners for .woodpecker/gha-runner.yml (plan
+    # docs/plans/2026-11-26-gha-quota-fallback.md). Until Viktor creates the
+    # token, the sync reports it missing and nothing reads it.
+    "github_runner_token" = ["1"] # ViktorBarzin/infra
   }
   ci_repo_secret_lines = join("\n", flatten([
     for key, repos in local.ci_repo_secrets : [for r in repos : "${key} ${r}"]

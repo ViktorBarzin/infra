@@ -1,0 +1,25 @@
+{
+ "total_count": 2,
+ "jobs": [
+  {
+   "id": 124005206737,
+   "name": "lint-and-test",
+   "status": "completed",
+   "conclusion": "failure",
+   "runner_name": "",
+   "steps": [],
+   "started_at": "2026-10-30T10:08:16Z",
+   "completed_at": "2026-10-30T10:08:18Z"
+  },
+  {
+   "id": 124005221209,
+   "name": "build",
+   "status": "completed",
+   "conclusion": "skipped",
+   "runner_name": null,
+   "steps": [],
+   "started_at": "2026-10-30T10:08:18Z",
+   "completed_at": "2026-10-30T10:08:18Z"
+  }
+ ]
+}

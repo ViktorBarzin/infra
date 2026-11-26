@@ -69,3 +69,7 @@ ENV TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=1
 RUN mkdir -p /tmp/terraform-plugin-cache
 
 WORKDIR /workspace
+
+# ci-route: the route step of every repo's .woodpecker/build.yml (plan
+# docs/plans/2026-11-26-gha-quota-fallback.md). Stdlib Python only.
+COPY route/ci_route.py /usr/local/bin/ci-route

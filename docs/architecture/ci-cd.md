@@ -534,14 +534,34 @@ app-kit's `template/.github/workflows/build.yml` holds this shape, and
 trip-reel and infra-map follow it. tripit keeps its lint and CLI-test job
 (decision of 2026-09-24).
 
-No self-hosted runner is in use. The London Dell runner in ADR-0002's
-2026-11-21 amendment was shelved on 2026-11-22. Add one only if private use
-still passes about 1,500 minutes in a month after this change, and not on
-the devvm, whose disk shares a spindle with etcd. Cloud's public
-`ViktorBarzin/cloud-builder` builds Cloud Projects' private repos for free
-minutes. Other repos do not route builds through it: GitHub's terms limit
-hosted-runner jobs to the software project of the repo they run in, and the
-penalties include disabled repos and account suspension.
+Cloud's public `ViktorBarzin/cloud-builder` builds Cloud Projects' private
+repos for free minutes. Other repos do not route builds through it: GitHub's
+terms limit hosted-runner jobs to the software project of the repo they run
+in, and the penalties include disabled repos and account suspension.
+
+### Routing builds through Woodpecker (plan 2026-11-26)
+
+The approved plan `docs/plans/2026-11-26-gha-quota-fallback.md` makes
+Woodpecker start every repo's GitHub workflows, and pick GitHub's runners or
+the homelab's at run time:
+
+- each repo's `.woodpecker/build.yml` runs `ci-route <workflow>` (infra-ci
+  image, source `ci/route/ci_route.py`) once per workflow a push would start;
+- a public repo, or a private repo under 1,950 private minutes this month,
+  dispatches the workflow with `runner=ubuntu-latest`;
+- otherwise, or when GitHub refuses the job for billing, it dispatches with
+  `runner=homelab` and starts the infra pipeline `.woodpecker/gha-runner.yml`;
+- `gha-runner` runs on `woodpecker-agent-builder` (`stacks/woodpecker/builder.tf`,
+  one slot, label `builder=true`) and registers one-shot self-hosted runners
+  (image `ghcr.io/viktorbarzin/gha-runner`, source `images/gha-runner/`) next to
+  a Docker-in-Docker service until no `homelab` job of the repo waits.
+
+infra and cloud-builder keep their GitHub push triggers: infra builds the
+images that repair the cluster, and Cloud dispatches cloud-builder itself.
+
+The route needs `github_route_token` and the runner needs
+`github_runner_token` in Vault `secret/ci/global`. Until both exist, no repo
+uses this flow and every repo still builds on its GitHub push trigger.
 
 To see where the minutes go:
 
