@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 plan: true
 ---
 
@@ -13,7 +13,7 @@ When the account uses its 2,000 private minutes, GitHub refuses every private bu
 caption: GitHub billing API, Actions runs and repo lists, measured 2026-11-26
 rows:
   - {label: Hours with no private builds after the quota ran out, Oct 2026, before: "34 (30 Oct 14:38 to 1 Nov 01:09 UTC)", after: "0"}
-  - {label: Private repos with a build.yml, before: "24", after: "24, all started by Woodpecker"}
+  - {label: Repos with active GitHub workflows, before: "55 (26 private, 29 public)", after: "53 started by Woodpecker; infra and cloud-builder stay as they are"}
   - {label: Billing API delay behind finished jobs, before: "under 45 minutes", after: "same; a refused dispatch covers it"}
   - {label: Woodpecker pods per private push, before: "0", after: "1, about 10 to 60 seconds", better: false}
   - {label: Builds in the cluster while minutes remain, before: "0", after: "0"}
@@ -64,6 +64,21 @@ left_out:
     - {name: "A Woodpecker step on every push", chosen: true}
     - {name: "GitHub on push, and a cron that rescues refused runs", note: two flows, and up to 15 minutes late}
   why: One place decides, so a later routing change touches only infra.
+- question: Which repos and workflows?
+  options:
+    - {name: "Every repo, every workflow a branch or tag push starts", chosen: true}
+    - {name: Private repos only, note: two flows again}
+  why: Viktor wants one flow for all builds now and for every new repo.
+- question: Which repos keep their GitHub push triggers?
+  options:
+    - {name: "infra and cloud-builder", chosen: true}
+    - {name: None, note: infra builds the route image and the images that repair the cluster}
+  why: Those builds must work while the cluster is down; Cloud already dispatches cloud-builder.
+- question: Where do the trigger rules live?
+  options:
+    - {name: "In .woodpecker/build.yml, one route step per workflow with its branch and path filter", chosen: true}
+    - {name: In a comment inside each GitHub workflow, note: a parser on comments breaks easily}
+  why: Woodpecker starts the build, so its file holds the trigger; the route logic stays in infra-ci.
 - question: How does the route step choose?
   options:
     - {name: "Billing gate, then watch the dispatched run", chosen: true}
@@ -104,11 +119,11 @@ The two tokens:
 
 ## How one push works
 
-1. The push webhook starts `.woodpecker/build.yml` in the app repo. Its `when.path` keeps the old `paths` and `paths-ignore` of `build.yml`.
-2. The route step reads the private minutes for the month. It counts only private repos.
+1. The push webhook starts `.woodpecker/build.yml` in the repo. Each route step names one GitHub workflow and keeps its old branch, tag and path filters.
+2. A public repo dispatches at once. For a private repo, the route step reads the private minutes for the month.
 3. Under 1,950 minutes, it dispatches `build.yml` on master. It waits up to 3 minutes for a runner to take the job, then exits.
 4. At 1,950 or more, or if GitHub refuses the job, it starts the infra pipeline `fallback-build` with the repo and commit.
-5. `fallback-build` clones the commit from Forgejo and builds each `docker/build-push-action` step. It pushes the same tags and starts the app's deploy.
+5. `fallback-build` clones the commit from Forgejo and builds each `docker/build-push-action` step. It pushes the same tags and starts the app's deploy. A workflow with no image step waits for the 1st, and Slack says so.
 6. Slack gets a message on the first cluster build of a month and on each failed one.
 
 ## Order of work
@@ -120,15 +135,15 @@ steps:
   - {when: 2. Route and build code, what: "scripts/ci-build/ with tests on saved API responses; ships in infra-ci", rollback: Revert the commit}
   - {when: 3. Builder, what: "A woodpecker-builder agent with one slot, and .woodpecker/fallback-build.yml", rollback: "Set the agent's replicas to 0"}
   - {when: 4. First repo, what: "infra-map moves; forced local builds of infra-map and cloud; read the live tags", rollback: "Restore its push trigger"}
-  - {when: 5. Every repo, what: "A codemod moves the other 23 repos, app-template and offinfra's build.yml.tmpl", rollback: "Restore the push triggers with the same codemod"}
+  - {when: 5. Every repo, what: "A codemod moves the other 52 repos; app-template and offinfra-onboard make new repos this way", rollback: "Restore the push triggers with the same codemod"}
   - {when: 6. Docs, what: "ADR-0002 amendment, the infra CLAUDE.md rule, docs/architecture/ci-cd.md", rollback: Revert the commit}
 ```
 
 ## Configuration
 
 ```config
-- {key: "build.yml on.push", where: 24 private repos and app-template, old: "branches: [master]", new: "removed; workflow_dispatch stays"}
-- {key: ".woodpecker/build.yml", where: the same repos, old: "absent", new: "one route step, image infra-ci"}
+- {key: "on.push of each workflow", where: 53 repos, old: "branches, tags, paths", new: "removed; workflow_dispatch added"}
+- {key: ".woodpecker/build.yml", where: the same repos, old: "absent", new: "one route step per workflow, image infra-ci"}
 - {key: "github_route_token, ghcr_push_token", where: "Vault secret/ci/global, ci_repo_secrets in stacks/woodpecker", old: "absent", new: "app repos, and infra only"}
 - {key: woodpecker-builder agent, where: stacks/woodpecker, old: "absent", new: "1 replica, WOODPECKER_MAX_WORKFLOWS 1, label builder"}
 - {key: "In-cluster build rule", where: "infra CLAUDE.md and ADR-0002", old: "never", new: "only when GitHub has no private minutes"}
