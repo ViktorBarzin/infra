@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 plan: true
 ---
 
@@ -45,8 +45,8 @@ edges:
   - {from: gha, to: deploy, state: same, label: IMAGE_TAG}
 checks:
   - {node: route, text: "A push to infra-map with minutes left starts one GitHub run and no cluster build", status: open}
-  - {node: route, text: "The tests replay the saved 30 Oct refusal and start gha-runner", status: open}
-  - {node: build, text: "A forced homelab run of infra-map's build.yml pushes its <sha8> tag, and the deploy rolls it", status: open}
+  - {node: route, text: "The tests replay the saved 30 Oct refusal and start gha-runner", status: passed}
+  - {node: build, text: "A homelab run of infra-map's build.yml pushes its <sha8> tag (passed 2026-11-26 on a test branch, 147 s; the deploy half is open)", status: open}
   - {node: build, text: "A forced homelab run of cloud's build.yml builds both images in one job", status: open}
   - {node: build, text: "GitHub runs a self-hosted job while hosted jobs are blocked; first seen at the next quota exhaustion", status: open}
   - {node: gha, text: "A direct push no longer starts build.yml in any of the 24 repos", status: open}
