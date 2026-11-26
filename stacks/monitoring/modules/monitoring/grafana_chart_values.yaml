@@ -117,11 +117,6 @@ envFromSecrets:
     optional: true
 env:
   GF_SERVER_ROOT_URL: https://grafana.viktorbarzin.me
-  # Step 1 of 2 to drop a stale Reloader env var (fire-planner's datasource
-  # secret was deleted on 2026-11-26). Helm deletes only keys that are in its
-  # last manifest, so the var enters the chart here and leaves in the next
-  # commit. Remove this line once that commit lands.
-  STAKATER_GRAFANA_FIRE_PLANNER_PG_CREDS_SECRET: retired
 
 grafana.ini:
   database:
