@@ -17,10 +17,17 @@ completion (GHA run → Woodpecker deploy → `rollout status`) and fix failures
 verify via live state, not the checkmark.
 
 **The fleet pattern (every owned app):** Forgejo `viktor/<repo>` (canonical)
-push-mirrors (`sync_on_commit`) → GitHub `ViktorBarzin/<repo>` → GHA
-`.github/workflows/build.yml` (committed on Forgejo, mirrors over): `on: push:
-branches:[master]` ONLY (feature branches mirror but build/deploy nothing — the
-safety valve). The `build` job: lint/test → `svu` cuts the next `vX.Y.Z` tag to
+push-mirrors (`sync_on_commit`) → GitHub `ViktorBarzin/<repo>` → the repo's
+`.woodpecker/build.yml` (push to master) runs `ci-route --request build.yml`,
+which starts infra's `.woodpecker/ci-route.yml` → it dispatches GHA
+`.github/workflows/build.yml` (committed on Forgejo, mirrors over; no `on.push`,
+only `workflow_dispatch` with input `runner`) on GitHub's runners, or on
+one-shot homelab runners when the private minutes are used up
+(`docs/architecture/ci-cd.md`, "Routing builds through Woodpecker"). Feature
+branches mirror but build/deploy nothing — the safety valve. A new workflow
+gets a route step in `.woodpecker/build.yml`, never an `on.push`, and a new
+repo's Woodpecker id goes into `woodpecker_api_token` in
+`stacks/woodpecker/main.tf`. The `build` job: lint/test → `svu` cuts the next `vX.Y.Z` tag to
 CANONICAL Forgejo (GHA secret `FORGEJO_GIT_TOKEN` = write:repository PAT) + bakes
 `VERSION` → `buildx` `linux/amd64` `provenance:false` (single-manifest, dodges
 the orphaned-index-children class) → push `ghcr.io/viktorbarzin/<name>:<sha8>` +

@@ -559,6 +559,12 @@ the homelab's at run time:
 
 infra and cloud-builder keep their GitHub push triggers: infra builds the
 images that repair the cluster, and Cloud dispatches cloud-builder itself.
+Every other repo with a GitHub workflow (51 on 2026-11-26) starts its builds
+this way. Proven on 2026-11-26: infra-map's push went through ci-route to a
+hosted run and its deploy; forced homelab runs built infra-map (110 s) and
+cloud's two images (507 s, about three times its hosted time) on
+`homelab-*` runners. Not yet seen: GitHub running a self-hosted job while
+the $0 budget blocks hosted ones.
 
 The infra pipelines use `github_ci_token` in Vault `secret/ci/global`, a copy
 of `secret/viktor` `github_pat`. Viktor chose to reuse it on 2026-11-26. It
