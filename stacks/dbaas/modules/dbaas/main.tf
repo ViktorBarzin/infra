@@ -2549,8 +2549,11 @@ resource "null_resource" "pg_goldmane_edges_read" {
 # makes (the household is the row in grafana.settings). It has no grant on
 # public or pgboss, so it cannot read another household's rows or the tables.
 # The schema is made here too, owned by wealth, so the default privileges
-# below are in place whichever runs first, this or the migration. Every
-# session is read-only with a 30 s statement timeout; connection limit 5.
+# below are in place whichever runs first, this or the migration. Sessions
+# default to read-only (default_transaction_read_only; a session can turn it
+# off, but it has no grant to write with), with a 30 s statement timeout and
+# connection limit 5. It cannot make temporary tables: TEMPORARY on the
+# database is revoked from PUBLIC, and the owner wealth keeps its own.
 # The password is set by Vault (static role `pg-wealth-grafana`, stacks/vault)
 # and reaches Grafana via ESO.
 resource "null_resource" "pg_wealth_grafana" {
@@ -2558,7 +2561,7 @@ resource "null_resource" "pg_wealth_grafana" {
 
   triggers = {
     username = "wealth_grafana"
-    grants   = "connect:wealth;schema-grafana:usage,select,default-select;readonly;timeout30s;limit5"
+    grants   = "connect:wealth;schema-grafana:usage,select,default-select;readonly;timeout30s;limit5;notemp"
   }
 
   provisioner "local-exec" {
@@ -2573,6 +2576,7 @@ resource "null_resource" "pg_wealth_grafana" {
           psql -U postgres -c "ALTER ROLE wealth_grafana SET default_transaction_read_only = on"
           psql -U postgres -c "ALTER ROLE wealth_grafana SET statement_timeout = '"'"'30s'"'"'"
           psql -U postgres -c "GRANT CONNECT ON DATABASE wealth TO wealth_grafana"
+          psql -U postgres -c "REVOKE TEMPORARY ON DATABASE wealth FROM PUBLIC, wealth_grafana"
           psql -U postgres -d wealth -c "CREATE SCHEMA IF NOT EXISTS grafana AUTHORIZATION wealth"
           psql -U postgres -d wealth -c "GRANT USAGE ON SCHEMA grafana TO wealth_grafana"
           psql -U postgres -d wealth -c "GRANT SELECT ON ALL TABLES IN SCHEMA grafana TO wealth_grafana"
