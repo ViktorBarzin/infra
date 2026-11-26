@@ -48,7 +48,7 @@ steps:
     environment:
       DOCKER_HOST: tcp://docker:2375
       GITHUB_RUNNER_TOKEN:
-        from_secret: github_runner_token
+        from_secret: github_ci_token
     commands:
       - for i in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 2; done
       - docker info --format 'dind {{.ServerVersion}}'

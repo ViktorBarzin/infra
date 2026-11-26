@@ -132,5 +132,28 @@ class Route(unittest.TestCase):
         self.assertEqual(self.started, ["wealth"])
 
 
+class Request(unittest.TestCase):
+    def test_an_app_repo_asks_infra_to_route_its_push(self):
+        sent = []
+        ci_route.request_route(
+            repo="infra-map", workflow="build.yml", ref="master", force=None, post=lambda body: sent.append(body)
+        )
+        self.assertEqual(
+            sent,
+            [
+                {
+                    "branch": "master",
+                    "variables": {
+                        "PIPELINE": "ci-route",
+                        "ROUTE_REPO": "infra-map",
+                        "ROUTE_WORKFLOW": "build.yml",
+                        "ROUTE_REF": "master",
+                        "ROUTE_FORCE": "",
+                    },
+                }
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -16,6 +16,8 @@ resource "kubernetes_stateful_set_v1" "woodpecker_agent_builder" {
     labels = {
       "app.kubernetes.io/name"     = "agent-builder"
       "app.kubernetes.io/instance" = "woodpecker"
+      # Kyverno copies the namespace tier onto workloads; declared so plans stay clean.
+      tier = local.tiers.edge
     }
   }
   spec {

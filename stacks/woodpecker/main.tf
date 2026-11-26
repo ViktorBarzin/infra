@@ -286,10 +286,12 @@ locals {
     "slack_webhook"     = ["1", "82"]            # ViktorBarzin/infra, viktor/infra
     "slack-webhook-url" = ["2", "6", "87", "88"] # Website, webhook-handler, audiobook-search, insta2spotify
     "dockerhub-token"   = ["77"]                 # viktor/claude-memory
-    # One-shot GitHub runners for .woodpecker/gha-runner.yml (plan
-    # docs/plans/2026-11-26-gha-quota-fallback.md). Until Viktor creates the
-    # token, the sync reports it missing and nothing reads it.
-    "github_runner_token" = ["1"] # ViktorBarzin/infra
+    # CI routing (docs/architecture/ci-cd.md, "Routing builds through
+    # Woodpecker"). github_ci_token is a copy of secret/viktor github_pat,
+    # read only by infra's ci-route and gha-runner pipelines. Each migrated
+    # repo gets woodpecker_api_token, to ask infra to route its pushes.
+    "github_ci_token"      = ["1"] # ViktorBarzin/infra
+    "woodpecker_api_token" = ["1"]
   }
   ci_repo_secret_lines = join("\n", flatten([
     for key, repos in local.ci_repo_secrets : [for r in repos : "${key} ${r}"]
