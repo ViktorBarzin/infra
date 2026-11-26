@@ -35,6 +35,11 @@ module "app" {
   image_tag          = var.image_tag
   image_pull_secrets = ["ghcr-credentials"]
 
+  # The Fidelity connector in wealth-worker drives chrome-service over CDP
+  # (jobs.tf, FIDELITY_CDP_URL), and chrome-service's NetworkPolicy admits
+  # port 9222 only from namespaces with this label.
+  namespace_labels = { "chrome-service.viktorbarzin.me/client" = "true" }
+
   postgresql_host = var.postgresql_host
   tls_secret_name = var.tls_secret_name
 

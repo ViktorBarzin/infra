@@ -81,10 +81,10 @@ locals {
 resource "kubernetes_namespace" "this" {
   metadata {
     name = local.namespace
-    labels = {
+    labels = merge(var.namespace_labels, {
       tier              = var.tier
       "istio-injection" = "disabled"
-    }
+    })
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label.

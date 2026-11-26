@@ -15,10 +15,13 @@
 # The Woodpecker deploy in the wealth repo sets the image on all three after
 # the web pod, whose init container has applied the migrations.
 #
-# Fidelity stays off: the worker builds the Fidelity connector only when
-# FIDELITY_CDP_URL is set, and the spec allows one live Fidelity sign-in in
-# the whole build, at go-live. That change sets it and labels the namespace
-# for chrome-service in one commit.
+# Fidelity: the worker builds the Fidelity connector only when
+# FIDELITY_CDP_URL is set, and then schedules each Fidelity connector on the
+# 3rd and 17th at 07:40 UK (wealth src/connectors/brokers/fidelity). PlanViewer
+# is behind Akamai, which refuses a headless Chrome, so the connector drives
+# the cluster's headful Chrome (chrome-service) over CDP, as broker-sync's
+# Fidelity CronJob does. The namespace carries chrome-service's client label
+# (main.tf namespace_labels) so its NetworkPolicy admits port 9222.
 locals {
   jobs_namespace = module.app.namespace
   jobs = {
@@ -139,6 +142,7 @@ resource "kubernetes_deployment" "jobs" {
             for_each = each.key == "worker" ? {
               PAYSLIP_INGEST_URL = "http://payslip-ingest.payslip-ingest.svc.cluster.local:8080"
               PAPERLESS_URL      = "http://paperless-ngx.paperless-ngx.svc.cluster.local"
+              FIDELITY_CDP_URL   = "http://chrome-service.chrome-service.svc.cluster.local:9222"
             } : {}
             content {
               name  = env.key

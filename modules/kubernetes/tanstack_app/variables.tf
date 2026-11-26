@@ -25,6 +25,12 @@ variable "namespace" {
   description = "Kubernetes namespace. null means var.name."
 }
 
+variable "namespace_labels" {
+  type        = map(string)
+  default     = {}
+  description = "Extra labels on the namespace, for example chrome-service.viktorbarzin.me/client = \"true\" for a caller of chrome-service's CDP port. The module's own tier and istio-injection labels win over these."
+}
+
 variable "tier" {
   type        = string
   default     = "4-aux"
