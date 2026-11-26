@@ -30,7 +30,8 @@ locals {
 
   # Model set: one text-only LLM (qwen3-8b), for paperless-ngx's native AI
   # (paperless-ai until 2026-10-12, now scaled to 0). Since 2026-10-11
-  # every other caller (tripit, nextcloud-todos, lesson-harvester, fire-planner)
+  # every other caller (tripit, nextcloud-todos, lesson-harvester, and
+  # fire-planner until it retired on 2026-11-26)
   # uses claude-agent-service instead, so the qwen3vl-8b vision model that only
   # tripit used was removed (qwen3vl-4b had already gone).
   # All Apache-2.0, GGUF Q4_K_M (T4 has no FP8/BF16 — INT4 is the right knob).

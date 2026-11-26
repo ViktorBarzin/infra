@@ -109,8 +109,6 @@ envFromSecrets:
     optional: true
   - name: grafana-job-hunter-pg-creds
     optional: true
-  - name: grafana-fire-planner-pg-creds
-    optional: true
   - name: grafana-wealth-app-pg-creds
     optional: true
   - name: grafana-goldmane-edges-pg-creds

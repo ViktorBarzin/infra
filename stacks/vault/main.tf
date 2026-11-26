@@ -1500,7 +1500,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-affine", "pg-woodpecker", "pg-claude-memory",
     "pg-terraform-state", "pg-payslip-ingest", "pg-job-hunter",
     "pg-lesson-harvester",
-    "pg-wealthfolio-sync", "pg-fire-planner",
+    "pg-wealthfolio-sync",
     "pg-instagram-poster",
     "pg-recruiter-responder", "pg-tripit",
     "pg-nextcloud-todos",
@@ -1541,7 +1541,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
 #   10:00 pg-tv                   10:20 mysql-phpipam          10:35 pg-instagram-poster
 #   10:02 Grafana and its sources 10:22 mysql-codimd           10:36 pg-lesson-harvester
 #         (mysql-grafana,         10:24 mysql-shlink           10:37 pg-nextcloud-todos
-#         pg-fire-planner,        10:26 pg-tripit              10:38 pg-recruiter-responder
+#                                 10:26 pg-tripit              10:38 pg-recruiter-responder
 #         pg-wealthfolio-sync,    10:28 pg-affine              10:39 pg-tasks (app_db_roles.tf)
 #         pg-goldmane-edges,      10:30 pg-claude-memory       10:40 pg-trading
 #         pg-wealth-grafana,                                   10:41 pg-alexa-assistant (app_db_roles.tf)
@@ -1783,15 +1783,6 @@ resource "vault_database_secret_backend_static_role" "pg_wealthfolio_sync" {
   db_name           = vault_database_secret_backend_connection.postgresql.name
   name              = "pg-wealthfolio-sync"
   username          = "wealthfolio_sync"
-  rotation_schedule = "2 10 * * TUE"
-  rotation_window   = 3600
-}
-
-resource "vault_database_secret_backend_static_role" "pg_fire_planner" {
-  backend           = vault_mount.database.path
-  db_name           = vault_database_secret_backend_connection.postgresql.name
-  name              = "pg-fire-planner"
-  username          = "fire_planner"
   rotation_schedule = "2 10 * * TUE"
   rotation_window   = 3600
 }

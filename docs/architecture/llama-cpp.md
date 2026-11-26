@@ -15,7 +15,8 @@ Since 2026-10-12 that consumer is paperless-ngx's native AI
 the reasoning is in `stacks/paperless-ngx/main.tf`); paperless-ai, which used it before, was removed on 2026-11-10 (data archived at `/srv/nfs/archive/paperless-ai-2026-11-10/`).
 Viktor kept document enrichment local because it reads Emo's
 financial and medical documents, and moved every other caller (tripit,
-nextcloud-todos, lesson-harvester, fire-planner) to claude-agent-service's
+nextcloud-todos, lesson-harvester, and fire-planner until it retired on
+2026-11-26) to claude-agent-service's
 no-tools mode. recruiter-responder still points here but has been at 0
 replicas since 2026-08-21. The history below describes how the endpoint
 grew to its earlier, larger model set.

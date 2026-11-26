@@ -142,8 +142,8 @@ budget file: 110,000 ms (timed out) with the header vs 108 ms without.
 
 Neither budget file is end-to-end encrypted (`encrypt_keyid` is null in the
 server's `account.sqlite`), so the header buys nothing here and the CronJob no
-longer sends it. fire-planner has always called this API without it. Restore the
-header if E2E encryption is ever enabled.
+longer sends it. wealth's Actual Budget connector calls this API without it
+too. Restore the header if E2E encryption is ever enabled.
 
 Note that `var.budget_encryption_password` is really the server login password —
 it is passed as `ACTUAL_SERVER_PASSWORD` on the http-api Deployment. The variable

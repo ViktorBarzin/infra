@@ -137,7 +137,7 @@ locals {
     "ci", "city-guesser", "crowdsec-web", "dashy",
     "dawarich", "dolt-workbench", "draw", "dronelog",
     "ebook2audiobook", "family", "files",
-    "fire-planner", "forgejo", "frigate", "grafana",
+    "forgejo", "frigate", "grafana",
     "gw", "ha-london", "ha-sofia", "hackmd",
     "health", "highlights-immich", "highlights-immich-emo", "home",
     "idrac", "immich", "insta2spotify",

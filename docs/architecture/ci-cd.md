@@ -106,7 +106,7 @@ it by hand on 2026-11-10.
 | Visibility | Packages | Pull mechanism |
 |------------|----------|----------------|
 | **Public** | beadboard, nextcloud-todos, claude-agent-service, claude-memory-mcp, kms-website, freedify, tuya_bridge, x402-gateway, android-emulator, wine-app | Anonymous |
-| **Private** | tv, tv-android, tv-tracker, job-hunter, instagram-poster, payslip-ingest, wealthfolio-sync, fire-planner, recruiter-responder, tripit, infra-cli, infra-ci, k8s-portal, excalidraw-library | `ghcr-credentials` dockerconfigjson |
+| **Private** | tv, tv-android, tv-tracker, job-hunter, instagram-poster, payslip-ingest, wealthfolio-sync, recruiter-responder, tripit, infra-cli, infra-ci, k8s-portal, excalidraw-library | `ghcr-credentials` dockerconfigjson |
 
 Private-image pulls use the `ghcr-credentials` dockerconfigjson, cloned by the
 kyverno stack's `sync-ghcr-credentials` ClusterPolicy to an explicit
@@ -125,7 +125,7 @@ Kyverno then re-syncs to the allowlisted namespaces).
 tv (then f1-stream), job-hunter, tuya_bridge, beadboard, nextcloud-todos,
 claude-agent-service, claude-memory-mcp, kms-website, Freedify,
 instagram-poster, payslip-ingest, broker-sync (image name `wealthfolio-sync`),
-fire-planner, recruiter-responder, x402-gateway — plus **tripit** (the original
+fire-planner (retired 2026-11-26), recruiter-responder, x402-gateway — plus **tripit** (the original
 pilot, 2026-06-09). Earlier public-repo apps already on GHA (Website,
 k8s-portal, apple-health-data, audiblez-web, insta2spotify,
 audiobook-search) now also land on ghcr.

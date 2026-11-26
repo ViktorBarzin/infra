@@ -880,7 +880,7 @@ locals {
     # First-party apps (Instrumented apps), which load the script themselves.
     "viktorbarzin.me", "www.viktorbarzin.me", "tv.viktorbarzin.me", "f1.viktorbarzin.me",
     "tripit.viktorbarzin.me", "tripit-api.viktorbarzin.me", "health.viktorbarzin.me", "health-api.viktorbarzin.me",
-    "fire-planner.viktorbarzin.me", "offline-reader.viktorbarzin.me", "learn.viktorbarzin.me",
+    "offline-reader.viktorbarzin.me", "learn.viktorbarzin.me",
     "interview-prep.viktorbarzin.me", "priority-pass.viktorbarzin.me", "vpn.viktorbarzin.me",
     "plotting-book.viktorbarzin.me", "wrongmove.viktorbarzin.me", "kms.viktorbarzin.me",
     "tasks.viktorbarzin.me", "alexa-assistant.viktorbarzin.me", "nextcloud-todos.viktorbarzin.me",

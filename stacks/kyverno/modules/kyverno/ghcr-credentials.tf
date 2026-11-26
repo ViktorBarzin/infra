@@ -40,7 +40,6 @@ locals {
     # so broker-sync silently kept running the frozen pre-migration DockerHub
     # image (its CronJobs lacked pull auth for ghcr).
     "broker-sync",
-    "fire-planner",
     "recruiter-responder",
     # openclaw's install-recruiter-plugin init container pulls the PRIVATE
     # ghcr.io/viktorbarzin/recruiter-responder:latest image (infra#27).

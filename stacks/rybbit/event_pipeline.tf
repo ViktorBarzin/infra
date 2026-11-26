@@ -11,7 +11,6 @@ locals {
     "alexa-assistant" = "alexa-assistant.viktorbarzin.me"
     "blog"            = "viktorbarzin.me"
     "cloud"           = "cloud.viktorbarzin.me"
-    "fire-planner"    = "fire-planner.viktorbarzin.me"
     "health"          = "health.viktorbarzin.me"
     "interview-prep"  = "interview-prep.viktorbarzin.me"
     "kms"             = "kms.viktorbarzin.me"

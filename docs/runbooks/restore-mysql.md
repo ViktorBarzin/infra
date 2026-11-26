@@ -214,13 +214,12 @@ wait
 ```
 
 If any deployments stay stuck in `ImagePullBackOff` (e.g.
-`chrome-service`, `fire-planner`, `freedify`), those rely on the
+`chrome-service`, `freedify`), those rely on the
 Forgejo registry — once forgejo is back, just delete their pods to
 force a fresh pull:
 
 ```bash
 kubectl -n chrome-service delete pod --all
-kubectl -n fire-planner delete pod --all
 kubectl -n freedify delete pod --all
 ```
 

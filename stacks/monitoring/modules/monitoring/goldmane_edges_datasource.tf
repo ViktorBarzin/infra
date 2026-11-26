@@ -9,8 +9,8 @@
 # CREDENTIAL: the same Vault-rotated static role the aggregator itself uses
 # (`static-creds/pg-goldmane-edges`, declared in stacks/vault/main.tf, rotated
 # every 7 days), projected into `monitoring` by the ExternalSecret below. That is
-# the pattern the other four Postgres datasources here follow — job-hunter,
-# fire-planner, wealthfolio, payslip-ingest — each mirroring its app's own
+# the pattern the other Postgres datasources here follow — job-hunter,
+# wealthfolio, payslip-ingest — each mirroring its app's own
 # rotating role into this namespace. Consequence worth stating: Grafana connects
 # as the DB owner, so it could in principle write. A separate SELECT-only role
 # would need a new Vault static role plus grants, which is a change to

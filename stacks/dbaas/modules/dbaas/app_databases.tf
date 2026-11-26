@@ -65,7 +65,7 @@ locals {
     # init container.
     infra_map = {}
     # wealth (TanStack Start, Forgejo viktor/wealth, private): Wealth, the
-    # household finance planner that replaces fire-planner. Drizzle
+    # household finance planner that replaced fire-planner. Drizzle
     # migrations run from the `migrate` init container.
     wealth = {}
   }

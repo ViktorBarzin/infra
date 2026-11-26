@@ -13,7 +13,8 @@ variable "tls_secret_name" {
 
 # Wealth: a personal-finance planner for a few households, with actuals from
 # broker connectors and lifetime plans (Forgejo viktor/wealth, private; build
-# spec in that repo at docs/spec.md). It replaces fire-planner at go-live.
+# spec in that repo at docs/spec.md). It replaced fire-planner, which retired
+# on 2026-11-26.
 #
 # secret/wealth in Vault KV holds better_auth_secret, oidc_client_id and
 # oidc_client_secret (seeded by hand on 2026-11-24), and

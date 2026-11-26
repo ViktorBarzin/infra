@@ -50,7 +50,7 @@ Reference impls: tripit (the original pilot), tv (then f1-stream), job-hunter, t
 **Migrated apps (issues #13–#27):** tv (then f1-stream), job-hunter, tuya_bridge,
 beadboard, nextcloud-todos, claude-agent-service, **claude-memory-mcp** (GHA →
 ghcr, NOT DockerHub), kms-website, Freedify, instagram-poster, payslip-ingest,
-broker-sync (image `wealthfolio-sync`), fire-planner, recruiter-responder,
+broker-sync (image `wealthfolio-sync`), fire-planner (retired 2026-11-26), recruiter-responder,
 x402-gateway — plus tripit. Earlier public-repo apps already on GHA (Website,
 apple-health-data, audiblez-web, plotting-book, insta2spotify,
 audiobook-search) now also land on ghcr.
@@ -58,7 +58,7 @@ audiobook-search) now also land on ghcr.
   claude-memory-mcp, kms-website, freedify, tuya_bridge, x402-gateway,
   android-emulator.
 - **PRIVATE ghcr:** tv, tv-android, tv-tracker, job-hunter, instagram-poster, payslip-ingest,
-  wealthfolio-sync, fire-planner, recruiter-responder, tripit, infra-cli,
+  wealthfolio-sync, recruiter-responder, tripit, infra-cli,
   infra-ci, k8s-portal, excalidraw-library, chesscom-streak, cloud, cloud-reconciler. Pulled via the Kyverno-synced `ghcr-credentials` allowlist
   (`stacks/kyverno/modules/kyverno/ghcr-credentials.tf`; NOT cluster-wide; cred
   = Vault `secret/viktor/ghcr_pull_token`, a dedicated classic PAT scoped to

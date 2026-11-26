@@ -23,9 +23,10 @@ locals {
   # Woodpecker repo id -> the namespace its deploy pipeline changes. Read on
   # 2026-11-15 from the `kubectl -n <ns>` lines of the pipeline configs each
   # repo last ran (GET /api/repos/<id>/pipelines/<n>/config), leaving out
-  # instagram-poster and hermes-agent, whose namespaces are gone. The GitHub
-  # and Forgejo registrations of one repo have different ids. A repo missing
-  # here deploys with no rights: add it, and its namespace gets the binding.
+  # instagram-poster, hermes-agent and fire-planner (retired 2026-11-26),
+  # whose namespaces are gone. The GitHub and Forgejo registrations of one
+  # repo have different ids. A repo missing here deploys with no rights: add
+  # it, and its namespace gets the binding.
   ci_deploy_repos = {
     "2"   = "website"                  # ViktorBarzin/Website
     "4"   = "health"                   # ViktorBarzin/health
@@ -45,7 +46,6 @@ locals {
     "204" = "beads-server"             # ViktorBarzin/beadboard
     "205" = "payslip-ingest"           # ViktorBarzin/payslip-ingest
     "207" = "nextcloud-todos"          # ViktorBarzin/nextcloud-todos
-    "208" = "fire-planner"             # ViktorBarzin/fire-planner
     "209" = "recruiter-responder"      # ViktorBarzin/recruiter-responder
     "210" = "claude-agent"             # ViktorBarzin/claude-agent-service
     "211" = "traefik"                  # ViktorBarzin/x402-gateway
@@ -78,7 +78,6 @@ locals {
     "83"  = "realestate-crawler"       # viktor/wrongmove
     "122" = "payslip-ingest"           # viktor/payslip-ingest
     "123" = "job-hunter"               # viktor/job-hunter
-    "159" = "fire-planner"             # viktor/fire-planner
     "161" = "freedify"                 # viktor/freedify
     "163" = "recruiter-responder"      # viktor/recruiter-responder
     "164" = "tuya-bridge"              # viktor/tuya_bridge

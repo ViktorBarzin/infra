@@ -16,7 +16,7 @@
 # token api_bearer_token, so its callers only change their URL; the main pod
 # takes admin_api_token, which only its own callers hold.
 #
-# Callers here: beads, ebooks, fire-planner, lesson-harvester, payslip-ingest,
+# Callers here: beads, ebooks, lesson-harvester, payslip-ingest,
 # recruiter-responder, reels, tripit. The main pod keeps the fixer, its
 # webhook receiver, tv's intake and fixers, and nextcloud-todos-exec.
 
