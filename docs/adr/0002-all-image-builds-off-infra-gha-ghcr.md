@@ -31,3 +31,13 @@ October 2026 used all 2,000 free minutes for private repos (tv 1,775). The Londo
 - This does not reopen in-cluster builds. The runner runs on a tainted Physical node that takes only opt-in work, with the kubelet reserving CPU and RAM. The original reasons (Forgejo OOM, sdc IO, registry PVC) do not apply: images still push to ghcr.io, and nothing writes to Sofia storage.
 - Workflows pick the London runner when it is online and fall back to GitHub-hosted runners when it is not. Builds never wait for the Dell.
 - The runner's token and work directories live on the node's State volume, so they decrypt only when the node reaches Tang (ADR-0045).
+
+## Amendment 2026-11-26: builds run in the cluster only while GitHub has no minutes
+
+October 2026 used all 2,000 private minutes, and private builds and deploys stopped for 34 hours until the 1st. The Dell runner above was shelved on 2026-11-22. Viktor decided that every repo's builds start from Woodpecker, which picks the runners at run time (plan `docs/plans/2026-11-26-gha-quota-fallback.md`).
+
+- Woodpecker's route step dispatches each GitHub workflow. Public repos, and private repos under 1,950 minutes in the month, run on GitHub-hosted runners as before.
+- When the private minutes reach 1,950, or GitHub refuses a job for billing, the workflow runs with `runs-on: homelab` on one-shot self-hosted runners in the cluster (`.woodpecker/gha-runner.yml`). It is the same workflow, and images still go to ghcr.io.
+- This is the only in-cluster build. It runs on one Woodpecker agent with one slot, because Docker-in-Docker IO lands on the sdc spindle that holds etcd. The Forgejo OOM and registry PVC reasons do not apply, because nothing pushes to Forgejo's registry.
+- infra and cloud-builder keep their GitHub push triggers, so the images that repair the cluster never depend on it.
+
