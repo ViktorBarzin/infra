@@ -42,7 +42,7 @@ spec:
           })
   mutations:
     # Prepend, in annotation order, so the waits run before the workload's own
-    # init containers (e.g. fire-planner's alembic-migrate), as the
+    # init containers (e.g. a tanstack_app's migrate container), as the
     # strategic-merge patch of the ClusterPolicy did.
     - patchType: JSONPatch
       jsonPatch:

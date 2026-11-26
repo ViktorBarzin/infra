@@ -333,7 +333,7 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
               # downloadBudget() path — a full re-download, decrypt and ~20 MB backup
               # zip — instead of the cheap loadBudget()+sync(). Measured 2026-08-16:
               # 110,000 ms (timeout) with the header vs 108 ms without on anca, and
-              # 340 ms -> 62 ms on viktor. fire-planner has always called this API
+              # 340 ms -> 62 ms on viktor. wealth's Actual Budget connector calls this API
               # without it. RESTORE THE HEADER if E2E encryption is ever enabled.
               # (var.budget_encryption_password is really the server login password —
               # it is passed as ACTUAL_SERVER_PASSWORD on the http-api Deployment.)
