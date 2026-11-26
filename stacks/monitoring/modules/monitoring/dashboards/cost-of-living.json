@@ -607,6 +607,122 @@
       ]
     },
     {
+      "id": 9,
+      "type": "table",
+      "title": "Weekly refresh, per site",
+      "description": "How each site answered the newest col.refresh run (Sundays 04:20 London). ok: rows stored. refused: the site answered 401, 403 or 429, and the run asked it nothing more; rows stored before the stop are kept. skipped: no page gave a row, for the reason shown. A site that did not store a row keeps its last good rows; \"Last stored\" says when it last did.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-app-pg"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Status"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "ok": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "ok"
+                      },
+                      "refused": {
+                        "color": "red",
+                        "index": 1,
+                        "text": "refused"
+                      },
+                      "skipped": {
+                        "color": "orange",
+                        "index": 2,
+                        "text": "skipped"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Last stored"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "never",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-app-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT site AS \"Site\", status AS \"Status\", code AS \"Code\", stored AS \"Rows stored\", calls AS \"Pages asked\", reason AS \"Reason\", ran_at AS \"Ran\", last_stored_at AS \"Last stored\"\nFROM grafana.col_refresh\nORDER BY site"
+        }
+      ]
+    },
+    {
       "id": 8,
       "type": "table",
       "title": "Cache freshness",
@@ -619,7 +735,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 33
+        "y": 38
       },
       "fieldConfig": {
         "defaults": {
