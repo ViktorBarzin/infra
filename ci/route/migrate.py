@@ -56,6 +56,8 @@ def _block_end(lines, start, indent):
 def migrate_workflow(text):
     """Return (new text, Trigger), or (text, None) when there is no push trigger."""
     doc = yaml.safe_load(text)
+    if not isinstance(doc, dict):
+        return text, None
     on = doc.get(True, doc.get("on"))
     if not isinstance(on, dict) or "push" not in on:
         if on == "push" or (isinstance(on, list) and "push" in on):
@@ -200,7 +202,9 @@ def main(argv=None):
         print(f"migrate: {name}")
     for w in warnings:
         print(f"migrate: WARNING {w}")
-    return 0 if triggers else 1
+    if not triggers:
+        print("migrate: no workflow has a push trigger; nothing to move")
+    return 0
 
 
 if __name__ == "__main__":

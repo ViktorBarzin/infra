@@ -137,6 +137,9 @@ class Workflow(unittest.TestCase):
             "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
         )
 
+    def test_a_file_that_is_not_a_workflow_is_left_alone(self):
+        self.assertEqual(migrate.migrate_workflow("# only a comment\n"), ("# only a comment\n", None))
+
     def test_a_workflow_without_push_is_left_alone(self):
         self.assertEqual(migrate.migrate_workflow(DISPATCH_ONLY), (DISPATCH_ONLY, None))
 

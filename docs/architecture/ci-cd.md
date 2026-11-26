@@ -564,7 +564,11 @@ The infra pipelines use `github_ci_token` in Vault `secret/ci/global`, a copy
 of `secret/viktor` `github_pat`. Viktor chose to reuse it on 2026-11-26. It
 has every scope, so only infra's own pipelines read it. A migrated repo gets
 only `woodpecker_api_token`. Rotate both Vault copies together.
-`ci/route/migrate.py <repo>` moves a repo to this flow.
+`ci/route/migrate.py <repo>` moves a repo to this flow, and new repos are born
+with it: app-kit's template (and so viktor/app-template) has no push trigger and
+ships `.woodpecker/build.yml`, and `scripts/offinfra-onboard` runs the codemod and
+prints the `woodpecker_api_token` mapping step. A repo's push starts no build
+until its Woodpecker id is in that mapping.
 
 To see where the minutes go:
 

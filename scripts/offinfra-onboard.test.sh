@@ -97,6 +97,19 @@ grep -q "kubectl -n demo set image deployment/demo" "$clone/.woodpecker/deploy.y
   && pass "default run renders deploy.yml" || fail "default run did not render deploy.yml"
 grep -qx "gh variable set WOODPECKER_REPO_ID -R ViktorBarzin/demo --body 77" "$CALLS" \
   && pass "default run sets WOODPECKER_REPO_ID" || fail "default run did not set WOODPECKER_REPO_ID"
+# Every build starts from Woodpecker (docs/architecture/ci-cd.md, "Routing
+# builds through Woodpecker"): no GitHub push trigger, a ci-route step instead.
+python3 -c "import yaml,sys;w=yaml.safe_load(open(sys.argv[1]));sys.exit('push' in w[True])" "$clone/.github/workflows/build.yml" \
+  && pass "default run drops the GitHub push trigger" || fail "default run kept the GitHub push trigger"
+grep -q "ci-route --request build.yml" "$clone/.woodpecker/build.yml" 2>/dev/null \
+  && pass "default run writes the Woodpecker route step" || fail "default run wrote no route step"
+git -C "$clone" ls-files --error-unmatch .woodpecker/build.yml >/dev/null 2>&1 \
+  && pass "default run commits the route step" || fail "default run did not commit the route step"
+echo "$OUT" | grep -q "woodpecker_api_token" \
+  && pass "default run names the token mapping step" || fail "default run does not name the token mapping step"
+run_onboard "$clone" --deploy "demo=demo"
+[ -f "$clone/.woodpecker/build.yml" ] \
+  && pass "a second run keeps the route step" || fail "a second run deleted the route step"
 
 # --no-deploy registers nothing in Woodpecker, so there is no id to set.
 clone=$(new_clone nodeploy)
