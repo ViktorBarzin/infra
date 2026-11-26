@@ -545,8 +545,9 @@ The approved plan `docs/plans/2026-11-26-gha-quota-fallback.md` makes
 Woodpecker start every repo's GitHub workflows, and pick GitHub's runners or
 the homelab's at run time:
 
-- each repo's `.woodpecker/build.yml` runs `ci-route <workflow>` (infra-ci
-  image, source `ci/route/ci_route.py`) once per workflow a push would start;
+- each repo's `.woodpecker/build.yml` runs `ci-route --request <workflow>`
+  (infra-ci image, source `ci/route/ci_route.py`) once per workflow a push
+  would start, which starts the infra pipeline `.woodpecker/ci-route.yml`;
 - a public repo, or a private repo under 1,950 private minutes this month,
   dispatches the workflow with `runner=ubuntu-latest`;
 - otherwise, or when GitHub refuses the job for billing, it dispatches with
@@ -559,9 +560,11 @@ the homelab's at run time:
 infra and cloud-builder keep their GitHub push triggers: infra builds the
 images that repair the cluster, and Cloud dispatches cloud-builder itself.
 
-The route needs `github_route_token` and the runner needs
-`github_runner_token` in Vault `secret/ci/global`. Until both exist, no repo
-uses this flow and every repo still builds on its GitHub push trigger.
+The infra pipelines use `github_ci_token` in Vault `secret/ci/global`, a copy
+of `secret/viktor` `github_pat`. Viktor chose to reuse it on 2026-11-26. It
+has every scope, so only infra's own pipelines read it. A migrated repo gets
+only `woodpecker_api_token`. Rotate both Vault copies together.
+`ci/route/migrate.py <repo>` moves a repo to this flow.
 
 To see where the minutes go:
 

@@ -13,9 +13,15 @@ A private repo spends the account's 2,000 monthly minutes, so:
 
 Each job's runs-on reads `${{ inputs.runner || 'ubuntu-latest' }}`.
 
-Usage (Woodpecker sets CI_REPO_NAME and CI_COMMIT_REF):
-  ci-route <workflow file> [--check] [--force-homelab | --force-hosted]
-Env: GITHUB_ROUTE_TOKEN, WOODPECKER_TOKEN.
+Two halves, so the GitHub token never reaches an app repo:
+- in an app repo's .woodpecker/build.yml: `ci-route --request <workflow>`
+  starts the infra pipeline .woodpecker/ci-route.yml (env WOODPECKER_TOKEN;
+  Woodpecker sets CI_REPO_NAME, CI_COMMIT_BRANCH and CI_COMMIT_TAG);
+- in that infra pipeline: `ci-route` with ROUTE_REPO, ROUTE_WORKFLOW,
+  ROUTE_REF and ROUTE_FORCE routes it (env GITHUB_ROUTE_TOKEN,
+  WOODPECKER_TOKEN).
+
+By hand: ci-route <workflow> --repo R --ref master [--check] [--force-homelab | --force-hosted]
 """
 
 import argparse
@@ -128,16 +134,44 @@ def watch_for_refusal(gh, repo, workflow, since):
     return False
 
 
-def start_runner_pipeline(repo):
-    """Start the infra pipeline that runs one-shot runners for this repo."""
+def start_infra_pipeline(body):
+    """Start a manual pipeline of the infra repo in Woodpecker."""
     req = urllib.request.Request(
         f"{WOODPECKER}/api/repos/{INFRA_REPO_ID}/pipelines",
         method="POST",
-        data=json.dumps({"branch": "master", "variables": {"PIPELINE": "gha-runner", "RUNNER_REPO": repo}}).encode(),
+        data=json.dumps(body).encode(),
         headers={"Authorization": f"Bearer {os.environ['WOODPECKER_TOKEN']}", "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        print(f"ci-route: started infra pipeline gha-runner for {repo} (HTTP {resp.status})")
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                print(f"ci-route: started infra pipeline {body['variables']['PIPELINE']} (HTTP {resp.status})")
+                return
+        except urllib.error.URLError as e:
+            print(f"ci-route: attempt {attempt + 1} to reach Woodpecker failed: {e}")
+            time.sleep(15)
+    raise SystemExit("ci-route: could not start the infra pipeline")
+
+
+def start_runner_pipeline(repo):
+    """Start the infra pipeline that runs one-shot runners for this repo."""
+    start_infra_pipeline({"branch": "master", "variables": {"PIPELINE": "gha-runner", "RUNNER_REPO": repo}})
+
+
+def request_route(repo, workflow, ref, force, post=start_infra_pipeline):
+    """From an app repo: ask the infra pipeline ci-route to route this push."""
+    post(
+        {
+            "branch": "master",
+            "variables": {
+                "PIPELINE": "ci-route",
+                "ROUTE_REPO": repo,
+                "ROUTE_WORKFLOW": workflow,
+                "ROUTE_REF": ref,
+                "ROUTE_FORCE": force or "",
+            },
+        }
+    )
 
 
 def route(gh, repo, workflow, ref, minutes_used, watch, start_runner, force=None):
@@ -165,16 +199,26 @@ def route(gh, repo, workflow, ref, minutes_used, watch, start_runner, force=None
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("workflow")
-    p.add_argument("--repo", default=os.environ.get("CI_REPO_NAME"))
-    p.add_argument("--ref", default=os.environ.get("CI_COMMIT_TAG") or os.environ.get("CI_COMMIT_BRANCH"))
+    p.add_argument("workflow", nargs="?", default=os.environ.get("ROUTE_WORKFLOW"))
+    p.add_argument(
+        "--repo", default=os.environ.get("ROUTE_REPO") or os.environ.get("CI_REPO_NAME")
+    )
+    p.add_argument(
+        "--ref",
+        default=os.environ.get("ROUTE_REF") or os.environ.get("CI_COMMIT_TAG") or os.environ.get("CI_COMMIT_BRANCH"),
+    )
     p.add_argument("--check", action="store_true", help="print the decision, dispatch nothing")
+    p.add_argument("--request", action="store_true", help="from an app repo: ask infra to route this push")
     force = p.add_mutually_exclusive_group()
     force.add_argument("--force-homelab", dest="force", action="store_const", const="homelab")
     force.add_argument("--force-hosted", dest="force", action="store_const", const="hosted")
     a = p.parse_args(argv)
-    if not a.repo or not a.ref:
-        p.error("need --repo and --ref (or CI_REPO_NAME and CI_COMMIT_BRANCH/CI_COMMIT_TAG)")
+    if not a.workflow or not a.repo or not a.ref:
+        p.error("need a workflow, --repo and --ref (or the ROUTE_* or CI_* variables)")
+    a.force = a.force or os.environ.get("ROUTE_FORCE") or None
+    if a.request:
+        request_route(a.repo, a.workflow, a.ref, a.force)
+        return 0
     gh = GitHub(os.environ["GITHUB_ROUTE_TOKEN"])
     now = datetime.datetime.now(datetime.timezone.utc)
 

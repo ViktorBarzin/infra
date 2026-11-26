@@ -1,0 +1,42 @@
+# Routes one GitHub workflow of one repo to GitHub's runners or the homelab's
+# (docs/architecture/ci-cd.md, "Routing builds through Woodpecker").
+#
+# Each repo's .woodpecker/build.yml runs `ci-route --request <workflow>`, which
+# starts this pipeline with
+#   {"variables": {"PIPELINE": "ci-route", "ROUTE_REPO": "<repo>",
+#                  "ROUTE_WORKFLOW": "<file>", "ROUTE_REF": "<branch or tag>",
+#                  "ROUTE_FORCE": "" | "homelab" | "hosted"}}
+# The GitHub token (github_ci_token, a copy of Vault secret/viktor github_pat)
+# reaches only infra pipelines, never an app repo.
+when:
+  - event: manual
+    evaluate: 'PIPELINE == "ci-route" && ROUTE_REPO != "" && ROUTE_WORKFLOW != ""'
+
+skip_clone: true
+
+steps:
+  - name: route
+    image: ghcr.io/viktorbarzin/infra-ci:latest
+    pull: true
+    environment:
+      GITHUB_ROUTE_TOKEN:
+        from_secret: github_ci_token
+      WOODPECKER_TOKEN:
+        from_secret: woodpecker_api_token
+    commands:
+      - ci-route
+
+  - name: notify
+    image: alpine:3.20
+    when:
+      - status: failure
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    commands:
+      - apk add --no-cache curl
+      - test -n "$SLACK_WEBHOOK" || exit 0
+      - >-
+        curl -sf -X POST -H 'Content-Type: application/json'
+        -d "{\"text\":\"ci-route FAILED for $${ROUTE_REPO} $${ROUTE_WORKFLOW}: the build did not start. See Woodpecker infra pipeline $${CI_PIPELINE_NUMBER}.\"}"
+        "$SLACK_WEBHOOK" || true
