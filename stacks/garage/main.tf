@@ -42,7 +42,7 @@ locals {
   # require-trusted-registries wants. Digests as well: the store holds Project
   # data, and a moved tag must not change the server under it. Cloud's
   # `cloud bucket restore` Job pins the same rclone string (stacks/cloud).
-  garage_image = "docker.io/dxflrs/garage:v2.5.0@sha256:677e5b758e4425a325b811c425c026bf35a4bf42f7ddbaa773de3f4fd779a5a5"
+  garage_image = "docker.io/dxflrs/garage:v2.6.0@sha256:4b5a318fc9fe2fbec5d3af590eeafe05d83492e6411266fa0b9e215c20264013"
   rclone_image = "docker.io/rclone/rclone:1.76.0@sha256:7cbeec24a44f206067597c0368be4de90ae19a64d5113c7d1938bd737a81e466"
   python_image = "docker.io/library/python:3.15.2-alpine@sha256:0f9552bb28711333da16915ec146f5e6bb44a7fdac9ced15dc17c2e0206346dd"
   s3_port      = 3900
