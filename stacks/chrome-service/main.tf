@@ -992,7 +992,8 @@ module "ingress_hub" {
 }
 
 # --- NetworkPolicy: scoped ingress.
-# - TCP/9222 (Chromium CDP): only from labelled client namespaces.
+# - TCP/9222 (Chromium CDP): only from labelled client namespaces; in wealth,
+#   only the wealth-worker pods.
 # - TCP/8080 (neko UI + WS signaling): only from the traefik namespace (public
 #   path is chrome.viktorbarzin.me → Traefik → neko; Authentik forward-auth
 #   gates external access at the Traefik layer, and neko's own admin password
@@ -1015,10 +1016,32 @@ resource "kubernetes_network_policy_v1" "ws_ingress" {
     }
     policy_types = ["Ingress"]
     ingress {
+      # Every labelled client namespace except wealth, which is admitted below
+      # for its worker pod only.
       from {
         namespace_selector {
           match_labels = {
             "chrome-service.viktorbarzin.me/client" = "true"
+          }
+          match_expressions {
+            key      = "kubernetes.io/metadata.name"
+            operator = "NotIn"
+            values   = ["wealth"]
+          }
+        }
+      }
+      # wealth: only wealth-worker drives Chrome (the Fidelity connector). The
+      # web pod is internet-facing and the engine pods need no browser, and CDP
+      # has no authentication, so they get no access.
+      from {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "wealth"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            app = "wealth-worker"
           }
         }
       }
