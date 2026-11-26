@@ -290,12 +290,15 @@ locals {
     # Woodpecker"). github_ci_token is a copy of secret/viktor github_pat,
     # read only by infra's ci-route and gha-runner pipelines. Each migrated
     # repo gets woodpecker_api_token, to ask infra to route its pushes.
-    "github_ci_token"      = ["1"] # ViktorBarzin/infra
-    "woodpecker_api_token" = ["1"]
+    "github_ci_token"      = ["1"]               # ViktorBarzin/infra
+    "woodpecker_api_token" = ["1", "545", "512"] # infra; repos moved by migrate.py: infra-map, cloud
   }
-  ci_repo_secret_lines = join("\n", flatten([
+  # The trailing newline matters: the sync's `while read` drops a last line
+  # without one, which kept the last pair (slack_webhook for repo 82) from
+  # ever syncing until 2026-11-26.
+  ci_repo_secret_lines = "${join("\n", flatten([
     for key, repos in local.ci_repo_secrets : [for r in repos : "${key} ${r}"]
-  ]))
+  ]))}\n"
 }
 
 resource "kubernetes_service_account" "vault_woodpecker_sync" {
