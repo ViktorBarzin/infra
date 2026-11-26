@@ -40,6 +40,14 @@ func TestCapabilitiesCoverTheMeasuredMisses(t *testing.T) {
 		{"alert me when this product gets a discount", []string{"changedetection", "deal-watches"}},
 		{"watch an amazon price drop", []string{"changedetection", "deal-watches"}},
 		{"monitor price for this keyboard", []string{"homelab deals add", "deal-watches"}},
+		{"what is my fire number", []string{"wealth plans"}},
+		{"when can I retire", []string{"wealth plans"}},
+		{"how much is my net worth now", []string{"wealth net-worth"}},
+		{"is my pension on track", []string{"wealth plans"}},
+		{"model moving abroad at 45 and the cost of living there", []string{"wealth plans"}},
+		{"how much income tax and national insurance did I pay", []string{"wealth call"}},
+		{"can we afford a bigger mortgage", []string{"wealth"}},
+		{"what are my RSU vests worth", []string{"wealth actuals"}},
 	}
 	for _, c := range cases {
 		hits := matchCapabilities(capabilities(), c.task)

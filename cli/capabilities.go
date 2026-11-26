@@ -46,6 +46,34 @@ type capability struct {
 func capabilities() []capability {
 	return []capability{
 		{
+			// Viktor, 2026-11-26: anything about finance planning starts with
+			// wealth, his own app, and a gap in the CLI gets built, not
+			// worked around.
+			Intent:  "answer a question about my money or finance planning: net worth, FIRE, retirement, pension, tax, investments",
+			Use:     "wealth <command>  (JSON; wealth help lists them; wealth call <action> reaches anything the UI does)",
+			Instead: "asking Viktor for figures, querying the wealth database or Grafana by hand, or clicking through wealth.viktorbarzin.me in a browser",
+			Synonyms: []string{"finance", "finances", "financial", "money", "net worth", "fire number",
+				"financial independence", "retire", "retiring", "early retirement", "coast fi", "pension",
+				"savings", "investments", "portfolio", "holdings", "isa", "sipp", "stocks", "shares",
+				"rsu", "vest", "salary", "payslip", "income tax", "national insurance", "student loan",
+				"spending", "afford", "mortgage", "inheritance", "monte carlo", "projection",
+				"what if", "sweep", "move abroad", "emigrate", "cost of living", "broker",
+				"trading 212", "ibkr", "schwab", "fidelity", "wealth", "wealthfolio", "actuals"},
+			Detail: []string{
+				"start:   wealth whoami; wealth plans list; wealth plans run <id> --summary;",
+				"         wealth net-worth; wealth actuals overview; wealth connectors list",
+				"any UI action: wealth actions [<name>] (input JSON Schema), wealth call <action> '<json>'",
+				"token:   ~/.config/wealth/config.json, or WEALTH_TOKEN from Vault secret/viktor",
+				"         (key wealth_agent_token). Install: cd ~/code/wealth && bun run cli:build &&",
+				"         cp .output/cli/wealth ~/.local/bin/",
+				"missing: if wealth cannot answer it, have a subagent add the command or action in",
+				"         ~/code/wealth (cli/, or a server function + bun run api:generate), with tests,",
+				"         deployed; then answer with it. Design: docs/adr/0003-agent-access.md there.",
+				"limits:  connectors run now signs in to a broker for real: one run, then read the result.",
+				"         Viktor's figures never go into a commit or a public page.",
+			},
+		},
+		{
 			Intent:  "reproduce or verify a bug someone saw on a phone or tablet",
 			Use:     "android-emulator.viktorbarzin.me (shared Android + real Chrome, adb + noVNC); homelab ios for an iPhone",
 			Instead: "a resized desktop browser (Playwright/Chromium at a mobile viewport)",
