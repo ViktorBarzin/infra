@@ -8413,10 +8413,10 @@ serverFiles:
               description: "The oldest queued job in the {{ $labels.lane }} lane is over 15 minutes old while the worker is up. A long import or render may be hogging the slow lane, or the worker is failing every claim; check the worker logs (homelab logs query '{namespace=\"reels\", container=\"worker\"}') and the job table (status running, heartbeat_at)."
       - name: Wealth
         # The wealth app's job processes (stacks/wealth jobs.tf; wealth repo
-        # src/server/jobs/README.md). The main worker reads the queue state
-        # from pg-boss's table every 30 s, so these hold across restarts. A
-        # household's failing connector is not here: its card turns red, and
-        # it is the household's to fix.
+        # src/server/jobs/README.md). The main worker reads the queue state,
+        # failed jobs and connector cards from the database every 30 s, so
+        # these hold across restarts. One household's failing connector is
+        # not here: its card turns red, and it is the household's to fix.
         rules:
           - alert: WealthJobsNotRunning
             # system.schedules completes every 10 minutes while the main
@@ -8459,25 +8459,20 @@ serverFiles:
               description: "wealth-fire or wealth-sweep has not been scraped up for 15 minutes, so FIRE numbers or Sweeps queued for it will wait. Check kubectl -n wealth get pods -l component=jobs and the pod's logs."
           - alert: WealthSharedJobFailed
             # A run of a job every household shares (FX rates, quotes, the
-            # ledger revalue, cost-of-living pages) threw. Jobs are never
-            # retried, so the next try is the next scheduled run. The
-            # counter is in-process: the second branch catches a failure
-            # whose series is new (first failure since the worker started),
-            # which increase() cannot see. Fires for 26 hours after the last
-            # failure, so a daily job that keeps failing stays one alert.
+            # ledger revalue, cost-of-living pages) threw or expired. Jobs
+            # are never retried, so the next try is the next scheduled run.
+            # The newest failed job's time comes from pg-boss's table, which
+            # keeps failed jobs 7 to 30 days, so a worker restart does not
+            # clear it. Fires for 26 hours after the last failure, so a daily
+            # job that keeps failing stays one alert.
             expr: |
-              sum by (queue) (increase(wealth_job_runs_total{outcome="failed", queue=~"market.fx|market.quotes|ledger.revalue|col.refresh"}[26h])) > 0
-                or
-              count by (queue) (
-                wealth_job_runs_total{outcome="failed", queue=~"market.fx|market.quotes|ledger.revalue|col.refresh"}
-                  unless last_over_time(wealth_job_runs_total{outcome="failed", queue=~"market.fx|market.quotes|ledger.revalue|col.refresh"}[1h] offset 26h)
-              )
+              (time() - max by (queue) (wealth_queue_last_failed_timestamp_seconds{queue=~"market.fx|market.quotes|ledger.revalue|col.refresh"})) < 26 * 3600
             labels:
               severity: warning
               subsystem: wealth
             annotations:
               summary: "wealth's shared job {{ $labels.queue }} failed"
-              description: "A run of the wealth job {{ $labels.queue }} failed in the last 26 hours. It is shared by every household: market.fx (ECB rates) and market.quotes (Yahoo closes) price every account, ledger.revalue (one job per household) writes the daily values, col.refresh fills the cost-of-living table. The error is in the logs: homelab logs query '{namespace=\"wealth\", container=\"jobs\"} |= \"job failed\"'. A 401, 403 or 429 from ECB or Yahoo is not retried; wait for the next scheduled run. Design: wealth repo src/server/jobs/README.md."
+              description: "A run of the wealth job {{ $labels.queue }} failed or expired in the last 26 hours. It is shared by every household: market.fx (ECB rates) and market.quotes (Yahoo closes) price every account, ledger.revalue (one job per household) writes the daily values, col.refresh fills the cost-of-living table. The error is in the logs: homelab logs query '{namespace=\"wealth\", container=\"jobs\"} |= \"job failed\"'. A 401, 403 or 429 from ECB or Yahoo is not retried; wait for the next scheduled run. Design: wealth repo src/server/jobs/README.md."
           - alert: WealthSharedJobStale
             # The newest completed job per queue, read from pg-boss's table.
             # Allowed age: market.fx and market.quotes run on weekdays only,
@@ -8523,16 +8518,12 @@ serverFiles:
             # the job ran out of time (engine.fire 15 min, engine.sweep 60
             # min). FIRE numbers then stay stale for that Plan, and a monthly
             # run that throws for every Plan leaves every household's stale.
-            # Jobs are never retried. Same shape as WealthSharedJobFailed: the
-            # second branch catches the first failure after the process
-            # started, which increase() cannot see.
+            # Jobs are never retried. Same shape as WealthSharedJobFailed:
+            # the newest failed job's time from pg-boss's table (kept 30
+            # days), read by the main worker, so a restart of any job
+            # process does not clear it.
             expr: |
-              sum by (queue) (increase(wealth_job_runs_total{outcome="failed", queue=~"engine.fire|engine.sweep"}[26h])) > 0
-                or
-              count by (queue) (
-                wealth_job_runs_total{outcome="failed", queue=~"engine.fire|engine.sweep"}
-                  unless last_over_time(wealth_job_runs_total{outcome="failed", queue=~"engine.fire|engine.sweep"}[1h] offset 26h)
-              )
+              (time() - max by (queue) (wealth_queue_last_failed_timestamp_seconds{queue=~"engine.fire|engine.sweep"})) < 26 * 3600
             labels:
               severity: warning
               subsystem: wealth
@@ -8569,30 +8560,24 @@ serverFiles:
               description: "No engine.fire job has completed since the 1st of this month, so the monthly FIRE run (the 1st, 03:00 to 04:59 UK, one job per scheduled Plan) did not run or did not finish, and every household's FIRE numbers are a month old or more. Check the schedules and jobs (homelab k8s db wealth -- \"select name, key, cron from pgboss.schedule where name = 'engine.fire'\" and \"select state, count(*) from pgboss.job where name = 'engine.fire' group by state\"), the wealth-fire pod (kubectl -n wealth get pods -l app=wealth-fire) and the logs (homelab logs query '{namespace=\"wealth\", container=\"jobs\"}'). Design: wealth repo src/server/jobs/README.md."
           - alert: WealthConnectorKindFailing
             # One household's failing connector is its red card, not an
-            # alert. This fires when a connector kind had failed runs in the
-            # last 26 hours and no household of that kind has had a good run
-            # in 26 hours: the broker or our connector is broken for every
-            # household. Runs are daily, spread over a 15 to 30 minute
-            # window, so 26 h holds one day's runs of every household. The
-            # second branch catches a failure series that is new since the
-            # worker started (increase() cannot see it). CSV is left out: it
-            # runs on a member's upload, and a bad file is theirs to fix.
+            # alert. This fires while a connector kind has red cards and no
+            # green one: the broker or our connector is broken for every
+            # household that has the kind. wealth_connectors counts the
+            # cards by status from the connectors table, so the alert holds
+            # across worker restarts until a run turns a card green. Only
+            # the latest run of each card counts, so the rule needs no time
+            # window for daily kinds or Fidelity's twice-monthly runs. CSV is
+            # left out: it runs on a member's upload, and a bad file is
+            # theirs to fix.
             expr: |
-              (
-                sum by (kind) (increase(wealth_connector_runs_total{status!="ok", kind!="csv"}[26h])) > 0
-                  or
-                count by (kind) (
-                  wealth_connector_runs_total{status!="ok", kind!="csv"}
-                    unless last_over_time(wealth_connector_runs_total{status!="ok", kind!="csv"}[1h] offset 26h)
-                )
-              )
-                unless on(kind) ((time() - max by (kind) (wealth_connector_last_success_timestamp_seconds)) < 26 * 3600)
+              max by (kind) (wealth_connectors{status="failing", kind!="csv"}) > 0
+                unless on(kind) (max by (kind) (wealth_connectors{status="ok"}) > 0)
             labels:
               severity: warning
               subsystem: wealth
             annotations:
               summary: "wealth's {{ $labels.kind }} connector is failing for every household"
-              description: "{{ $labels.kind }} connector runs failed in the last 26 hours and no household's {{ $labels.kind }} connector has had a good run in that time, so the broker or the connector code is broken for everyone, not one household's credentials. Error codes: homelab metrics query 'sum by (error_code) (wealth_connector_runs_total{kind=\"{{ $labels.kind }}\", status!=\"ok\"})'; runs: homelab k8s db wealth -- \"select status, error_code, error, finished_at from connector_runs where kind = '{{ $labels.kind }}' order by started_at desc limit 20\". Connectors make one attempt per run and stop at the first 401, 403 or 429. Design: wealth repo src/connectors/README.md."
+              description: "Every {{ $labels.kind }} connector that has run is failing ({{ $value }} red cards, no green one), so the broker or the connector code is broken for everyone, not one household's credentials. The alert holds until a run turns a card green. Cards: homelab k8s db wealth -- \"select status, last_run_at, last_error from connectors where kind = '{{ $labels.kind }}'\"; runs: homelab k8s db wealth -- \"select status, error_code, error, finished_at from connector_runs where kind = '{{ $labels.kind }}' order by started_at desc limit 20\". Connectors make one attempt per run and stop at the first 401, 403 or 429. Design: wealth repo src/connectors/README.md."
       - name: Vermont access archive
         # stacks/vermont-access (infra#176): every Monday 00:00 Sofia the
         # acs-archive CronJob copies the Vermont complex access-control events
