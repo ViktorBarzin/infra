@@ -157,7 +157,7 @@ locals {
     "tandoor", "tasks", "technitium", "test-failover",
     "torrserver", "trading", "traefik", "trek",
     "tripit", "tv", "uptime", "url", "valchedrym",
-    "vaultwarden", "vpn", "wealthfolio", "whisker",
+    "vaultwarden", "vpn", "wealth", "wealthfolio", "whisker",
     "wrongmove", "yotovski-status", "yt", "yt-highlights",
   ]
 }
