@@ -33,22 +33,22 @@ nodes:
   - {id: billing, label: Billing usage API, group: gh, state: same}
   - {id: ghcr, label: ghcr.io images, group: gh, state: same}
   - {id: route, label: "Woodpecker step: route", note: in each app repo, group: k8s, state: new, risk: medium}
-  - {id: build, label: "infra pipeline: fallback-build", note: BuildKit rootless, one at a time, group: k8s, state: new, risk: medium}
+  - {id: build, label: "infra pipeline: gha-runner", note: "one-shot self-hosted GitHub runner, one at a time", group: k8s, state: new, risk: high}
   - {id: deploy, label: Per-app Woodpecker deploy, group: k8s, state: same}
 edges:
   - {from: push, to: route, state: new, label: push webhook}
   - {from: route, to: billing, state: new, label: minutes used}
   - {from: route, to: gha, state: new, label: dispatch while minutes remain}
   - {from: route, to: build, state: new, label: "quota out, or GitHub refused the job"}
+  - {from: build, to: gha, state: new, label: "takes the job of runs-on homelab"}
   - {from: gha, to: ghcr, state: same}
-  - {from: build, to: ghcr, state: new, label: same tags as GitHub}
   - {from: gha, to: deploy, state: same, label: IMAGE_TAG}
-  - {from: build, to: deploy, state: new, label: IMAGE_TAG}
 checks:
   - {node: route, text: "A push to infra-map with minutes left starts one GitHub run and no cluster build", status: open}
-  - {node: route, text: "The tests replay the saved 30 Oct refusal and hand the commit to fallback-build", status: open}
-  - {node: build, text: "A forced local build of infra-map pushes its <sha8> tag, and the deploy rolls it", status: open}
-  - {node: build, text: "A forced local build of cloud builds both targets from one build.yml", status: open}
+  - {node: route, text: "The tests replay the saved 30 Oct refusal and start gha-runner", status: open}
+  - {node: build, text: "A forced homelab run of infra-map's build.yml pushes its <sha8> tag, and the deploy rolls it", status: open}
+  - {node: build, text: "A forced homelab run of cloud's build.yml builds both images in one job", status: open}
+  - {node: build, text: "GitHub runs a self-hosted job while hosted jobs are blocked; first seen at the next quota exhaustion", status: open}
   - {node: gha, text: "A direct push no longer starts build.yml in any of the 24 repos", status: open}
 left_out:
   - A cron that searches for refused runs. It reacts up to 15 minutes late.
@@ -89,22 +89,17 @@ left_out:
     - {name: Only when GitHub has no minutes, chosen: true}
     - {name: Also when a GitHub build fails, note: deploys a commit that CI rejected}
   why: A real CI failure must stay a failure.
-- question: Where does the cluster build run?
+- question: How does the cluster build?
+  options:
+    - {name: "The repo's own workflow on a one-shot self-hosted GitHub runner", chosen: true}
+    - {name: "BuildKit replays the image steps of build.yml", note: "fails on 32 cross-job outputs, 21 computed versions and 13 workflows with no image"}
+    - {name: "Both, BuildKit when GitHub blocks self-hosted jobs too", note: most code}
+  why: "Viktor chose it: every workflow runs as written. If GitHub also blocks self-hosted jobs, builds wait for the 1st."
+- question: Where does the runner run?
   options:
     - {name: "An infra pipeline on a builder agent with one slot", chosen: true}
-    - {name: "Inside each app repo's pipeline", note: puts the ghcr push token in 24 repos; no limit on parallel builds}
-  why: Only infra holds the push token, and the sdc disk takes one build at a time.
-- question: Where do the image settings come from?
-  options:
-    - {name: "The repo's own build.yml at that commit", chosen: true}
-    - {name: A list of apps in infra, note: drifts from the workflows}
-  why: The docker/build-push-action steps already hold context, file, target, build args and tags.
-- question: Which builder?
-  options:
-    - {name: BuildKit rootless, chosen: true}
-    - {name: Kaniko, note: archived by Google in 2025; weaker on BuildKit-only Dockerfile features}
-    - {name: Privileged Docker, note: root on the node for every build}
-  why: It is the engine that GitHub's buildx uses, and it runs without privileged mode.
+    - {name: "Inside each app repo's pipeline", note: puts the runner token in 53 repos; no limit on parallel builds}
+  why: Only infra holds the runner token, and the sdc disk takes one build at a time.
 - question: Which credentials?
   options:
     - {name: Two narrow tokens from Viktor, chosen: true}
@@ -112,19 +107,23 @@ left_out:
   why: A token in the cluster must do only its job.
 ```
 
-The two tokens:
+The two tokens, both fine-grained for all repos:
 
-- `github_route_token`: fine-grained, all repos, `Actions: read and write`, `Contents: read`, and the account permission `Plan: read`. The 24 app repos get it.
-- `ghcr_push_token`: classic, only `write:packages`, because ghcr takes only classic tokens for a push. Only the infra repo gets it.
+- `github_route_token`: `Actions: read and write`, `Contents: read`, and the account permission `Plan: read`. The app repos get it.
+- `github_runner_token`: `Administration: read and write` and `Actions: read`. It registers just-in-time runners. Only the infra repo gets it.
+
+The runner job uses the workflow's own `GITHUB_TOKEN` for ghcr, so no ghcr token goes into the cluster. The runner image is `ghcr.io/viktorbarzin/gha-runner`: GitHub's `actions-runner` with `jq`, `gh` and `python3`. The public infra repo builds it. A Docker-in-Docker sidecar runs privileged, so Woodpecker marks only the infra repo as trusted.
 
 ## How one push works
 
 1. The push webhook starts `.woodpecker/build.yml` in the repo. Each route step names one GitHub workflow and keeps its old branch, tag and path filters.
 2. A public repo dispatches at once. For a private repo, the route step reads the private minutes for the month.
-3. Under 1,950 minutes, it dispatches `build.yml` on master. It waits up to 3 minutes for a runner to take the job, then exits.
-4. At 1,950 or more, or if GitHub refuses the job, it starts the infra pipeline `fallback-build` with the repo and commit.
-5. `fallback-build` clones the commit from Forgejo and builds each `docker/build-push-action` step. It pushes the same tags and starts the app's deploy. A workflow with no image step waits for the 1st, and Slack says so.
+3. Under 1,950 minutes, it dispatches the workflow with `runner=ubuntu-latest`. It waits up to 3 minutes for a hosted runner to take the job, then exits.
+4. At 1,950 or more, or if GitHub refuses the job, it dispatches with `runner=homelab` and starts the infra pipeline `gha-runner` for the repo.
+5. `gha-runner` registers a just-in-time runner with the label `homelab`, which takes one job and exits. It repeats until no `homelab` job of the repo waits.
 6. Slack gets a message on the first cluster build of a month and on each failed one.
+
+Each job's `runs-on` becomes `${{ inputs.runner || 'ubuntu-latest' }}`. A job on another runner, such as macOS, keeps its own label and waits for the 1st.
 
 ## Order of work
 
@@ -133,8 +132,8 @@ caption: Every step can be undone. A repo goes back by restoring its push trigge
 steps:
   - {when: 1. Tokens, what: "Viktor creates the two tokens; Vault secret/ci/global; the sync maps each to its repos", rollback: Revoke both tokens}
   - {when: 2. Route and build code, what: "scripts/ci-build/ with tests on saved API responses; ships in infra-ci", rollback: Revert the commit}
-  - {when: 3. Builder, what: "A woodpecker-builder agent with one slot, and .woodpecker/fallback-build.yml", rollback: "Set the agent's replicas to 0"}
-  - {when: 4. First repo, what: "infra-map moves; forced local builds of infra-map and cloud; read the live tags", rollback: "Restore its push trigger"}
+  - {when: 3. Runner, what: "The gha-runner image, a woodpecker-builder agent with one slot, and .woodpecker/gha-runner.yml", rollback: "Set the agent's replicas to 0"}
+  - {when: 4. First repos, what: "infra-map and cloud move; forced homelab runs of both; read the live tags", rollback: "Restore their push triggers"}
   - {when: 5. Every repo, what: "A codemod moves the other 52 repos; app-template and offinfra-onboard make new repos this way", rollback: "Restore the push triggers with the same codemod"}
   - {when: 6. Docs, what: "ADR-0002 amendment, the infra CLAUDE.md rule, docs/architecture/ci-cd.md", rollback: Revert the commit}
 ```
@@ -142,9 +141,10 @@ steps:
 ## Configuration
 
 ```config
-- {key: "on.push of each workflow", where: 53 repos, old: "branches, tags, paths", new: "removed; workflow_dispatch added"}
+- {key: "on.push of each workflow", where: 53 repos, old: "branches, tags, paths", new: "removed; workflow_dispatch with input runner"}
+- {key: "runs-on of each ubuntu job", where: the same workflows, old: "ubuntu-latest", new: "${{ inputs.runner || 'ubuntu-latest' }}"}
 - {key: ".woodpecker/build.yml", where: the same repos, old: "absent", new: "one route step per workflow, image infra-ci"}
-- {key: "github_route_token, ghcr_push_token", where: "Vault secret/ci/global, ci_repo_secrets in stacks/woodpecker", old: "absent", new: "app repos, and infra only"}
+- {key: "github_route_token, github_runner_token", where: "Vault secret/ci/global, ci_repo_secrets in stacks/woodpecker", old: "absent", new: "app repos, and infra only"}
 - {key: woodpecker-builder agent, where: stacks/woodpecker, old: "absent", new: "1 replica, WOODPECKER_MAX_WORKFLOWS 1, label builder"}
 - {key: "In-cluster build rule", where: "infra CLAUDE.md and ADR-0002", old: "never", new: "only when GitHub has no private minutes"}
 ```
@@ -153,7 +153,7 @@ steps:
 
 ```sh
 python3 scripts/ci-build/route.py --check --repo infra-map
-python3 scripts/ci-build/route.py --force-local --repo infra-map
+python3 scripts/ci-build/route.py --force-homelab --repo infra-map
 kubectl -n infra-map get deploy infra-map -o wide
 homelab ci watch --repo ViktorBarzin/infra-map
 ```
