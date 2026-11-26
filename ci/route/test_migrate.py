@@ -125,6 +125,18 @@ class Workflow(unittest.TestCase):
         _, trigger = migrate.migrate_workflow(bare)
         self.assertEqual(migrate._when(trigger), [{"event": "push"}, {"event": "tag"}])
 
+    def test_a_push_only_gate_now_means_the_dispatch(self):
+        gated = (
+            "on:\n  push:\n    branches: [main]\n  pull_request:\njobs:\n  deploy:\n"
+            "    if: github.event_name == 'push' && github.ref == 'refs/heads/main'\n"
+            "    runs-on: ubuntu-latest\n    steps:\n      - run: x\n"
+        )
+        new, _ = migrate.migrate_workflow(gated)
+        self.assertEqual(
+            yaml.safe_load(new)["jobs"]["deploy"]["if"],
+            "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
+        )
+
     def test_a_workflow_without_push_is_left_alone(self):
         self.assertEqual(migrate.migrate_workflow(DISPATCH_ONLY), (DISPATCH_ONLY, None))
 

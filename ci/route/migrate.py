@@ -29,7 +29,7 @@ RUNNER_INPUT = [
     "        type: string",
     "        default: ubuntu-latest",
 ]
-EVENT_DEPENDENT = re.compile(r"github\.event\.(before|head_commit|commits|compare)|github\.event_name")
+EVENT_DEPENDENT = re.compile(r"github\.event\.(before|head_commit|commits|compare)")
 
 
 @dataclasses.dataclass
@@ -97,6 +97,8 @@ def migrate_workflow(text):
             lines[inputs + 1 : inputs + 1] = RUNNER_INPUT
 
     new = "\n".join(lines)
+    # A push now arrives as a workflow_dispatch from ci-route.
+    new = re.sub(r"github\.event_name\s*==\s*'push'", "github.event_name == 'workflow_dispatch'", new)
     new = re.sub(
         r"^(\s+runs-on:\s*)(ubuntu-[\w.-]+)\s*$",
         lambda m: f"{m.group(1)}${{{{ inputs.runner || '{m.group(2)}' }}}}",

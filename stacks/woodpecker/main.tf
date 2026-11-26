@@ -290,8 +290,10 @@ locals {
     # Woodpecker"). github_ci_token is a copy of secret/viktor github_pat,
     # read only by infra's ci-route and gha-runner pipelines. Each migrated
     # repo gets woodpecker_api_token, to ask infra to route its pushes.
-    "github_ci_token"      = ["1"]               # ViktorBarzin/infra
-    "woodpecker_api_token" = ["1", "545", "512"] # infra; repos moved by migrate.py: infra-map, cloud
+    "github_ci_token" = ["1"] # ViktorBarzin/infra
+    # infra, and every repo moved by ci/route/migrate.py (Woodpecker ids;
+    # names: GET /api/repos/<id>).
+    "woodpecker_api_token" = ["1", "2", "4", "6", "9", "10", "78", "79", "87", "88", "121", "167", "200", "201", "202", "203", "204", "205", "206", "207", "209", "210", "211", "212", "245", "278", "279", "312", "345", "378", "411", "444", "445", "478", "511", "512", "545", "546", "547", "580", "581", "582", "583", "584", "585", "586", "587", "588", "589", "590", "591", "592"]
   }
   # The trailing newline matters: the sync's `while read` drops a last line
   # without one, which kept the last pair (slack_webhook for repo 82) from
