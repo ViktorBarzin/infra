@@ -99,7 +99,7 @@ module "app" {
 | `ingress.extra_middlewares` | `traefik-strip-auth-headers@kubernetescrd` | No public route may carry a client-sent `X-authentik-*` identity. |
 | `ingress.anti_ai_scraping` | `false` | Every page past the sign-in wall needs a session, so there is nothing to mine, and the bot-block forwardAuth would sit on every API call. |
 | `ingress.turnstile` | `false` | Installed PWAs run in a standalone webview, and a Turnstile pass is tied to the network that solved it, so a phone changing networks would meet the challenge page mid-session. |
-| `namespace_labels` | `{}` | Extra namespace labels. A caller of chrome-service's CDP port needs `chrome-service.viktorbarzin.me/client = "true"`, because chrome-service's NetworkPolicy admits port 9222 only from labelled namespaces. `wealth` sets it for its Fidelity connector. |
+| `namespace_labels` | `{}` | Extra namespace labels. A caller of chrome-service's CDP port needs `chrome-service.viktorbarzin.me/client = "true"`, because chrome-service's NetworkPolicy admits port 9222 only from labelled namespaces. |
 | `strategy` | `Recreate` | One realtime LISTEN connection and one writer during a rollout. `RollingUpdate` surges one pod and removes none until it is Ready (maxSurge 1, maxUnavailable 0); use it only when the app keeps no state that one process alone may hold. |
 | `replicas` | `1` | Each pod uses 5 connections of the shared Postgres (pool 4 + LISTEN 1), plus 1 for the `migrate` init container while it runs. Above 1, the pods prefer different nodes (soft anti-affinity on `kubernetes.io/hostname`). |
 | `pre_stop_sleep_seconds` | `0` | Seconds a stopping pod keeps serving before SIGTERM, so Traefik drops it first. Runs `/usr/local/bin/bun -e` (distroless has no `sleep`). 0 to 25. |

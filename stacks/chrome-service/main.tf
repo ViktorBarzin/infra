@@ -1017,7 +1017,8 @@ resource "kubernetes_network_policy_v1" "ws_ingress" {
     policy_types = ["Ingress"]
     ingress {
       # Every labelled client namespace except wealth, which is admitted below
-      # for its worker pod only.
+      # for its worker pod only. wealth carries no label; the NotIn keeps a
+      # label added there later from opening CDP to every wealth pod.
       from {
         namespace_selector {
           match_labels = {

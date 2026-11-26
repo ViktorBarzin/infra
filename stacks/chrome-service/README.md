@@ -29,8 +29,8 @@ async with async_playwright() as p:
 
 NetworkPolicy is the only gate on the CDP endpoint — labelled client
 namespaces or explicit fallback (`tv`, and `f1-stream` until that
-namespace is removed after the rename). In the labelled `wealth`
-namespace only pods with `app=wealth-worker` are admitted. No bearer token is
+namespace is removed after the rename). `wealth` carries no label: it is
+admitted by name, and only for pods with `app=wealth-worker`. No bearer token is
 required for the connection itself.
 
 ## Snapshot endpoint (external callers)

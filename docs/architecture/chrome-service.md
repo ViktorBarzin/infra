@@ -244,7 +244,10 @@ browser download — that caller runs on a plain `python:3.12-slim` with
     `chrome-service.viktorbarzin.me/client = "true"` (plus an explicit
     fallback for `tv`, and `f1-stream` until that namespace is removed,
     by `kubernetes.io/metadata.name`, plus
-    `chrome-service`'s own namespace for the harvester CronJob).
+    `chrome-service`'s own namespace for the harvester CronJob). `wealth`
+    carries no label and is admitted by name for pods labelled
+    `app=wealth-worker` only; the label rule excludes `wealth`, so a label
+    added there later does not open CDP to its other pods.
   - **TCP/8080** (neko UI + WS signaling): only the `traefik` namespace.
   - **TCP/8088** (snapshot-server): only the `traefik` namespace
     (bearer-token check happens in `snapshot_server.py`).

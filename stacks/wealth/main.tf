@@ -37,9 +37,9 @@ module "app" {
   image_pull_secrets = ["ghcr-credentials"]
 
   # The Fidelity connector in wealth-worker drives chrome-service over CDP
-  # (jobs.tf, FIDELITY_CDP_URL), and chrome-service's NetworkPolicy admits
-  # port 9222 only from namespaces with this label.
-  namespace_labels = { "chrome-service.viktorbarzin.me/client" = "true" }
+  # (jobs.tf, FIDELITY_CDP_URL). chrome-service's NetworkPolicy admits it by
+  # namespace name and pod label, so this namespace carries no client label:
+  # the web and engine pods get no CDP access.
 
   postgresql_host = var.postgresql_host
   tls_secret_name = var.tls_secret_name
