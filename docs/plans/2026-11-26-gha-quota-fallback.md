@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 plan: true
 ---
 
@@ -44,12 +44,12 @@ edges:
   - {from: gha, to: ghcr, state: same}
   - {from: gha, to: deploy, state: same, label: IMAGE_TAG}
 checks:
-  - {node: route, text: "A push to infra-map with minutes left starts one GitHub run and no cluster build", status: open}
+  - {node: route, text: "A push to infra-map with minutes left starts one GitHub run and no cluster build", status: passed}
   - {node: route, text: "The tests replay the saved 30 Oct refusal and start gha-runner", status: passed}
-  - {node: build, text: "A homelab run of infra-map's build.yml pushes its <sha8> tag (passed 2026-11-26 on a test branch, 147 s; the deploy half is open)", status: open}
-  - {node: build, text: "A forced homelab run of cloud's build.yml builds both images in one job", status: open}
+  - {node: build, text: "A forced homelab run of infra-map's build.yml pushes its <sha8> tag, and the deploy runs (110 s)", status: passed}
+  - {node: build, text: "A forced homelab run of cloud's build.yml builds both images in one job (507 s)", status: passed}
   - {node: build, text: "GitHub runs a self-hosted job while hosted jobs are blocked; first seen at the next quota exhaustion", status: open}
-  - {node: gha, text: "A direct push no longer starts build.yml in any of the 24 repos", status: open}
+  - {node: gha, text: "No workflow in the 51 moved repos has a push trigger (scanned on GitHub)", status: passed}
 left_out:
   - A cron that searches for refused runs. It reacts up to 15 minutes late.
   - A self-hosted GitHub runner. It needs a host that is always on, and the Dell is stored.
