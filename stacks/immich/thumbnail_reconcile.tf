@@ -499,7 +499,7 @@ resource "kubernetes_cron_job_v1" "immich_thumbnail_freshness" {
             # pushed and ImmichThumbnailFreshnessStale fires.
             init_container {
               name  = "queues"
-              image = "docker.io/library/redis:8.10.3-alpine"
+              image = "docker.io/library/redis:8.12.0-alpine"
               command = ["/bin/sh", "-c", <<-EOT
                 set -eu
                 out=/shared/metrics.20-queues.prom
