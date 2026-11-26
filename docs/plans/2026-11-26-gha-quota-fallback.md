@@ -3,50 +3,55 @@ status: draft
 plan: true
 ---
 
-# Build private repos in Woodpecker when GitHub Actions minutes run out
+# Woodpecker starts every private build and picks where it runs
 
-When the account uses its 2,000 private minutes, GitHub refuses every private build until the 1st, and deploys stop. After this change, Woodpecker builds and deploys those commits by itself, and it does nothing while minutes remain.
+When the account uses its 2,000 private minutes, GitHub refuses every private build until the 1st, and deploys stop. After this change, one Woodpecker step starts each push. It sends the build to GitHub while minutes remain, and to the cluster when they do not.
 
 ## In numbers
 
 ```numbers
-caption: GitHub billing API and Actions runs, measured 2026-11-26
+caption: GitHub billing API, Actions runs and repo lists, measured 2026-11-26
 rows:
-  - {label: Hours with no private builds after the quota ran out, Oct 2026, before: "34 (30 Oct 14:38 to 1 Nov 01:09 UTC)", after: "about 0.5, the cron interval plus billing lag"}
-  - {label: Billing API delay behind finished jobs, before: "under 45 minutes", after: "same; the gate allows for it"}
-  - {label: GitHub API calls per day while minutes remain, before: "0", after: "96, one billing call each 15 minutes", better: false}
+  - {label: Hours with no private builds after the quota ran out, Oct 2026, before: "34 (30 Oct 14:38 to 1 Nov 01:09 UTC)", after: "0"}
+  - {label: Private repos with a build.yml, before: "24", after: "24, all started by Woodpecker"}
+  - {label: Billing API delay behind finished jobs, before: "under 45 minutes", after: "same; a refused dispatch covers it"}
+  - {label: Woodpecker pods per private push, before: "0", after: "1, about 10 to 60 seconds", better: false}
   - {label: Builds in the cluster while minutes remain, before: "0", after: "0"}
 ```
 
 ## The system, with the change on it
 
 ```topology
-caption: The normal path stays on GitHub. The fallback path runs only after GitHub refuses a build for billing.
+caption: One flow for every push. The cluster builds only when GitHub has no minutes.
 direction: LR
 groups:
   - {id: gh, label: GitHub}
   - {id: k8s, label: Sofia cluster}
 nodes:
-  - {id: gha, label: GitHub Actions build.yml, note: unchanged primary path, group: gh, state: same}
+  - {id: push, label: Push to master, note: Forgejo mirror to GitHub, group: gh, state: same}
+  - {id: gha, label: GitHub Actions build.yml, note: "workflow_dispatch only", group: gh, state: changed, risk: medium}
   - {id: billing, label: Billing usage API, group: gh, state: same}
   - {id: ghcr, label: ghcr.io images, group: gh, state: same}
-  - {id: cron, label: "Woodpecker cron gha-fallback", note: every 15 minutes, group: k8s, state: new, risk: low}
-  - {id: build, label: BuildKit rootless step, note: one build at a time, group: k8s, state: new, risk: medium}
+  - {id: route, label: "Woodpecker step: route", note: in each app repo, group: k8s, state: new, risk: medium}
+  - {id: build, label: "infra pipeline: fallback-build", note: BuildKit rootless, one at a time, group: k8s, state: new, risk: medium}
   - {id: deploy, label: Per-app Woodpecker deploy, group: k8s, state: same}
-  - {id: sdc, label: sdc spindle with etcd, scope: out}
 edges:
-  - {from: gha, to: ghcr, state: same, label: normal push}
-  - {from: cron, to: billing, state: new, label: private minutes used}
-  - {from: cron, to: build, state: new, label: refused commits only}
+  - {from: push, to: route, state: new, label: push webhook}
+  - {from: route, to: billing, state: new, label: minutes used}
+  - {from: route, to: gha, state: new, label: dispatch while minutes remain}
+  - {from: route, to: build, state: new, label: "quota out, or GitHub refused the job"}
+  - {from: gha, to: ghcr, state: same}
   - {from: build, to: ghcr, state: new, label: same tags as GitHub}
+  - {from: gha, to: deploy, state: same, label: IMAGE_TAG}
   - {from: build, to: deploy, state: new, label: IMAGE_TAG}
-  - {from: build, to: sdc}
 checks:
-  - {node: cron, text: "A run under the quota prints the minutes used and exits in under 10 seconds", status: open}
-  - {node: build, text: "A forced run builds infra-map's master, pushes ghcr.io/viktorbarzin/infra-map:<sha8>, and the deploy rolls it", status: open}
-  - {node: build, text: "A forced run builds cloud's two targets from one build.yml", status: open}
-  - {node: cron, text: "The tests replay the saved 30 Oct refusal and build only the refused commit", status: open}
+  - {node: route, text: "A push to infra-map with minutes left starts one GitHub run and no cluster build", status: open}
+  - {node: route, text: "The tests replay the saved 30 Oct refusal and hand the commit to fallback-build", status: open}
+  - {node: build, text: "A forced local build of infra-map pushes its <sha8> tag, and the deploy rolls it", status: open}
+  - {node: build, text: "A forced local build of cloud builds both targets from one build.yml", status: open}
+  - {node: gha, text: "A direct push no longer starts build.yml in any of the 24 repos", status: open}
 left_out:
+  - A cron that searches for refused runs. It reacts up to 15 minutes late.
   - A self-hosted GitHub runner. It needs a host that is always on, and the Dell is stored.
   - Builds through the public cloud-builder repo. GitHub's terms limit hosted jobs to their own repo.
 ```
@@ -54,23 +59,26 @@ left_out:
 ## Decisions
 
 ```decision
-- question: Where do the fallback builds run?
+- question: What starts a private build?
   options:
-    - {name: Woodpecker in the cluster, chosen: true}
-    - {name: The devvm, note: needs a new daemon and puts credentials on the shared box; same sdc disk}
-    - {name: The London Dell, note: it is off and stored}
-  why: Deploys need the cluster anyway, and the disk risk is the same as on the devvm.
-- question: How does the fallback find out that it must act?
+    - {name: "A Woodpecker step on every push", chosen: true}
+    - {name: "GitHub on push, and a cron that rescues refused runs", note: two flows, and up to 15 minutes late}
+  why: One place decides, so a later routing change touches only infra.
+- question: How does the route step choose?
   options:
-    - {name: "Gate on the billing API, then look for refused runs", chosen: true}
-    - {name: Scan every private repo's runs each few minutes, note: hundreds of API calls a day for nothing}
-    - {name: A push pipeline in every app repo, note: edits each repo and fires on every push}
-  why: One call answers "minutes remain" on almost every run.
-- question: Which commits does it build?
+    - {name: "Billing gate, then watch the dispatched run", chosen: true}
+    - {name: Billing gate only, note: loses a push when the billing figure lags at the limit}
+  why: Under 1,950 minutes it dispatches and waits until the run starts; a refusal goes to the cluster.
+- question: Which commits build in the cluster?
   options:
-    - {name: Only master runs that GitHub refused for billing, chosen: true}
-    - {name: Any master commit with no image on ghcr, note: can deploy a commit that CI rejected}
+    - {name: Only when GitHub has no minutes, chosen: true}
+    - {name: Also when a GitHub build fails, note: deploys a commit that CI rejected}
   why: A real CI failure must stay a failure.
+- question: Where does the cluster build run?
+  options:
+    - {name: "An infra pipeline on a builder agent with one slot", chosen: true}
+    - {name: "Inside each app repo's pipeline", note: puts the ghcr push token in 24 repos; no limit on parallel builds}
+  why: Only infra holds the push token, and the sdc disk takes one build at a time.
 - question: Where do the image settings come from?
   options:
     - {name: "The repo's own build.yml at that commit", chosen: true}
@@ -86,50 +94,51 @@ left_out:
   options:
     - {name: Two narrow tokens from Viktor, chosen: true}
     - {name: The github_pat in secret/viktor, note: it has every scope, including delete_repo and admin:org}
-  why: A token in the cluster must do only this job.
+  why: A token in the cluster must do only its job.
 ```
 
 The two tokens:
 
-- A classic token with only `write:packages`. ghcr takes only classic tokens for a push.
-- A fine-grained token for all repos, with `Actions: read`, `Contents: read` and the account permission `Plan: read`.
+- `github_route_token`: fine-grained, all repos, `Actions: read and write`, `Contents: read`, and the account permission `Plan: read`. The 24 app repos get it.
+- `ghcr_push_token`: classic, only `write:packages`, because ghcr takes only classic tokens for a push. Only the infra repo gets it.
 
-The fallback clones from Forgejo with the existing `forgejo_repo_token`. It sends Slack a message when it first builds in a month and when a fallback build fails. The 2026-07-02 rule allows failure-only alerts. The first message reports a degraded state, so it counts as one.
+## How one push works
 
-## How one run works
-
-1. Read the private minutes for the month from the billing API. Count only private repos, as the 2026-09-24 method does.
-2. If the use is under 1,950 minutes, stop. The 50-minute margin covers the billing delay.
-3. For each private repo with a `build.yml`, read the newest master run. Keep the run only if it has 0 steps and an annotation that names the spending limit.
-4. Skip the commit if ghcr already has its `<sha8>` tag.
-5. Clone the commit from Forgejo. Build each `docker/build-push-action` step of `build.yml`, then push the same tags.
-6. Find the repo's Woodpecker id by name and start its deploy with `IMAGE_TAG`.
+1. The push webhook starts `.woodpecker/build.yml` in the app repo. Its `when.path` keeps the old `paths` and `paths-ignore` of `build.yml`.
+2. The route step reads the private minutes for the month. It counts only private repos.
+3. Under 1,950 minutes, it dispatches `build.yml` on master. It waits up to 3 minutes for a runner to take the job, then exits.
+4. At 1,950 or more, or if GitHub refuses the job, it starts the infra pipeline `fallback-build` with the repo and commit.
+5. `fallback-build` clones the commit from Forgejo and builds each `docker/build-push-action` step. It pushes the same tags and starts the app's deploy.
+6. Slack gets a message on the first cluster build of a month and on each failed one.
 
 ## Order of work
 
 ```timeline
-caption: Every step can be undone. Deleting the cron stops the fallback at once.
+caption: Every step can be undone. A repo goes back by restoring its push trigger.
 steps:
-  - {when: 1. Tokens, what: "Viktor creates the two tokens; they go to Vault secret/ci/gha-fallback and sync to Woodpecker", rollback: Revoke both tokens on GitHub}
-  - {when: 2. Script and tests, what: "scripts/gha-fallback.py with tests on saved API responses; it ships in the infra-ci image", rollback: Revert the commit}
-  - {when: 3. Pipeline, what: ".woodpecker/gha-fallback.yml and the cron, registered through the Woodpecker API", rollback: Delete the cron}
-  - {when: 4. Proof, what: "A --check run, then forced runs for infra-map and cloud; read the live image tags", rollback: Redeploy the previous tag}
-  - {when: 5. Docs, what: "ADR-0002 amendment, the infra CLAUDE.md rule, docs/architecture/ci-cd.md", rollback: Revert the commit}
+  - {when: 1. Tokens, what: "Viktor creates the two tokens; Vault secret/ci/global; the sync maps each to its repos", rollback: Revoke both tokens}
+  - {when: 2. Route and build code, what: "scripts/ci-build/ with tests on saved API responses; ships in infra-ci", rollback: Revert the commit}
+  - {when: 3. Builder, what: "A woodpecker-builder agent with one slot, and .woodpecker/fallback-build.yml", rollback: "Set the agent's replicas to 0"}
+  - {when: 4. First repo, what: "infra-map moves; forced local builds of infra-map and cloud; read the live tags", rollback: "Restore its push trigger"}
+  - {when: 5. Every repo, what: "A codemod moves the other 23 repos, app-template and offinfra's build.yml.tmpl", rollback: "Restore the push triggers with the same codemod"}
+  - {when: 6. Docs, what: "ADR-0002 amendment, the infra CLAUDE.md rule, docs/architecture/ci-cd.md", rollback: Revert the commit}
 ```
 
 ## Configuration
 
 ```config
-- {key: "Vault secret/ci/gha-fallback", where: Vault, old: "absent", new: "ghcr_push_token, github_read_token"}
-- {key: "Woodpecker cron gha-fallback", where: "repo 1, ViktorBarzin/infra", old: "absent", new: "*/15 * * * *"}
-- {key: "In-cluster build rule", where: "infra CLAUDE.md and ADR-0002", old: "never", new: "only the billing fallback"}
+- {key: "build.yml on.push", where: 24 private repos and app-template, old: "branches: [master]", new: "removed; workflow_dispatch stays"}
+- {key: ".woodpecker/build.yml", where: the same repos, old: "absent", new: "one route step, image infra-ci"}
+- {key: "github_route_token, ghcr_push_token", where: "Vault secret/ci/global, ci_repo_secrets in stacks/woodpecker", old: "absent", new: "app repos, and infra only"}
+- {key: woodpecker-builder agent, where: stacks/woodpecker, old: "absent", new: "1 replica, WOODPECKER_MAX_WORKFLOWS 1, label builder"}
+- {key: "In-cluster build rule", where: "infra CLAUDE.md and ADR-0002", old: "never", new: "only when GitHub has no private minutes"}
 ```
 
 ## Commands
 
 ```sh
-homelab ci watch --repo ViktorBarzin/infra
-python3 scripts/gha-fallback.py --check
-python3 scripts/gha-fallback.py --force infra-map
+python3 scripts/ci-build/route.py --check --repo infra-map
+python3 scripts/ci-build/route.py --force-local --repo infra-map
 kubectl -n infra-map get deploy infra-map -o wide
+homelab ci watch --repo ViktorBarzin/infra-map
 ```
