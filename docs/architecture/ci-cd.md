@@ -521,6 +521,28 @@ job carries a `timeout-minutes`, and the deploy trigger is a step of the build
 job rather than a job of its own. tripit also runs its backend test suite only
 in the local `homelab work land` gate, not in CI.
 
+October used all 2,000, and November passed 1,700 by the 26th. By then most
+of the minutes went to apps made from app-template, whose separate
+lint-and-test job, with Postgres, Playwright and e2e, billed 539 of them. The
+rule since 2026-11-26: a private repo's push runs **one job** that lints,
+type-checks, builds and pushes the image and triggers the deploy, with
+`concurrency: cancel-in-progress`. Unit, HTTP and e2e tests run before a
+change lands, as each repo's AGENTS.md says. Public repos such as
+viktor/app-template keep their test jobs, because their minutes are free.
+app-kit's `template/.github/workflows/build.yml` holds this shape, and
+`scripts/workflows.test.ts` checks it. cloud, tv, wealth, alexa-assistant,
+trip-reel and infra-map follow it. tripit keeps its lint and CLI-test job
+(decision of 2026-09-24).
+
+No self-hosted runner is in use. The London Dell runner in ADR-0002's
+2026-11-21 amendment was shelved on 2026-11-22. Add one only if private use
+still passes about 1,500 minutes in a month after this change, and not on
+the devvm, whose disk shares a spindle with etcd. Cloud's public
+`ViktorBarzin/cloud-builder` builds Cloud Projects' private repos for free
+minutes. Other repos do not route builds through it: GitHub's terms limit
+hosted-runner jobs to the software project of the repo they run in, and the
+penalties include disabled repos and account suspension.
+
 To see where the minutes go:
 
 ```sh
