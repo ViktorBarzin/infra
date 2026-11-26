@@ -238,7 +238,7 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
         # missing, and refreshes its acl-admin line otherwise (acl_init.sh).
         init_container {
           name    = "acl-seed"
-          image   = "docker.io/library/redis:8.10.3-alpine"
+          image   = "docker.io/library/redis:8.12.0-alpine"
           command = ["/bin/sh", "-c", file("${path.module}/acl_init.sh")]
           volume_mount {
             name       = "data"
@@ -276,7 +276,7 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
           # removes the whole class. Renovate proposes bumps (never
           # downwards) through the CI rails; check the release notes of a
           # major before it lands.
-          image   = "docker.io/library/redis:8.10.3-alpine"
+          image   = "docker.io/library/redis:8.12.0-alpine"
           command = ["redis-server", "/etc/redis/redis.conf"]
 
           port {
