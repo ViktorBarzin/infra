@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# pre-commit for infra clones. scripts/t3-provision-users.sh (wire_infra_hooks)
+# points every infra clone on the devvm here with core.hooksPath.
+#
+# 1. Refuses a git-crypt file whose staged blob would break it:
+#    - not encrypted: the clean filter did not run, so the plaintext would be
+#      committed to a public repo;
+#    - encrypted twice: a checkout holding ciphertext was cleaned again (three
+#      commits in Nov 2026; docs/agents/known-issues.md);
+#    - in a locked clone (no key): any blob no commit already holds for that
+#      path. Such a clone cannot encrypt, so all it can commit correctly is a
+#      version that exists, as a merge, revert or checkout does.
+#    Costs one `git diff` and one `git check-attr` per commit; more only when
+#    git-crypt paths are staged.
+# 2. Then runs the clone's own .git/hooks/pre-commit (wizard's is the gitleaks
+#    shim), or, when there is none, ~/.claude/hooks/gitleaks-pre-commit.sh if
+#    the user has it.
+set -u
+
+HDR=00474954435259505400   # \0GITCRYPT\0, the first 10 bytes of every git-crypt blob
+head_hex() { head -c 10 | od -An -tx1 | tr -d ' \n'; }
+
+# Staged additions and modifications, as "oldmode newmode oldblob newblob" + path.
+declare -A old_mode old_blob new_blob
+paths=()
+while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+  read -r om _ ob nb _ <<<"${meta#:}"
+  old_mode[$path]="$om"; old_blob[$path]="$ob"; new_blob[$path]="$nb"
+  paths+=("$path")
+done < <(git diff --cached --raw -z --no-abbrev --no-renames --diff-filter=AMT)
+
+crypt=()
+if ((${#paths[@]})); then
+  while IFS= read -r -d '' path && IFS= read -r -d '' _ && IFS= read -r -d '' value; do
+    [[ "$value" == git-crypt ]] && crypt+=("$path")
+  done < <(printf '%s\0' "${paths[@]}" | git check-attr --cached -z --stdin filter)
+fi
+
+if ((${#crypt[@]})); then
+  key=""
+  for k in "$(git rev-parse --path-format=absolute --git-dir)/git-crypt/keys/default" \
+           "$(git rev-parse --path-format=absolute --git-common-dir)/git-crypt/keys/default"; do
+    [[ -r "$k" ]] && { key="$k"; break; }
+  done
+
+  report=""
+  for path in "${crypt[@]}"; do
+    nb="${new_blob[$path]}" why=""
+    if [[ "$(git cat-file blob "$nb" | head_hex)" != "$HDR" ]]; then
+      why="not encrypted: the git-crypt clean filter did not run, so this would commit the plaintext"
+    elif [[ -n "$key" ]]; then
+      # Decrypt once; nothing is written to disk. The trailing number is
+      # git-crypt's exit status.
+      out="$(git cat-file blob "$nb" | git-crypt smudge --key-file "$key" 2>/dev/null \
+               | { head_hex; cat >/dev/null; }; echo " ${PIPESTATUS[1]}")"
+      if [[ "${out##* }" != 0 ]]; then
+        why="does not decrypt with this clone's git-crypt key"
+      elif [[ "${out% *}" == "$HDR" ]]; then
+        why="encrypted twice: it still starts with GITCRYPT after one decryption"
+      fi
+    elif ! git log --all --format= --raw --no-abbrev --no-renames -- "$path" | grep -qF " $nb "; then
+      why="this clone has no git-crypt key, so it cannot encrypt a new version, and no commit holds this one"
+    fi
+    [[ -z "$why" ]] && continue
+    q="$(printf '%q' "$path")"
+    report+="  $path"$'\n'"    $why"$'\n'
+    if [[ "${old_mode[$path]}" == 000000 ]]; then
+      report+="    fix: git rm --cached -q -- $q"$'\n'
+    else
+      report+="    fix: git update-index --cacheinfo ${old_mode[$path]},${old_blob[$path]},$q"$'\n'
+      [[ -n "$key" && "$why" == encrypted* ]] &&
+        report+="    or, for the working copy too: git checkout HEAD -- $q"$'\n'
+    fi
+  done
+
+  if [[ -n "$report" ]]; then
+    cat >&2 <<EOF
+infra pre-commit: commit refused. These git-crypt files are staged in a form
+that would break them; each fix puts HEAD's version back in the commit:
+
+$report
+Then check that \`git diff --cached --stat\` lists only the files you meant.
+Stage paths by name, never \`git add -A\` or \`commit -a\` in a worktree. A
+secret edit belongs in a checkout whose git-crypt filters run with the key
+(docs/agents/known-issues.md).
+EOF
+    exit 1
+  fi
+fi
+
+local_hook="$(git rev-parse --path-format=absolute --git-common-dir)/hooks/pre-commit"
+if [[ -x "$local_hook" && "$(realpath "$local_hook")" != "$(realpath "$0")" ]]; then
+  exec "$local_hook" "$@"
+fi
+shared_gitleaks="$HOME/.claude/hooks/gitleaks-pre-commit.sh"
+[[ -x "$shared_gitleaks" ]] && exec "$shared_gitleaks" "$@"
+exit 0

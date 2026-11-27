@@ -1,0 +1,11 @@
+#!/bin/sh
+# run-local-hook NAME [ARGS...]: runs the clone's own .git/hooks/NAME, if it
+# has one. core.hooksPath (set by scripts/t3-provision-users.sh,
+# wire_infra_hooks) makes git read hooks from .githooks only, so each hook
+# name a local hook might use (beads' post-commit, for one) has a file here
+# that hands over to this script. stdin passes through.
+name="$1"; shift
+hook="$(git rev-parse --path-format=absolute --git-common-dir)/hooks/$name"
+[ -x "$hook" ] || exit 0
+[ "$(realpath "$hook")" = "$(realpath "$(dirname "$0")/$name")" ] && exit 0
+exec "$hook" "$@"

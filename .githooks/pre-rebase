@@ -1,0 +1,3 @@
+#!/bin/sh
+# Runs the clone's own .git/hooks/pre-rebase, if any (see run-local-hook).
+exec "$(dirname "$0")/run-local-hook" pre-rebase "$@"
