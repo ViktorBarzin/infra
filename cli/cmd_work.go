@@ -390,8 +390,10 @@ func workClean(args []string) error {
 	if err != nil {
 		return fmt.Errorf("not in a git repository: %w", err)
 	}
-	flags := cryptFlagsFor(repoRoot)
 	wtRel := filepath.Join(".worktrees", topic)
+	// The flags follow the worktree being removed: a decrypted one needs the
+	// real filters, or `worktree remove` sees every secret as modified.
+	flags := cryptFlagsFor(filepath.Join(repoRoot, wtRel))
 	branch := currentUser() + "/" + topic
 
 	if err := gitStream(repoRoot, flags, "worktree", "remove", wtRel); err != nil {
@@ -487,8 +489,8 @@ func packageJSONScript(path string, names ...string) string {
 func workHelp(args []string) error {
 	fmt.Println(`homelab work — one task, one worktree, one landing.
 
-  homelab work start <topic>     fetch, create .worktrees/<topic> on <user>/<topic>,
-                                 carry the git-crypt filter flags
+  homelab work start <topic>     fetch, create .worktrees/<topic> on <user>/<topic>;
+                                 git-crypt files decrypt when the clone is unlocked
   homelab work land [flags]      merge master in, verify, push HEAD:master, watch CI
                                  --verify-cmd "<cmd>"   what to run to verify
                                  --no-verify            land without verifying (deliberate)

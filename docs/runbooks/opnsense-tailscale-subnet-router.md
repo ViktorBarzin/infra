@@ -19,7 +19,7 @@ sites. It also offers itself as an exit node.
 | Plugin | `os-tailscale`; `tailscale0` is assigned as interface `opt5` (description `Tailscale`) |
 | Settings source | `playbooks/files/opnsense/tailscale.yml`, applied by `playbooks/tasks/opnsense/tailscale.yml` (`--tags tailscale`) |
 | Pre-auth key | Vault `secret/opnsense` `tailscale_preauth_key` (one-time) |
-| Policy source of truth | `stacks/headscale/acl.hujson` (**git-crypt**, main checkout only) |
+| Policy source of truth | `stacks/headscale/acl.hujson` (**git-crypt**, edit only where it is decrypted) |
 | Probe | CronJob `tailscale-subnet-router-probe`, `headscale` ns, every 6 h, pings `100.64.0.17` (`stacks/headscale/subnet-router-probe.tf`) |
 
 ---
@@ -58,9 +58,10 @@ Tailnet traffic to a new LAN may also need the outbound NAT and filter rules
 in `nat_outbound.yml` and `filter.yml` (the `100.64.0.0/10` entries, see
 Health checks).
 
-> `acl.hujson` is git-crypt encrypted. **Edit and apply it from the main checkout
-> only**: a worktree bypasses the filter and Terraform would render ciphertext
-> into the ConfigMap, breaking policy for every client.
+> `acl.hujson` is git-crypt encrypted. **Edit and apply it only from a checkout
+> where it is decrypted**: the main checkout, or a `homelab work start` worktree
+> made on or after 2026-11-27. In an older worktree it is ciphertext, and
+> Terraform would render that into the ConfigMap, breaking policy for every client.
 
 ---
 

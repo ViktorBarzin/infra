@@ -62,7 +62,7 @@ firewall's WireGuard peer + primary exemption never need re-touching (they key o
 Vault-stable WG identity / tunnel IP):
 
 ```sh
-# from the MAIN infra checkout (never a worktree — git-crypt), TMPDIR off /tmp:
+# from a checkout with decrypted git-crypt files (head -c 9 config.tfvars is not GITCRYPT), TMPDIR off /tmp:
 export TMPDIR=~/.tmp-tf
 cd stacks/backup-mx
 ../../scripts/tg apply -replace=oci_core_instance.mx2   # ~8 min: full cloud-init re-run

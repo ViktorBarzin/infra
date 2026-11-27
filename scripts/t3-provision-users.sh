@@ -164,6 +164,30 @@ refresh_user_clone() {
     || log "WARN: $user:$sub master not fast-forwardable (local commits?) — left as-is"
 }
 
+# Every infra clone runs the tracked hooks in .githooks: the pre-commit refuses
+# a git-crypt file staged unencrypted or encrypted twice, then each hook hands
+# over to the clone's own .git/hooks (wizard's gitleaks shim, beads). The path
+# is absolute, so a worktree on a branch from before .githooks existed still
+# runs them. It is set only once the checkout has .githooks/pre-commit, since
+# an older checkout would otherwise run no hooks at all, gitleaks included. A
+# hooksPath the user chose is left alone. Runs for admins and non-admins.
+wire_infra_hooks() {  # wire_infra_hooks USER SUBPATH
+  local user="$1" sub="$2" home dir want have
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  dir="$home/$sub"
+  [[ -n "$home" && -d "$dir/.git" && -x "$dir/.githooks/pre-commit" ]] || return 0
+  want="$dir/.githooks"
+  have="$(runuser -u "$user" -- git -C "$dir" config --get core.hooksPath 2>/dev/null)"
+  [[ "$have" == "$want" ]] && return 0
+  if [[ -n "$have" ]]; then
+    log "WARN: $user:~/$sub core.hooksPath is $have, not $want; left as-is"; return 0
+  fi
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] core.hooksPath -> $user:$want"; return 0; fi
+  runuser -u "$user" -- git -C "$dir" config core.hooksPath "$want" \
+    && log "set $user:~/$sub core.hooksPath -> $want" \
+    || log "WARN: could not set core.hooksPath for $user:~/$sub"
+}
+
 # Non-admin infra clones are documented to carry a `forgejo` remote (the
 # canonical push target) with master tracking forgejo/master — see AGENTS.md
 # "Non-admin workstation users". Clones made before that contract only have
@@ -2161,6 +2185,8 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
   install_forgejo_known_hosts "$os_user"
   [[ "$tier" == admin ]] && install_admin_infra_clone "$os_user"
   [[ "$tier" == admin ]] && unlock_admin_infra_clone "$os_user"
+  [[ "$tier" == admin ]] && wire_infra_hooks "$os_user" code/infra
+  [[ "$tier" == admin ]] && wire_infra_hooks "$os_user" code   # single layout: ~/code is the clone
   if [[ -n "$groups_csv" ]]; then
     current="$(id -nG "$os_user" 2>/dev/null | tr ' ' '\n')"
     IFS=',' read -ra want <<< "$groups_csv"
@@ -2189,6 +2215,7 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
       wire_forgejo_remote  "$os_user" code/infra   # before refresh: ff targets the canonical upstream same-pass
       wire_fork_remote     "$os_user" code/infra
       refresh_user_clone   "$os_user" code/infra
+      wire_infra_hooks     "$os_user" code/infra   # after refresh: the ff brings .githooks
       IFS=',' read -ra extra_repos <<< "$repos_csv"
       for repo in "${extra_repos[@]}"; do
         [[ -n "$repo" ]] || continue
@@ -2201,6 +2228,7 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
       wire_forgejo_remote  "$os_user" code         # before refresh: ff targets the canonical upstream same-pass
       wire_fork_remote     "$os_user" code
       refresh_user_clone   "$os_user" code
+      wire_infra_hooks     "$os_user" code
     fi
     install_user_kubeconfig "$os_user"
     install_browser_kubeconfig "$os_user"    # hands-off chrome-service CLI cred (no-op unless the user has a browser SA)
