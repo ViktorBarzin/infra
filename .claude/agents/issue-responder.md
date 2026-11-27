@@ -39,8 +39,8 @@ to it as you go, not just at the end.
 
 > **Your checkout is a full clone, not a worktree, and `tg apply` works here.**
 > A previous run refused to apply because it believed it was in a git worktree,
-> where the repo's own CLAUDE.md correctly forbids applying (git-crypt `*.tfvars`
-> come through as ciphertext under the worktree filter bypass). That does not
+> where the repo's own AGENTS.md forbids applying if git-crypt `*.tfvars` come
+> through as ciphertext (worktrees made with the filter bypass). That does not
 > apply to you: `.git` is a directory, `git-crypt` is installed, its key is
 > mounted, and `config.tfvars` is **decrypted** in this container. Confirm with
 > `[ -d .git ] && head -c 40 config.tfvars` if you want to see it.

@@ -216,7 +216,7 @@ func capabilities() []capability {
 			Synonyms: []string{"worktree", "branch", "land", "merge", "ship", "push",
 				"start work", "clean up", "feature"},
 			Detail: []string{
-				"work start reads the real remote and carries the git-crypt filter flags.",
+				"work start reads the real remote; git-crypt files decrypt in the worktree when the clone is unlocked.",
 				"work land merges master in, verifies, pushes HEAD:master and watches CI.",
 				"Verification comes from .land-verify, or is auto-detected (go.mod, Cargo.toml,",
 				"        pytest, a Makefile test target, a package.json test script); otherwise pass --verify-cmd.",

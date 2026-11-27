@@ -74,9 +74,10 @@ Two consequences worth being explicit about:
 
 - You can SSH `wizard@10.0.20.100` with the key that authorises it
   (`~/.ssh/id_ed25519`).
-- `vault login -method=oidc` is current, and you are in the **main checkout**
-  (`~/code/infra`), not a worktree. `*.tfvars` and `secrets/*` come through a
-  worktree as git-crypt ciphertext and an apply there reads garbage.
+- `vault login -method=oidc` is current, and your checkout holds decrypted
+  git-crypt files (`head -c 9 config.tfvars` does not print `GITCRYPT`): the
+  main checkout, or a `homelab work start` worktree made on or after
+  2026-11-27. With ciphertext there an apply reads garbage.
 - A second shell open on the master, ready to run the rollback in step 6.
 
 ## Step 1: land the Authentik identities
