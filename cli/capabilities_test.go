@@ -48,6 +48,10 @@ func TestCapabilitiesCoverTheMeasuredMisses(t *testing.T) {
 		{"how much income tax and national insurance did I pay", []string{"wealth call"}},
 		{"can we afford a bigger mortgage", []string{"wealth"}},
 		{"what are my RSU vests worth", []string{"wealth actuals"}},
+		{"add this photo of my drill to the inventory", []string{"homebox", "secret/homebox-agent"}},
+		{"do I have a spare hdmi cable", []string{"homebox"}},
+		{"where did I put the camping stove", []string{"homebox"}},
+		{"catalogue the things in this box", []string{"homebox"}},
 	}
 	for _, c := range cases {
 		hits := matchCapabilities(capabilities(), c.task)
