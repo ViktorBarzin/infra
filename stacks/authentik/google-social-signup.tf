@@ -14,9 +14,9 @@ data "authentik_stage" "source_enrollment_login" {
 # Serves all three OAuth sources (google, github, facebook) as of 2026-09-02.
 # Google was the only source pointing here; github and facebook pointed at the
 # legacy invitation-enrollment flow, whose invitation stage dead-ended every new
-# social signup (infra#51). The sources themselves are UI-managed — their
-# consumer secrets are not readable back from the API, so they cannot be
-# imported — and were repointed here by API PATCH.
+# social signup (infra#51). GitHub and Facebook are UI-managed and were
+# repointed here by API PATCH. Google is in Terraform since 2026-11-27
+# (google-source.tf), with its client secret copied into Vault.
 #
 # The Terraform address stays `google_proxy_enrollment` deliberately: renaming it
 # would need a state move for no functional gain. The live name/slug below are
