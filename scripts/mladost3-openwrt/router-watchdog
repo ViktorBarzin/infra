@@ -12,8 +12,9 @@
 #     tunnel fails DEGRADED_FAILS checks in a row (DEGRADED_CHECK seconds
 #     apart), if a CRITICAL process is gone on two ticks in a row, or after
 #     MAX_WAIT seconds, whatever the clock says. A dropout reboot first switches
-#     the stick's USB port off for USB_OFF seconds, so the stick restarts clean.
-#     If the stick does not come back, switch its port off and on after
+#     the USB ports in USB_POWER off for USB_OFF seconds, so the stick restarts
+#     clean. That is both ports, so it works whichever port holds the stick.
+#     If the stick does not come back, switch the ports off and on after
 #     POWER_FIRST seconds and then every POWER_RETRY seconds, and stay up: a
 #     reboot without the stick would boot the old config on internal flash.
 #  2. Tunnel loss, checked every CHECK_EVERY seconds. None of TARGETS answers,
@@ -46,7 +47,7 @@ MAX_WAIT=${MAX_WAIT:-86400}
 CRITICAL=${CRITICAL-hostapd dnsmasq dropbear netifd}
 POWER_FIRST=${POWER_FIRST:-120}
 POWER_RETRY=${POWER_RETRY:-1800}
-USB_POWER=${USB_POWER:-/sys/class/gpio/tp-link:power:usb1/value}
+USB_POWER=${USB_POWER:-/sys/class/gpio/tp-link:power:usb1/value /sys/class/gpio/tp-link:power:usb2/value}
 USB_OFF=${USB_OFF:-5}
 TZ_FILE=${TZ_FILE:-/tmp/TZ}
 HOUR_FILE=${HOUR_FILE:-}
@@ -103,24 +104,31 @@ uuid_of() {
 	$BB dd if="$node" bs=8 skip=141 count=2 2>/dev/null | $BB hexdump -ve '1/1 "%02x"' 2>/dev/null
 }
 
-# Switch the stick's USB port off for USB_OFF seconds and back on. Always ends
-# by writing 1: a port left off would keep the stick away until a reboot.
+# Switch every USB port in USB_POWER off for USB_OFF seconds and back on.
+# Always ends by writing 1: a port left off would keep the stick away until a
+# reboot. Logs each port's final value, as in "usb1=1 usb2=1".
 usb_power_cycle() {
-	if [ ! -w "$USB_POWER" ]; then
-		log "cannot switch USB power: $USB_POWER is not writable"
-		return 1
-	fi
-	echo 0 > "$USB_POWER" 2>/dev/null
-	$BB sleep "$USB_OFF"
-	local i=0 v=
-	while [ "$i" -lt 3 ]; do
-		echo 1 > "$USB_POWER" 2>/dev/null
-		read -r v < "$USB_POWER" 2>/dev/null
-		[ "$v" = 1 ] && break
-		i=$((i + 1))
-		$BB sleep 1
+	local f ok= i v name states=
+	for f in $USB_POWER; do
+		if [ -w "$f" ]; then echo 0 > "$f" 2>/dev/null; ok=1
+		else log "cannot switch USB power: $f is not writable"; fi
 	done
-	log "switched USB power off for ${USB_OFF}s and back on (now ${v:-unknown})"
+	[ -n "$ok" ] || return 1
+	$BB sleep "$USB_OFF"
+	for f in $USB_POWER; do
+		[ -w "$f" ] || continue
+		i=0; v=
+		while [ "$i" -lt 3 ]; do
+			echo 1 > "$f" 2>/dev/null
+			read -r v < "$f" 2>/dev/null
+			[ "$v" = 1 ] && break
+			i=$((i + 1))
+			$BB sleep 1
+		done
+		name=${f%/value}; name=${name##*/}; name=${name##*:}
+		states="$states $name=${v:-unknown}"
+	done
+	log "switched USB power off for ${USB_OFF}s and back on (now${states})"
 }
 
 reboot_now() { # reboot_now REASON [mark|usb]
@@ -203,7 +211,7 @@ watch_stick() {
 	now
 	if [ -z "$GONE_SINCE" ]; then
 		GONE_SINCE=$NOW
-		log "/overlay device $OVERLAY_DEV is gone and the stick has not come back; staying up, switching its USB port off and on every $((POWER_RETRY / 60)) min"
+		log "/overlay device $OVERLAY_DEV is gone and the stick has not come back; staying up, switching the USB ports off and on every $((POWER_RETRY / 60)) min"
 	fi
 	if [ -z "$LAST_POWER" ]; then
 		[ $((NOW - GONE_SINCE)) -ge "$POWER_FIRST" ] || return 0

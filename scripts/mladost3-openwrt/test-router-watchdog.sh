@@ -50,6 +50,7 @@ reset() {
 	echo 1 > /tmp/t/up/176.12.22.76
 	echo 12 > /tmp/t/hour
 	echo 1 > /tmp/t/usbpower
+	echo 1 > /tmp/t/usbpower2
 }
 
 # run SECONDS [VAR=value ...]: start the watchdog with test timings, let it run,
@@ -61,7 +62,7 @@ run() {
 	env PATH=/nonexistent TICK=1 CHECK_EVERY=2 RETRY_EVERY=1 RETRIES=2 HOLD=6 \
 		BB=$BB PING=/tmp/fakeping REBOOT=echo LOG_STDOUT=1 \
 		MARKER=/tmp/t/marker SYS_BLOCK=/tmp/t/sys DEV_DIR=/tmp/t/dev MOUNTS=/tmp/t/mounts \
-		HOUR_FILE=/tmp/t/hour USB_POWER=/tmp/t/usbpower USB_OFF=0 STATE=/tmp/t/state \
+		HOUR_FILE=/tmp/t/hour USB_POWER="/tmp/t/usbpower /tmp/t/usbpower2" USB_OFF=0 STATE=/tmp/t/state \
 		CRITICAL= DEGRADED_CHECK=1 POWER_FIRST=2 POWER_RETRY=3 \
 		"$@" /bin/sh /w/router-watchdog > /tmp/t/out 2>&1 &
 	pid=$!
@@ -114,7 +115,7 @@ reset; echo 1 > /tmp/t/up/10.3.2.1; echo 4 > /tmp/t/hour
 DURING=$DROP; run 8 CHECK_EVERY=100
 check "dropout in the quiet hour: reboots" 'has "REBOOT stick dropout, quiet hour" && has "back as sdb1"'
 check "dropout reboot leaves no marker" '[ ! -e /tmp/t/marker ]'
-check "dropout reboot power-cycles the USB port first" 'has "switched USB power off" && [ "$(cat /tmp/t/usbpower)" = 1 ] && [ "$(grep -n "switched USB" /tmp/t/out | head -1 | cut -d: -f1)" -lt "$(grep -n REBOOT /tmp/t/out | head -1 | cut -d: -f1)" ]'
+check "dropout reboot power-cycles both USB ports first" 'has "switched USB power off" && has "usbpower=1 usbpower2=1" && [ "$(cat /tmp/t/usbpower)" = 1 ] && [ "$(cat /tmp/t/usbpower2)" = 1 ] && [ "$(grep -n "switched USB" /tmp/t/out | head -1 | cut -d: -f1)" -lt "$(grep -n REBOOT /tmp/t/out | head -1 | cut -d: -f1)" ]'
 
 reset; echo 1 > /tmp/t/up/10.3.2.1
 DURING=$DROP; run 8 CHECK_EVERY=100
@@ -148,9 +149,13 @@ reset; echo 1 > /tmp/t/up/10.3.2.1; echo garbage > /tmp/t/hour
 DURING=$DROP; run 8 CHECK_EVERY=100
 check "unreadable clock: keeps waiting, no crash" 'has "waiting for" && ! has REBOOT'
 
-reset; echo 1 > /tmp/t/up/10.3.2.1; echo 4 > /tmp/t/hour; rm /tmp/t/usbpower
+reset; echo 1 > /tmp/t/up/10.3.2.1; echo 4 > /tmp/t/hour; rm /tmp/t/usbpower /tmp/t/usbpower2
 DURING=$DROP; run 8 CHECK_EVERY=100
 check "USB power switch missing: still reboots" 'has "cannot switch USB power" && has "REBOOT stick dropout"'
+
+reset; echo 1 > /tmp/t/up/10.3.2.1; echo 4 > /tmp/t/hour; rm /tmp/t/usbpower
+DURING=$DROP; run 8 CHECK_EVERY=100
+check "one USB power switch missing: cycles the other, reboots" 'has "usbpower2=1" && [ "$(cat /tmp/t/usbpower2)" = 1 ] && has "REBOOT stick dropout"'
 
 # The real clock: the quiet hour set to the current UTC hour, TZ from a file.
 reset; echo 1 > /tmp/t/up/10.3.2.1; echo UTC0 > /tmp/t/tz
@@ -181,7 +186,7 @@ reset; echo 1 > /tmp/t/up/10.3.2.1
 DURING='rm -r /tmp/t/sys/sda1'
 run 10 CHECK_EVERY=100
 check "stick gone for good: logs once, no reboot" '[ "$(grep -c "has not come back" /tmp/t/out)" = 1 ] && ! has REBOOT'
-check "stick gone: power-cycles the port, more than once" '[ "$(grep -c "switched USB power off" /tmp/t/out)" -ge 2 ] && [ "$(cat /tmp/t/usbpower)" = 1 ]'
+check "stick gone: power-cycles the port, more than once" '[ "$(grep -c "switched USB power off" /tmp/t/out)" -ge 2 ] && [ "$(cat /tmp/t/usbpower)" = 1 ] && [ "$(cat /tmp/t/usbpower2)" = 1 ]'
 
 reset; echo 1 > /tmp/t/up/10.3.2.1
 DURING='rm -r /tmp/t/sys/sda1; sleep 4; mkdir /tmp/t/sys/sdc1; cp /tmp/t/dev/sda1 /tmp/t/dev/sdc1'
