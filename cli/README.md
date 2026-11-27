@@ -58,8 +58,11 @@ Config-mutation verbs (`apply`/`edit`/`patch`/`scale`/`create`) are intentionall
 
 `tf` resolves the stack dir by walking up from cwd to the infra root and
 delegates to `scripts/tg` (which owns state decrypt/encrypt, the Vault lock, and
-the ingress auth-comment check). git-crypt filter flags are auto-injected on git
-operations in the encrypted infra repo.
+the ingress auth-comment check). In a git-crypt repo, `work start|land|clean`
+use the clone's real filters when both carry a readable `--key-file`, so a
+worktree of an unlocked clone holds plaintext. A locked clone, or a worktree
+that already holds ciphertext, gets the `filter.git-crypt.*=cat` bypass flags
+on each git command instead (never persisted).
 
 **A repo can declare its own land checks** in a `.land-verify` file at its
 root: the first line that is not blank or a `#` comment is the command. When

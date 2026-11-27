@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
@@ -74,13 +75,89 @@ func isGitCryptRepo(repoRoot string) bool {
 	return hasGitCryptAttr(string(b))
 }
 
-// cryptFlagsFor returns the git-crypt filter flags when repoRoot is encrypted,
-// else nil. These are injected per-command and never persisted.
+// cryptFlagsFor returns the git-crypt bypass flags for a git-crypt repo that
+// cannot use its real filters, else nil. The flags are injected per command and
+// never persisted. An unlocked clone gets nil, so its worktrees check out
+// plaintext and later plain git commands see no change. With the bypass they
+// held ciphertext, which the real clean filter encrypted again on the next
+// `git add -A` (infra 2c6fb5d23, cd32e7a06, 99e38e93a).
 func cryptFlagsFor(repoRoot string) []string {
-	if isGitCryptRepo(repoRoot) {
-		return gitCryptFlags()
+	if !isGitCryptRepo(repoRoot) {
+		return nil
 	}
-	return nil
+	if gitCryptFiltersUsable(repoRoot) && !holdsGitCryptCiphertext(repoRoot) {
+		return nil
+	}
+	return gitCryptFlags()
+}
+
+// gitCryptFiltersUsable reports whether the clone's smudge and clean filters
+// can decrypt in any of its worktrees: both are configured with --key-file
+// naming a readable key. Without --key-file, git-crypt 0.7.0 looks for the key
+// under a linked worktree's own git dir, finds none, and the checkout fails.
+// A locked clone has no filters configured, so it keeps the bypass.
+func gitCryptFiltersUsable(repoRoot string) bool {
+	for _, name := range []string{"filter.git-crypt.smudge", "filter.git-crypt.clean"} {
+		cmd, err := gitOutput(repoRoot, "config", "--get", name)
+		if err != nil {
+			return false
+		}
+		key := keyFileArg(cmd)
+		if key == "" {
+			return false
+		}
+		f, err := os.Open(key)
+		if err != nil {
+			return false
+		}
+		f.Close()
+	}
+	return true
+}
+
+// keyFileArg returns the value of --key-file in a filter command line, or "".
+func keyFileArg(cmd string) string {
+	fields := strings.Fields(cmd)
+	for i, f := range fields {
+		f = strings.Trim(f, `"'`)
+		if f == "--key-file" && i+1 < len(fields) {
+			return strings.Trim(fields[i+1], `"'`)
+		}
+		if v, ok := strings.CutPrefix(f, "--key-file="); ok {
+			return strings.Trim(v, `"'`)
+		}
+	}
+	return ""
+}
+
+// gitCryptMagic starts every file git-crypt has encrypted.
+const gitCryptMagic = "\x00GITCRYPT\x00"
+
+// holdsGitCryptCiphertext reports whether any git-crypt file in the working
+// tree at repoRoot is ciphertext. Worktrees made with the bypass hold it; the
+// real filters would show each of those files as modified, so `work land` and
+// `work clean` keep the bypass for them.
+func holdsGitCryptCiphertext(repoRoot string) bool {
+	out, err := gitOutput(repoRoot, "ls-files", "-z", "--", ":(attr:filter=git-crypt)")
+	if err != nil {
+		return false
+	}
+	for _, rel := range strings.Split(out, "\x00") {
+		if rel == "" {
+			continue
+		}
+		f, err := os.Open(filepath.Join(repoRoot, rel))
+		if err != nil {
+			continue
+		}
+		head := make([]byte, len(gitCryptMagic))
+		n, _ := io.ReadFull(f, head)
+		f.Close()
+		if string(head[:n]) == gitCryptMagic {
+			return true
+		}
+	}
+	return false
 }
 
 // gitStream runs `git [cryptFlags] -C repoRoot <args>` with live output.
