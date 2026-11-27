@@ -722,17 +722,19 @@ def meter_rainbow(x: float) -> RGB:
 class Levels:
     bands: tuple[float, ...]  # loudness per band, 0 to 1, bass first
     level: float  # overall loudness, 0 to 1
-    beat: float  # 1 on a bass beat, falling back to 0
+    beat: float  # 1 on a bass beat (the kick), falling back to 0
+    snare: float = 0.0  # 1 on a snare or clap, falling back to 0
 
 
-SILENCE = Levels((0.0,) * BANDS, 0.0, 0.0)
+SILENCE = Levels((0.0,) * BANDS, 0.0, 0.0, 0.0)
 
 
 def demo_levels(t: float) -> Levels:
-    """A made-up signal: bands rising and falling, a beat twice a second."""
+    """A made-up signal: bands rising and falling, kick and snare in turn twice a second."""
     bands = tuple(0.5 + 0.45 * math.sin(t * (1.3 + i * 0.37) + i) for i in range(BANDS))
     beat = max(0.0, 1 - (t * 2 % 1) * 4)
-    return Levels(bands, 0.55 + 0.4 * math.sin(t * 1.7), beat)
+    snare = max(0.0, 1 - ((t * 2 + 0.5) % 1) * 5)
+    return Levels(bands, 0.55 + 0.4 * math.sin(t * 1.7), beat, snare)
 
 
 listen: Callable[[float], Levels] = demo_levels  # t = seconds since the pattern started
@@ -793,6 +795,35 @@ def music_pulse(n: int, colour: RGB, rng: random.Random) -> Frames:
         t += MUSIC_FRAME
 
 
+def drums_rainbow(x: float) -> RGB:
+    return gradient([(255, 20, 0), (255, 120, 0), (0, 160, 255), (120, 60, 255)], x)
+
+
+def music_drums(n: int, colour: RGB, rng: random.Random) -> Frames:
+    """The kick lights the middle half, the snare the two outer quarters."""
+    kick = snare = 0.0
+    t = 0.0
+    centre = (n - 1) / 2
+    half = max(n / 2, 0.5)
+    kick_colour = music_colour(0.1, colour, drums_rainbow)
+    snare_colour = music_colour(1.0, colour, drums_rainbow)
+    if palette != "colour":
+        snare_colour = mix(snare_colour, WHITE, 0.4)  # a snare is a bright crack
+    while True:
+        now = listen(t)
+        kick = max(now.beat, kick * 0.8)
+        snare = max(now.snare, snare * 0.72)
+        pixels: Pixels = []
+        for j in range(n):
+            d = abs(j - centre) / half  # 0 in the middle, 1 at the ends
+            if d < 0.5:
+                pixels.append(scale(kick_colour, GLOW + (1 - GLOW) * kick))
+            else:
+                pixels.append(scale(snare_colour, GLOW + (1 - GLOW) * snare))
+        yield pixels, MUSIC_FRAME
+        t += MUSIC_FRAME
+
+
 # --- the list ----------------------------------------------------------------
 
 
@@ -847,5 +878,6 @@ PATTERNS: dict[str, Pattern] = {p.name: p for p in [
     Pattern("music_spectrum", "Spectrum bars", "Music", "Ten bands from bass to treble, following the radio", music_spectrum, colour=True, music=True),
     Pattern("music_meter", "Level meter", "Music", "Grows from the middle with the radio's loudness", music_meter, colour=True, music=True),
     Pattern("music_pulse", "Beat pulse", "Music", "The whole strip flashes on the bass beat", music_pulse, colour=True, music=True),
+    Pattern("music_drums", "Kick & snare", "Music", "The kick flashes the middle, the snare the ends", music_drums, colour=True, music=True),
     Pattern("ruler", "Ruler", "Setup", "LED 1 blue, every 10th red, every 50th green", ruler),
 ]}

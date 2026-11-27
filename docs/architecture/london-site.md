@@ -459,7 +459,7 @@ until it is paused.
 **Follow music** couples the radio with the Livia LED strip. With
 `input_boolean.radio_follow_music` on, a station starting on VLC switches the
 strip to the Music pattern picked in `input_select.radio_music_pattern`
-(spectrum bars, level meter or beat pulse), in the colours picked in
+(spectrum bars, level meter, beat pulse, or kick and snare), in the colours picked in
 `input_select.radio_music_colours` (rainbow, Livia's own colour in shades, warm
 or cool). The Radio dashboard's Livia chip opens its brightness and colour wheel.
 It turns the strip and its plug on if they were off. When the radio has stopped for 10 seconds the strip goes

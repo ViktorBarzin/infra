@@ -1,5 +1,9 @@
 """Listen to what the Pi plays and turn it into Levels for the music patterns.
 
+Levels carry the loudness of 10 bands, the overall loudness, and two drum
+flashes: `beat` when the bass jumps (the kick) and `snare` when the treble
+bands jump together (a snare or a clap).
+
 The radio plays on the VLC add-on, which sends it to the Pi's sound system
 (PulseAudio in the Supervisor's audio plugin) and on to the Logitech Z537 over
 Bluetooth. This add-on has `audio: true`, so `parec` can record the monitor of
@@ -26,6 +30,7 @@ EDGES = np.geomspace(40, 7600, BANDS + 1)  # band edges in Hz, spaced like heari
 RANGE_DB = 36.0  # how far below a band's recent peak still shows as lit
 FLOOR_DB = -60.0  # quieter than this is silence, however long it lasts
 PEAK_FALL_DB = 0.05  # how fast a band's remembered peak falls, per frame
+SNARE_BANDS = slice(6, 10)  # 0.9 to 7.6 kHz, where a snare or clap cracks
 
 _HANN = np.hanning(WINDOW).astype(np.float32)
 _FREQS = np.fft.rfftfreq(WINDOW, 1 / RATE)
@@ -52,6 +57,9 @@ class Analyser:
         self.bass_avg = 0.0
         self.beat = 0.0
         self.since_beat = 99
+        self.crack_avg = np.zeros(SNARE_BANDS.stop - SNARE_BANDS.start)
+        self.snare = 0.0
+        self.since_snare = 99
 
     def step(self, hop: np.ndarray) -> Levels:
         self.window = np.concatenate([self.window[len(hop):], hop.astype(np.float32)])
@@ -76,7 +84,23 @@ class Analyser:
             if self.beat < 0.01:
                 self.beat = 0.0
         self.bass_avg = 0.9 * self.bass_avg + 0.1 * bass
-        return Levels(tuple(float(b) for b in bands), level, self.beat)
+
+        # A snare or clap: at least three of the four treble bands jump to
+        # twice their recent average at once. It may land with a kick, as a
+        # clap on 2 and 4 does in dance music.
+        crack = power[SNARE_BANDS]
+        jumped = int(np.sum(crack > 2.0 * self.crack_avg))
+        self.since_snare += 1
+        if (jumped >= 3 and db(float(crack.sum())) > FLOOR_DB + 10
+                and self.since_snare > 4):
+            self.snare = 1.0
+            self.since_snare = 0
+        else:
+            self.snare *= 0.72
+            if self.snare < 0.01:
+                self.snare = 0.0
+        self.crack_avg = 0.9 * self.crack_avg + 0.1 * crack
+        return Levels(tuple(float(b) for b in bands), level, self.beat, self.snare)
 
 
 class Delayed:

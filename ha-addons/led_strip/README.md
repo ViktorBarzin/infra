@@ -70,7 +70,7 @@ The patterns, by group as on the dashboard:
 | Flags, scrolling with a cloth ripple | `flag_bg`, `flag_ro`, `flag_uk` |
 | Weather | `weather_sun`, `weather_cloud`, `weather_rain`, `weather_snow`, `weather_storm` |
 | In the chosen colour | `color_wipe` (still once filled), `breathe`, `twinkle`, `comet`, `scanner`, `theater_chase` |
-| Music, following the radio | `music_spectrum` (spectrum bars), `music_meter` (level meter), `music_pulse` (beat pulse) |
+| Music, following the radio | `music_spectrum` (spectrum bars), `music_meter` (level meter), `music_pulse` (beat pulse), `music_drums` (kick and snare) |
 | Setup | `ruler` (still) |
 
 A colour sent while a pattern without a colour runs switches to `color_wipe`.
@@ -123,7 +123,7 @@ Assistant; `deploy.sh` replaces only the pattern sections.
 
 ## Music patterns
 
-The three music patterns draw what the Pi plays: the radio on the VLC add-on,
+The four music patterns draw what the Pi plays: the radio on the VLC add-on,
 which goes to the Logitech Z537 speaker over Bluetooth
 (`docs/architecture/london-site.md`, "Radio"). They cannot hear a film or a
 phone that plays to the speaker directly.
@@ -131,9 +131,9 @@ phone that plays to the speaker directly.
 | step | how |
 |---|---|
 | record | The add-on has `audio: true`. `parec` records `@DEFAULT_MONITOR@`, the sound the Pi sends to its default output, as 16 kHz mono. |
-| analyse | `music.Analyser` takes 533 new samples 30 times a second and finds the power of 10 bands from 40 Hz to 7.6 kHz in the last 1024 samples. Each band is shown against its own recent peak, so quiet and loud stations both fill the bars. A bass jump of 1.8 times its recent average is a beat. Below -60 dB is silence. |
+| analyse | `music.Analyser` takes 533 new samples 30 times a second and finds the power of 10 bands from 40 Hz to 7.6 kHz in the last 1024 samples. Each band is shown against its own recent peak, so quiet and loud stations both fill the bars. A bass jump of 1.8 times its recent average is a beat (the kick). Three of the four bands from 0.9 to 7.6 kHz jumping to twice their recent average at once is a snare or clap; it may land with a kick, as a clap on 2 and 4 does in dance music. Below -60 dB is silence. |
 | wait | `music.Delayed` can hold the levels back by the add-on option `music_delay_ms`, so the lights land on the beat the room hears. The default is 0: on 2026-11-22 Viktor judged the beat pulse in sync at 0 ms on NRJ, and ahead of the kick at 200 ms. Change the option in the add-on's Configuration tab, then restart the add-on: `server.py` reads it at start. |
-| colours | The `palette` in the state picks the colours: `rainbow` (each pattern's own look: red to violet bars, a green to red meter, a pulse drifting round the colour circle), `colour` (shades of the picked colour), `warm` (deep red to gold) or `cool` (teal to violet). The music patterns take a colour, so picking one on the colour wheel keeps the music pattern running. |
+| colours | The `palette` in the state picks the colours: `rainbow` (each pattern's own look: red to violet bars, a green to red meter, a pulse drifting round the colour circle, a red-orange kick with white-violet snares), `colour` (shades of the picked colour), `warm` (deep red to gold) or `cool` (teal to violet). The music patterns take a colour, so picking one on the colour wheel keeps the music pattern running. |
 | draw | `listen` in `patterns.py` gives each frame its levels. Without `music.py` (tests, previews) it is a made-up demo signal. |
 
 Home Assistant starts them from the radio: `packages/radio.yaml` in the

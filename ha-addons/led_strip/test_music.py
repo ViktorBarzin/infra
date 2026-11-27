@@ -15,6 +15,25 @@ def tone(freq: float, seconds: float, amp: float = 0.5) -> np.ndarray:
     return (amp * np.sin(2 * np.pi * freq * t)).astype(np.float32)
 
 
+def snare_hit(seconds: float = 0.1, amp: float = 0.5) -> np.ndarray:
+    """A snare-like crack: noise with no bass, the part above 800 Hz."""
+    rng = np.random.default_rng(7)
+    noise = rng.standard_normal(int(RATE * seconds))
+    spectrum = np.fft.rfft(noise)
+    spectrum[np.fft.rfftfreq(len(noise), 1 / RATE) < 800] = 0
+    crack = np.fft.irfft(spectrum, len(noise))
+    return (amp * crack / np.abs(crack).max()).astype(np.float32)
+
+
+def rests(seconds: float) -> np.ndarray:
+    return np.zeros(int(RATE * seconds), dtype=np.float32)
+
+
+def onsets(values: list[float]) -> int:
+    """How many times a falling flash value jumps back to 1."""
+    return sum(1 for a, b in zip([0.0] + values, values) if b == 1.0 and a < 1.0)
+
+
 def feed(analyser: music.Analyser, signal: np.ndarray) -> list[patterns.Levels]:
     """Run a signal through the analyser hop by hop, as the capture thread does."""
     out = []
@@ -71,6 +90,32 @@ class AnalyserTest(unittest.TestCase):
         beats = [lv.beat for lv in feed(music.Analyser(), tone(60, 3.0))]
         self.assertLess(max(beats[-30:]), 0.5)
 
+    def test_cracks_are_snares_and_not_kicks(self):
+        cracks = np.concatenate([np.concatenate([snare_hit(), rests(0.4)])] * 8)
+        signal = cracks + tone(60, len(cracks) / RATE, amp=0.2)  # a steady bass line under them
+        levels = feed(music.Analyser(), signal)[14:]  # after the averages settle
+        self.assertGreaterEqual(onsets([lv.snare for lv in levels]), 6)
+        self.assertEqual(onsets([lv.beat for lv in levels]), 0)
+
+    def test_bass_hits_are_not_snares(self):
+        hit = np.concatenate([tone(60, 0.1, amp=0.8), rests(0.4)])
+        levels = feed(music.Analyser(), np.concatenate([hit] * 8))
+        self.assertEqual(onsets([lv.snare for lv in levels]), 0)
+
+    def test_kick_and_snare_in_turn_give_both(self):
+        bar = np.concatenate([tone(60, 0.1, amp=0.8), rests(0.4), snare_hit(), rests(0.4)])
+        levels = feed(music.Analyser(), np.concatenate([bar] * 6))
+        self.assertGreaterEqual(onsets([lv.beat for lv in levels]), 4)
+        self.assertGreaterEqual(onsets([lv.snare for lv in levels]), 4)
+
+    def test_steady_noise_is_not_a_snare(self):
+        levels = feed(music.Analyser(), snare_hit(seconds=3.0, amp=0.3))
+        self.assertLess(max(lv.snare for lv in levels[-30:]), 0.5)
+
+    def test_silence_has_no_snare(self):
+        levels = feed(music.Analyser(), rests(2.0))
+        self.assertEqual(max(lv.snare for lv in levels), 0.0)
+
 
 class DelayTest(unittest.TestCase):
     def test_levels_come_out_after_the_delay(self):
@@ -112,8 +157,8 @@ def lit(rgb: patterns.RGB) -> int:
     return sum(rgb)
 
 
-LOUD = patterns.Levels((1.0,) * patterns.BANDS, 1.0, 1.0)
-MUSIC = ("music_spectrum", "music_meter", "music_pulse")
+LOUD = patterns.Levels((1.0,) * patterns.BANDS, 1.0, 1.0, 1.0)
+MUSIC = ("music_spectrum", "music_meter", "music_pulse", "music_drums")
 
 
 class PaletteTest(unittest.TestCase):
@@ -150,9 +195,9 @@ class PaletteTest(unittest.TestCase):
 
 
 class MusicPatternTest(unittest.TestCase):
-    def test_the_three_music_patterns_are_listed(self):
+    def test_the_four_music_patterns_are_listed(self):
         music_group = [p.name for p in patterns.PATTERNS.values() if p.group == "Music"]
-        self.assertEqual(music_group, ["music_spectrum", "music_meter", "music_pulse"])
+        self.assertEqual(music_group, list(MUSIC))
         self.assertTrue(all(patterns.PATTERNS[n].music for n in music_group))
 
     def test_spectrum_lights_only_the_loud_band(self):
@@ -183,15 +228,48 @@ class MusicPatternTest(unittest.TestCase):
         dim, _ = music_frames("music_pulse", patterns.SILENCE)[-1]
         self.assertGreater(lit(bright[75]), 3 * lit(dim[75]))
 
+    def test_kick_lights_the_middle_and_not_the_ends(self):
+        kick = patterns.Levels(patterns.SILENCE.bands, 0.3, 1.0, 0.0)
+        pixels, _ = music_frames("music_drums", kick)[-1]
+        self.assertGreater(lit(pixels[75]), 200)
+        self.assertLess(lit(pixels[5]), 60)
+        self.assertLess(lit(pixels[144]), 60)
+
+    def test_snare_lights_the_ends_and_not_the_middle(self):
+        snare = patterns.Levels(patterns.SILENCE.bands, 0.3, 0.0, 1.0)
+        pixels, _ = music_frames("music_drums", snare)[-1]
+        self.assertGreater(lit(pixels[5]), 200)
+        self.assertGreater(lit(pixels[144]), 200)
+        self.assertLess(lit(pixels[75]), 60)
+
+    def test_kick_and_snare_have_different_colours(self):
+        both = patterns.Levels(patterns.SILENCE.bands, 0.3, 1.0, 1.0)
+        for palette in patterns.PALETTES:
+            with self.subTest(palette=palette):
+                pixels, _ = music_frames("music_drums", both, palette=palette)[-1]
+                self.assertNotEqual(pixels[75], pixels[5])
+
+    def test_drums_fade_after_the_hit(self):
+        hit = patterns.Levels(patterns.SILENCE.bands, 0.0, 1.0, 1.0)
+        old = patterns.listen
+        patterns.listen = lambda t: hit if t == 0 else patterns.SILENCE
+        try:
+            gen = patterns.PATTERNS["music_drums"].frames(150, (0, 255, 0), random.Random(1))
+            frames = [pixels for pixels, _ in itertools.islice(gen, 20)]
+        finally:
+            patterns.listen = old
+        for j in (5, 75):
+            self.assertLess(lit(frames[-1][j]), lit(frames[0][j]) / 4)
+
     def test_silence_keeps_a_faint_glow_not_full_light(self):
-        for name in ("music_spectrum", "music_meter", "music_pulse"):
+        for name in MUSIC:
             with self.subTest(pattern=name):
                 pixels, _ = music_frames(name, patterns.SILENCE)[-1]
                 self.assertLess(max(lit(p) for p in pixels), 80)
 
     def test_short_strips_work(self):
-        loud = patterns.Levels((1.0,) * patterns.BANDS, 1.0, 1.0)
-        for name in ("music_spectrum", "music_meter", "music_pulse"):
+        loud = patterns.Levels((1.0,) * patterns.BANDS, 1.0, 1.0, 1.0)
+        for name in MUSIC:
             for n in (1, 7):
                 with self.subTest(pattern=name, leds=n):
                     pixels, _ = music_frames(name, loud, n=n)[-1]
