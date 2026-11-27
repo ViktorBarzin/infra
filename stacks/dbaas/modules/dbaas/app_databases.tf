@@ -41,6 +41,9 @@ locals {
     # Bambuddy, the 3D-print workshop (stacks/bambuddy). Bambuddy creates and
     # migrates its own schema at start.
     bambuddy = {}
+    # Homebox, the home inventory (stacks/homebox). Homebox migrates its own
+    # schema at start.
+    homebox = {}
     # learning (Python, ~/code/learning). Tables come from SQLAlchemy
     # create_all at app start. Moved off SQLite on a block volume 2026-11-09.
     learning = {}

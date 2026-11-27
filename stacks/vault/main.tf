@@ -1563,6 +1563,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
 #   10:25 pg-bambuddy (app_db_roles.tf)
 #   10:27 pg-wifi (app_db_roles.tf)
 #   10:29 pg-wealth (app_db_roles.tf)
+#   10:31 pg-homebox (app_db_roles.tf)
 #
 # rotation_window = 3600 lets Vault retry a failed slot for an hour, and means a
 # role switched to a schedule outside its window does not rotate at apply.
