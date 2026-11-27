@@ -26,6 +26,15 @@ extract() {
 }
 eval "$(extract wire_infra_hooks)"
 declare -F wire_infra_hooks >/dev/null || { echo "FAIL: wire_infra_hooks not found in $SCRIPT"; exit 1; }
+# t3-provision-users.sh runs under `set -euo pipefail`, so every call here
+# does too: an unset hooksPath (git config exits 1) once stopped the whole
+# hourly run.
+# A new bash process, since `set -e` is ignored inside an `if` or `!` context.
+wire() {
+  bash -euo pipefail -c "$(declare -f wire_infra_hooks log getent)
+    DRY_RUN=$DRY_RUN LOG='$LOG' TEST_HOME='$TEST_HOME' me='$me'
+    wire_infra_hooks \"\$@\"" _ "$@"
+}
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
@@ -50,38 +59,38 @@ dst="$home/code/infra"
 hooks_path() { git -C "$dst" config --get core.hooksPath; }
 
 # --- no clone: nothing to do --------------------------------------------------------
-wire_infra_hooks "$me" code/infra
+wire "$me" code/infra
 eq "no clone: nothing logged" "" "$(cat "$LOG")"
 
 # --- a checkout from before .githooks existed ----------------------------------------
 git init -q -b master "$dst"
-wire_infra_hooks "$me" code/infra
+ok "no .githooks yet: returns 0 under set -e" wire "$me" code/infra
 eq "no .githooks yet: hooksPath stays unset" "" "$(hooks_path)"
 
 # --- the checkout has the hooks -----------------------------------------------------
 mkdir -p "$dst/.githooks"; printf '#!/bin/sh\n' > "$dst/.githooks/pre-commit"; chmod +x "$dst/.githooks/pre-commit"
 DRY_RUN=1
-eq "dry run only reports" "[dry-run] core.hooksPath -> $me:$dst/.githooks" "$(wire_infra_hooks "$me" code/infra)"
+eq "dry run only reports" "[dry-run] core.hooksPath -> $me:$dst/.githooks" "$(wire "$me" code/infra)"
 DRY_RUN=0
 eq "dry run changes nothing" "" "$(hooks_path)"
-wire_infra_hooks "$me" code/infra
+ok "an unset hooksPath returns 0 under set -e" wire "$me" code/infra
 eq "set to the clone's absolute .githooks" "$dst/.githooks" "$(hooks_path)"
 ok "and logged" logged "set $me:~/code/infra core.hooksPath -> $dst/.githooks"
 
 : > "$LOG"
-wire_infra_hooks "$me" code/infra
+wire "$me" code/infra
 eq "a second run changes and logs nothing" "" "$(cat "$LOG")"
 
 # --- a hooksPath the user chose -------------------------------------------------------
 git -C "$dst" config core.hooksPath /somewhere/else
-wire_infra_hooks "$me" code/infra
+wire "$me" code/infra
 eq "a user's own hooksPath is left alone" "/somewhere/else" "$(hooks_path)"
 ok "with a WARN" logged "WARN: $me:~/code/infra core.hooksPath is /somewhere/else"
 
 # --- the single layout: ~/code is the clone ---------------------------------------------
 rm -rf "$dst"; git init -q -b master "$home/code"
 mkdir -p "$home/code/.githooks"; cp "$tmp/bin/runuser" "$home/code/.githooks/pre-commit"
-wire_infra_hooks "$me" code
+wire "$me" code
 eq "single layout: set to ~/code/.githooks" "$home/code/.githooks" "$(git -C "$home/code" config --get core.hooksPath)"
 
 echo "t3-provision infra hooks: $pass passed, $fail failed"

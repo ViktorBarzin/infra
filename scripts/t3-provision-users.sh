@@ -177,7 +177,8 @@ wire_infra_hooks() {  # wire_infra_hooks USER SUBPATH
   dir="$home/$sub"
   [[ -n "$home" && -d "$dir/.git" && -x "$dir/.githooks/pre-commit" ]] || return 0
   want="$dir/.githooks"
-  have="$(runuser -u "$user" -- git -C "$dir" config --get core.hooksPath 2>/dev/null)"
+  # git config exits 1 for an unset key, which `set -e` would make fatal.
+  have="$(runuser -u "$user" -- git -C "$dir" config --get core.hooksPath 2>/dev/null || true)"
   [[ "$have" == "$want" ]] && return 0
   if [[ -n "$have" ]]; then
     log "WARN: $user:~/$sub core.hooksPath is $have, not $want; left as-is"; return 0
