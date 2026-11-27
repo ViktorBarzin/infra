@@ -465,6 +465,29 @@ checkmark. The two remotes have **diverged** (parallel histories under
 different SHAs); expect github pushes to reject non-fast-forward and leave them
 — never force-push.
 
+### Is infra CI applying? (InfraCIRed, 2026-11-27)
+
+`default.yml`'s `notify-failure` step posts only when a step fails. A pipeline
+that ends `error` at lint or config time has no steps, so it posts nothing:
+from 2026-11-26 12:08 every repo-82 pipeline did that for a day (infra#226).
+Two monitors cover repo 82 now, both in `stacks/ci-pipeline-health`:
+
+- **`infra-ci-status`** (CronJob, every 10 minutes): reads repo 82's newest
+  master push pipelines and pushes `infra_ci_red_streak`,
+  `infra_ci_last_success_timestamp_seconds`, `infra_ci_newest_red_pipeline`
+  and a heartbeat to the Pushgateway. Alert **`InfraCIRed`** (critical) fires
+  on 2+ red pipelines in a row (`error`, `failure` or `killed`) with no
+  success for 1h; `InfraCIStatusStale` fires when the poller stops reporting.
+  Repo 1 is not read, since its push apply is always green. Woodpecker's own
+  `/metrics` is not enabled here (404) and its counters carry no timestamp, so
+  the poller reads the API. Runbook: `docs/runbooks/infra-ci-red.md`.
+- **`ci-pipeline-health`** (CronJob, daily 07:30 UTC, `files/sweep.sh`):
+  lists every active Woodpecker repo and reports its failed pipelines of the
+  last 24h to Slack and infra#10. Woodpecker returns at most 50 repos a page,
+  so the sweep reads pages until one is empty; until 2026-11-27 it read one
+  page and never saw repo 82 or 26 other repos. It leaves out repo 1's push
+  pipelines, and keeps repo 1's crons.
+
 ## Configuration
 
 ### GitHub Actions (per-app `.github/workflows/build.yml`)

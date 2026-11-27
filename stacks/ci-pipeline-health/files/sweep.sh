@@ -51,16 +51,31 @@ for repo in $repos; do
 done
 
 # --- 2) Woodpecker pipelines (deploy chain) ---
-wrepos=$(wp_get "${WP_API}/repos?perPage=100" | jq -r '.[] | select(.active == true) | "\(.id) \(.full_name)"')
-if [ $? -ne 0 ]; then
-  echo "sweep: failed to list Woodpecker repos" >>"$ISSUES"; sweep_errors=1; wrepos=""
-fi
+# Woodpecker returns at most 50 repos a page whatever perPage asks for, so read
+# pages until one comes back empty. Until 2026-11-27 this read one page and
+# never saw page 2, where viktor/infra (repo 82) and 26 other repos are.
+wrepos=""
+wp_page=1
+while [ "$wp_page" -le 20 ]; do
+  page_json=$(wp_get "${WP_API}/repos?perPage=50&page=${wp_page}")
+  if [ $? -ne 0 ]; then
+    echo "sweep: failed to list Woodpecker repos (page ${wp_page})" >>"$ISSUES"; sweep_errors=1; break
+  fi
+  [ "$(printf '%s' "$page_json" | jq 'length')" = "0" ] && break
+  wrepos="${wrepos}$(printf '%s' "$page_json" | jq -r '.[] | select(.active == true) | "\(.id) \(.full_name)"')
+"
+  wp_page=$((wp_page + 1))
+done
 printf '%s\n' "$wrepos" | while IFS=' ' read -r id name; do
   [ -z "$id" ] && continue
   pls=$(wp_get "${WP_API}/repos/${id}/pipelines?perPage=10")
   if [ $? -ne 0 ]; then echo "sweep: failed pipelines for ${name}" >>"$ISSUES"; continue; fi
+  # Repo 1 is infra's GitHub mirror: its push apply is a forge-guard no-op, so
+  # its push pipelines say nothing. Its crons (drift-detection) still count.
+  # Repo 82 carries the real applies; InfraCIRed watches it every 10 minutes.
   printf '%s' "$pls" | jq -r --argjson since "$SINCE_EPOCH" --arg name "$name" --arg ui "$WP_UI" --arg id "$id" '
       [.[] | select(.created >= $since)][]
+      | select($id != "1" or .event != "push")
       | select(.status == "failure" or .status == "error" or .status == "killed")
       | "Woodpecker: \($name) #\(.number) \(.status) (\(.event)) \($ui)/repos/\($id)/pipeline/\(.number)"' >>"$ISSUES"
   printf '%s' "$pls" | jq --argjson since "$SINCE_EPOCH" '[.[] | select(.created >= $since)] | length' >>"$NOTES.wpcount" 2>/dev/null || true

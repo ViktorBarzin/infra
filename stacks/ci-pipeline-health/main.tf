@@ -11,6 +11,10 @@
 # Woodpecker token are LAN-only — cloud agents can't reach them.
 #
 # First apply rode the DIFF_BASE fix (pipeline-128 merge-commit detection bug).
+#
+# A second CronJob, infra-ci-status (bottom of this file), checks every 10
+# minutes whether canonical infra CI (Woodpecker repo 82) is applying; alert
+# InfraCIRed, runbook docs/runbooks/infra-ci-red.md.
 
 variable "schedule" {
   type = string
@@ -166,6 +170,106 @@ resource "kubernetes_cron_job_v1" "sweep" {
               name = "sweep-script"
               config_map {
                 name = kubernetes_config_map.sweep_script.metadata[0].name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+  depends_on = [kubernetes_manifest.external_secret]
+}
+
+# infra-ci-status: every 10 minutes, is canonical infra CI red? Reads Woodpecker
+# repo 82's newest master push pipelines and pushes infra_ci_red_streak,
+# infra_ci_last_success_timestamp_seconds and a heartbeat to the Pushgateway.
+# Alerts InfraCIRed and InfraCIStatusStale (prometheus_chart_values.tpl, group
+# "Infra CI") read them. Added after 2026-11-26, when every repo-82 pipeline
+# ended `error` at lint time for a day and no alert fired. Woodpecker's own
+# /metrics is not enabled here (404), and its counters carry no timestamp.
+# job-runtime has python3; tests: python3 files/infra_ci_status_test.py
+resource "kubernetes_config_map" "infra_ci_status_script" {
+  metadata {
+    name      = "infra-ci-status"
+    namespace = kubernetes_namespace.ci_pipeline_health.metadata[0].name
+  }
+  data = {
+    "infra_ci_status.py" = file("${path.module}/files/infra_ci_status.py")
+  }
+}
+
+resource "kubernetes_cron_job_v1" "infra_ci_status" {
+  metadata {
+    name      = "infra-ci-status"
+    namespace = kubernetes_namespace.ci_pipeline_health.metadata[0].name
+    labels = {
+      app = "infra-ci-status"
+    }
+  }
+  spec {
+    schedule                      = "*/10 * * * *"
+    timezone                      = "Etc/UTC"
+    concurrency_policy            = "Forbid"
+    starting_deadline_seconds     = 300
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {
+        labels = {
+          app = "infra-ci-status"
+        }
+      }
+      spec {
+        # One attempt: the next run is 10 minutes away, and a run that keeps
+        # failing shows up as InfraCIStatusStale.
+        backoff_limit              = 0
+        active_deadline_seconds    = 300
+        ttl_seconds_after_finished = 3600
+        template {
+          metadata {
+            labels = {
+              app = "infra-ci-status"
+            }
+          }
+          spec {
+            restart_policy = "Never"
+            container {
+              name              = "infra-ci-status"
+              image             = "ghcr.io/viktorbarzin/job-runtime:latest"
+              image_pull_policy = "Always"
+              command           = ["python3", "/scripts/infra_ci_status.py"]
+              env {
+                name = "WOODPECKER_API_TOKEN"
+                value_from {
+                  secret_key_ref {
+                    name = "ci-pipeline-health-creds"
+                    key  = "WOODPECKER_API_TOKEN"
+                  }
+                }
+              }
+              volume_mount {
+                name       = "script"
+                mount_path = "/scripts"
+                read_only  = true
+              }
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "64Mi"
+                }
+              }
+            }
+            volume {
+              name = "script"
+              config_map {
+                name = kubernetes_config_map.infra_ci_status_script.metadata[0].name
               }
             }
           }

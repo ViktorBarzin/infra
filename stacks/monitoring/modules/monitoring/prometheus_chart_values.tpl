@@ -8052,6 +8052,49 @@ serverFiles:
               severity: warning
             annotations:
               summary: "stray-workload-detect hasn't reported in {{ $value | humanizeDuration }} — the declared-versus-running signal is stale, check the CronJob in monitoring (a failed init container means the Tier-1 state extraction could not complete, which is deliberately fatal rather than a short inventory)"
+      - name: Infra CI
+        # Is canonical infra CI applying? The infra-ci-status CronJob
+        # (stacks/ci-pipeline-health, every 10 minutes) reads Woodpecker repo
+        # 82's newest master push pipelines and pushes these to the
+        # Pushgateway (job="infra-ci-status"). Repo 82 is Forgejo viktor/infra,
+        # the registration whose push pipelines terragrunt-apply; repo 1 (the
+        # GitHub mirror) is always green and is not read.
+        #
+        # From 2026-11-26 12:08 every repo-82 pipeline ended `error` at lint
+        # time with no steps, so default.yml's notify-failure step never ran,
+        # nothing applied for a day, and nothing alerted. A lint or config
+        # error, a failed stack apply and a killed run all count as red;
+        # running and pending count neither way. Runbook:
+        # docs/runbooks/infra-ci-red.md.
+        rules:
+          - alert: InfraCIRed
+            # Two red in a row rides out one failed apply that the next push
+            # fixes; the 1h since the last success keeps a burst of quick
+            # pushes from firing before anyone could react.
+            expr: |
+              max(infra_ci_red_streak{job="infra-ci-status"}) >= 2
+              and on()
+              (time() - max(infra_ci_last_success_timestamp_seconds{job="infra-ci-status"})) > 3600
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: 'Infra CI is red: the last {{ $value | printf "%.0f" }} master pushes on Woodpecker repo 82 failed, newest #{{ with query `max(infra_ci_newest_red_pipeline{job="infra-ci-status"})` }}{{ . | first | value | printf "%.0f" }}{{ end }}. Nothing applies from CI until this clears.'
+              description: 'The newest {{ $value | printf "%.0f" }} push pipelines on master of Woodpecker repo 82 (Forgejo viktor/infra) ended error, failure or killed, and none succeeded for over 1h (last success {{ with query `max(infra_ci_last_success_timestamp_seconds{job="infra-ci-status"})` }}{{ . | first | value | humanizeTimestamp }}{{ end }}). While this fires, master commits are not applied to the cluster. Read the error: GET https://ci.viktorbarzin.me/api/repos/82/pipelines/<n> and look at .errors (a lint or config error has no steps), else the failed step log. Runbook: docs/runbooks/infra-ci-red.md'
+          - alert: InfraCIStatusStale
+            # Dead-man for the poller: a run that cannot read Woodpecker or
+            # reach the Pushgateway pushes nothing, so the heartbeat ages.
+            # Three missed runs. absent() covers a Pushgateway that lost it.
+            expr: |
+              (time() - max(infra_ci_status_last_run_timestamp_seconds{job="infra-ci-status"})) > 1800
+              or
+              absent(infra_ci_status_last_run_timestamp_seconds{job="infra-ci-status"})
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: 'infra-ci-status has not reported for 30m+, so InfraCIRed cannot see whether infra CI is applying'
+              description: 'The infra-ci-status CronJob (namespace ci-pipeline-health, every 10 minutes) has not pushed infra_ci_status_last_run_timestamp_seconds. kubectl -n ci-pipeline-health get jobs -l app=infra-ci-status; kubectl -n ci-pipeline-health logs job/<latest>. It reads http://woodpecker-server.woodpecker.svc.cluster.local/api, so WoodpeckerDown may be the cause. Runbook: docs/runbooks/infra-ci-red.md'
       - name: Infrastructure Drift
         # Metrics pushed by .woodpecker/drift-detection.yml after each cron run.
         # See Wave 7 of the state-drift consolidation plan.

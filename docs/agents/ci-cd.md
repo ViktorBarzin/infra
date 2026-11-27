@@ -128,7 +128,9 @@ trading-bot, travel-agent, trip-planner), and all `build-fallback.yml` files
 **Woodpecker API**: numeric repo IDs (`/api/repos/<id>/pipelines`), NOT
 owner/name (those return HTML). The deploy registration for each app is the
 **GitHub mirror** repo (github-forge). Infra: Forgejo forge = repo 82, legacy
-GitHub forge = repo 1.
+GitHub forge = repo 1. `InfraCIRed` (critical) fires when repo 82's master
+push pipelines stay red: 2+ in a row and no success for 1h. While it fires,
+nothing applies from CI. Runbook `docs/runbooks/infra-ci-red.md`.
 
 **Woodpecker YAML gotchas**:
 - Commands with `${VAR}:${VAR}` must be **quoted** — unquoted `:` triggers YAML map parsing when vars are empty

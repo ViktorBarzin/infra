@@ -1,0 +1,65 @@
+# promtool unit tests for the Infra CI alert group (stacks/monitoring
+# prometheus_chart_values.tpl, "- name: Infra CI"). tests/infra-ci-status.test.sh
+# cuts the group out into infra-ci.rules.yml and runs these with promtool.
+# The series are what the infra-ci-status CronJob pushes (job="infra-ci-status").
+rule_files:
+  - infra-ci.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Incident shape: last success at t=0, red streak from 10m on. Fires once
+  # success is >1h old and the 5m for has passed.
+  - interval: 1m
+    input_series:
+      - series: 'infra_ci_red_streak{job="infra-ci-status"}'
+        values: '0x9 3x80'
+      - series: 'infra_ci_last_success_timestamp_seconds{job="infra-ci-status"}'
+        values: '0x90'
+      - series: 'infra_ci_newest_red_pipeline{job="infra-ci-status"}'
+        values: '0x9 4592x80'
+      - series: 'infra_ci_status_last_run_timestamp_seconds{job="infra-ci-status"}'
+        values: '0+60x90'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: InfraCIRed
+        exp_alerts: []
+      - eval_time: 66m
+        alertname: InfraCIRed
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: 'Infra CI is red: the last 3 master pushes on Woodpecker repo 82 failed, newest #4592. Nothing applies from CI until this clears.'
+              description: 'The newest 3 push pipelines on master of Woodpecker repo 82 (Forgejo viktor/infra) ended error, failure or killed, and none succeeded for over 1h (last success 1970-01-01 00:00:00 +0000 UTC). While this fires, master commits are not applied to the cluster. Read the error: GET https://ci.viktorbarzin.me/api/repos/82/pipelines/<n> and look at .errors (a lint or config error has no steps), else the failed step log. Runbook: docs/runbooks/infra-ci-red.md'
+      - eval_time: 66m
+        alertname: InfraCIStatusStale
+        exp_alerts: []
+  # One red after an old success does not fire; green now does not fire.
+  - interval: 1m
+    input_series:
+      - series: 'infra_ci_red_streak{job="infra-ci-status"}'
+        values: '1x90'
+      - series: 'infra_ci_last_success_timestamp_seconds{job="infra-ci-status"}'
+        values: '0x90'
+      - series: 'infra_ci_status_last_run_timestamp_seconds{job="infra-ci-status"}'
+        values: '0+60x90'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: InfraCIRed
+        exp_alerts: []
+  # Poller stops at 20m: stale after 30m + 10m for.
+  - interval: 1m
+    input_series:
+      - series: 'infra_ci_status_last_run_timestamp_seconds{job="infra-ci-status"}'
+        values: '0+60x20 1200x60'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: InfraCIStatusStale
+        exp_alerts: []
+      - eval_time: 62m
+        alertname: InfraCIStatusStale
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: 'infra-ci-status has not reported for 30m+, so InfraCIRed cannot see whether infra CI is applying'
+              description: 'The infra-ci-status CronJob (namespace ci-pipeline-health, every 10 minutes) has not pushed infra_ci_status_last_run_timestamp_seconds. kubectl -n ci-pipeline-health get jobs -l app=infra-ci-status; kubectl -n ci-pipeline-health logs job/<latest>. It reads http://woodpecker-server.woodpecker.svc.cluster.local/api, so WoodpeckerDown may be the cause. Runbook: docs/runbooks/infra-ci-red.md'
