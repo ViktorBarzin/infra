@@ -556,6 +556,16 @@ the homelab's at run time:
   one slot, label `builder=true`) and registers one-shot self-hosted runners
   (image `ghcr.io/viktorbarzin/gha-runner`, source `images/gha-runner/`) next to
   a Docker-in-Docker service until no `homelab` job of the repo waits.
+- the DinD service is `privileged`, which Woodpecker's linter allows only in a
+  repo trusted for `security`. The linter checks every file in `.woodpecker/`
+  on every pipeline, not only the workflows whose `when` matches, so **both**
+  infra registrations carry `trusted.security=true` (network and volumes stay
+  untrusted): repo 1, where ci-route starts gha-runner, and repo 82, whose
+  push pipelines do the real applies. Woodpecker repo settings are not in
+  Terraform; set them with `PATCH /api/repos/<id> {"trusted": {"security":
+  true}}` (`woodpecker_api_token`). While repo 82 lacked it, every push there
+  ended `error` with `Insufficient trust level to use privileged mode` and no
+  stack applied (infra#226).
 
 infra and cloud-builder keep their GitHub push triggers: infra builds the
 images that repair the cluster, and Cloud dispatches cloud-builder itself.

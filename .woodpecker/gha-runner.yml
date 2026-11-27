@@ -10,9 +10,14 @@
 #
 # One at a time: the labels below send it only to woodpecker-agent-builder
 # (stacks/woodpecker/builder.tf), which has one slot. Docker-in-Docker needs
-# a privileged service, which Woodpecker allows only in a trusted repo; infra
-# (repo 1) is set trusted through the Woodpecker API:
-#   PATCH /api/repos/1 {"trusted": {"security": true}}
+# a privileged service, which Woodpecker allows only in a trusted repo.
+# ci-route starts this pipeline on repo 1 (the GitHub mirror), but Woodpecker
+# lints EVERY workflow file on every pipeline of a repo, whatever its `when`
+# says, so BOTH infra registrations must be trusted (security only):
+#   PATCH /api/repos/1  {"trusted": {"security": true}}   GitHub mirror
+#   PATCH /api/repos/82 {"trusted": {"security": true}}   canonical Forgejo
+# With repo 82 untrusted, every push pipeline there, `default` apply included,
+# ended `error` before any step ran (infra#226, 2026-11-26 to 2026-11-27).
 when:
   - event: manual
     evaluate: 'PIPELINE == "gha-runner" && RUNNER_REPO != ""'
