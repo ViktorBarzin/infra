@@ -202,6 +202,10 @@ three policy bodies against fake objects; no pipeline runs it, so run it
 before any edit to them. Operations: `docs/runbooks/cloud.md`,
 "Guest invites".
 
+### One account per email address (2026-11-27)
+
+All three social sources use `user_matching_mode = "email_link"`. A sign-in whose email matches an existing account signs in to that account and links the source to it, so a person who signed up with GitHub can later use Google. Only an email with no account goes through enrollment. Google is in Terraform (`stacks/authentik/google-source.tf`, client secret in Vault `secret/authentik` `google_consumer_secret`). GitHub and Facebook are still set in the UI. Before this change, Google matched by Google ID only, and such a sign-in failed on the duplicate username.
+
 ### Per-app sign-up paths (2026-10-16, ADR-0001)
 
 Since 2026-09-02 all three social sources enrol through one flow, `social-signup`, whose first stage asks for an invite code (`stacks/authentik/invite-flow.tf`). `stacks/authentik/app-signup.tf` adds a second way through that flow for people who arrive from an app that takes sign-ups, generalised from tv (then f1-stream) ADR-0042. Everyone else keeps the invite path unchanged.
