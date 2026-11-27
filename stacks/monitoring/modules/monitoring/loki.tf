@@ -781,12 +781,30 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # under 10 min (a misfire), or a stick that never came back.
               # Replayed 2026-10-07 18:20-18:45 UTC: 18 matches in 15 min.
               # Matches nothing on either router over the 2 days after.
+              # The kernel's USB lines (2026-11-27) catch a stick that resets
+              # or drops off the bus even when it recovers before any disk
+              # error: 3 resets and 26 disconnects on Mladost 3 in the 14 days
+              # before, none on flint-london.
               alert  = "SiteRouterDiskOrWatchdog"
-              expr   = "sum by (host) (count_over_time({job=\"syslog\"} |~ \"EXT4-fs (error|warning)|I/O error, dev sd|^rebooting: |^would reboot \\\\(|^stick dropout: |the stick has not come back\" [15m])) > 0"
+              expr   = "sum by (host) (count_over_time({job=\"syslog\"} |~ \"EXT4-fs (error|warning)|I/O error, dev sd|^rebooting: |^would reboot \\\\(|^stick dropout: |the stick has not come back|usb [0-9.-]+: (USB disconnect|reset (full|high)-speed|device descriptor read|device not accepting address)\" [15m])) > 0"
               for    = "0s"
               labels = { severity = "warning" }
               annotations = {
-                summary = "{{ $labels.host }}: disk errors on its USB stick, or its watchdog acted ({{ $value | printf \"%.0f\" }} lines in 15m). Read them: {job=\"syslog\", host=\"{{ $labels.host }}\"} |~ \"EXT4-fs|I/O error|rebooting|would reboot|stick\". Do not run heavy commands on a router whose stick is gone: docs/architecture/vpn.md, Mladost 3 self-heal."
+                summary = "{{ $labels.host }}: disk errors on its USB stick, or its watchdog acted ({{ $value | printf \"%.0f\" }} lines in 15m). Read them: {job=\"syslog\", host=\"{{ $labels.host }}\"} |~ \"EXT4-fs|I/O error|rebooting|would reboot|stick|usb \". Do not run heavy commands on a router whose stick is gone: docs/architecture/vpn.md, Mladost 3 self-heal."
+              }
+            },
+            {
+              # Dead-man for router-watchdog (2026-11-27). It logs "healthy"
+              # every hour, also while it waits for 04:00 after a dropout, so 3
+              # hours without a line means it stopped. Fires only while the
+              # router's other lines still arrive: a router that is down or off
+              # the tunnel is Mladost3TunnelDown's job.
+              alert  = "SiteRouterWatchdogSilent"
+              expr   = "sum(count_over_time({job=\"syslog\", host=\"mladost3-openwrt\"} [3h])) unless sum(count_over_time({job=\"syslog\", host=\"mladost3-openwrt\", app=\"router-watchdog\"} [3h]))"
+              for    = "15m"
+              labels = { severity = "warning", host = "mladost3-openwrt" }
+              annotations = {
+                summary = "mladost3-openwrt: router-watchdog has logged nothing for 3h while the router's other logs arrive. Check it: ssh root@10.3.2.7 'pgrep -fl router-watchdog; logread -e router-watchdog | tail'; restart with /etc/init.d/router-watchdog restart. docs/architecture/vpn.md, Mladost 3 self-heal."
               }
             },
           ]
