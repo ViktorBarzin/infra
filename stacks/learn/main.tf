@@ -547,7 +547,7 @@ resource "kubernetes_deployment" "learn" {
 
         container {
           name  = "git-sync"
-          image = "registry.k8s.io/git-sync/git-sync:v4.8.0"
+          image = "registry.k8s.io/git-sync/git-sync:v4.8.1"
           args = [
             # In-cluster Service name, so a sync depends on neither the
             # git.viktorbarzin.me record nor the MetalLB address behind it.
