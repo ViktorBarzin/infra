@@ -70,7 +70,7 @@ resource "kubernetes_config_map" "clickhouse_schema" {
 
 locals {
   clickhouse_schema_pod = {
-    image = "clickhouse/clickhouse-server:26.11.2.4"
+    image = "clickhouse/clickhouse-server:26.11.3.10"
   }
 }
 
