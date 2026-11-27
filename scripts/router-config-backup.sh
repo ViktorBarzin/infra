@@ -2,14 +2,15 @@
 # router-config-backup — weekly config backup of the OpenWrt site routers to
 # sda, picked up by offsite-sync-backup for the Synology.
 #
-# Each router streams `sysupgrade -b -` (the standard OpenWrt config backup:
-# /etc/config, keys, passwords, the files listed in /etc/sysupgrade.conf) over
+# Each router streams `sysupgrade -k -b -` (the standard OpenWrt config backup:
+# /etc/config, keys, passwords, the files listed in /etc/sysupgrade.conf, and
+# with -k the installed-package list etc/backup/installed_packages.txt) over
 # SSH into /mnt/backup/routers/<name>/backup-<name>-<YYYYMMDD>.tar.gz. The file
 # is appended to the offsite manifest, so the next daily offsite-sync copies it
 # (and only it) to Synology:/Backup/Viki/pve-backup/routers/.
 #
 # Auth: dedicated key /root/.ssh/id_router_backup. On each router that key is
-# pinned in /etc/dropbear/authorized_keys to command="sysupgrade -b -" with
+# pinned in /etc/dropbear/authorized_keys to command="sysupgrade -k -b -" with
 # forwarding and pty disabled, so it can produce a backup and nothing else.
 #
 # Archives hold the routers' WireGuard private keys and root password hashes;
@@ -77,7 +78,7 @@ for entry in ${ROUTERS}; do
     bytes=0
     # The router ignores the command we send and runs its pinned one.
     if (umask 077; ssh -o BatchMode=yes -o ConnectTimeout=20 -o IdentitiesOnly=yes \
-            -i "${SSH_KEY}" "${target}" "sysupgrade -b -" > "${tmp}"); then
+            -i "${SSH_KEY}" "${target}" "sysupgrade -k -b -" > "${tmp}"); then
         # Accept only a complete archive that really holds a router config.
         # List first, then match: `tar | grep -q` stops reading at the first
         # match, tar dies of SIGPIPE, and pipefail turns that into a failure.
