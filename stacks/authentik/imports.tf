@@ -13,10 +13,3 @@ import {
   to = module.authentik.kubernetes_service_v1.outpost
   id = "authentik/ak-outpost-authentik-embedded-outpost"
 }
-
-# The Google OAuth source, made by hand in the UI (google-source.tf). The
-# provider imports a source by its slug.
-import {
-  to = authentik_source_oauth.google
-  id = "google"
-}

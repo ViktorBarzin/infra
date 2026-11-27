@@ -1,7 +1,7 @@
 # -----------------------------------------------------------------------------
 # The "Sign in with Google" source.
 #
-# Made by hand in the UI and adopted here on 2026-11-27 (import in imports.tf).
+# Made by hand in the UI and adopted here on 2026-11-27.
 # Its client secret is not readable back from the API, so it was copied once
 # from Authentik's database into Vault secret/authentik google_consumer_secret.
 # The provider sends the secret on every update, so it must come from Vault:
