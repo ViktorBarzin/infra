@@ -423,7 +423,7 @@ def manifest(account: Account) -> dict:
     labels = LABELS[account.lang]
     return {
         "id": "me.viktorbarzin.library",
-        "version": "1.1.0",
+        "version": "1.2.0",  # 1.2.0: the subtitles resource (Stremio offers Upgrade on a new version)
         "name": labels["addon"],
         "description": labels["description"],
         "resources": ["catalog", "stream"],
