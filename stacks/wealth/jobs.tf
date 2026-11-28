@@ -20,8 +20,18 @@
 # 3rd and 17th at 07:40 UK (wealth src/connectors/brokers/fidelity). PlanViewer
 # is behind Akamai, which refuses a headless Chrome, so the connector drives
 # the cluster's headful Chrome (chrome-service) over CDP, as broker-sync's
-# Fidelity CronJob does. The namespace carries chrome-service's client label
-# (main.tf namespace_labels) so its NetworkPolicy admits port 9222.
+# Fidelity CronJob does.
+#
+# Schwab: the worker builds the Schwab connector only when SCHWAB_CDP_URL is
+# set, and then schedules each Schwab connector on the 20th at 07:50 UK
+# (wealth src/connectors/brokers/schwab-web). Schwab keeps "trust this
+# device" in chrome-service's persistent profile, so the connector opens a
+# tab in the browser's default context and closes only that tab. A switch
+# of its own, so either broker can be turned off alone.
+#
+# chrome-service's NetworkPolicy admits port 9222 from this namespace by
+# name, for pods labelled app=wealth-worker only (docs/architecture/
+# chrome-service.md, "Network controls").
 locals {
   jobs_namespace = module.app.namespace
   jobs = {
@@ -143,6 +153,7 @@ resource "kubernetes_deployment" "jobs" {
               PAYSLIP_INGEST_URL = "http://payslip-ingest.payslip-ingest.svc.cluster.local:8080"
               PAPERLESS_URL      = "http://paperless-ngx.paperless-ngx.svc.cluster.local"
               FIDELITY_CDP_URL   = "http://chrome-service.chrome-service.svc.cluster.local:9222"
+              SCHWAB_CDP_URL     = "http://chrome-service.chrome-service.svc.cluster.local:9222"
             } : {}
             content {
               name  = env.key
