@@ -62,6 +62,10 @@ To give Projects more, raise `max_connections` together with the primary's memor
 
 **Per-Project limits.** `temp_file_limit` is superuser-only, so `cloud_provisioner` sets it on Project roles through its SET grant, and a Project role cannot lift it. `statement_timeout` and `idle_in_transaction_session_timeout` can be set per role too, but any role can change them in its own session, so for a Project they are defaults, not limits.
 
+## ha-london's history database
+
+`ha_london` (`stacks/dbaas/modules/dbaas/ha_london_db.tf`, since 2026-11-28) is the recorder database of the London Home Assistant Pi, which connects from London through `postgresql-lb` (10.0.20.200:5432). Its role is static, not a Vault static role: the Pi keeps the URL in its own `secrets.yaml` and cannot follow the Tuesday rotation. The password is Vault `secret/viktor` `pg_ha_london_password`; changing it re-runs the provisioner on the next `dbaas` apply, and then the Pi's `secrets.yaml` needs the new value. CONNECTION LIMIT 20, CONNECT revoked from PUBLIC. The CNPG query `ha_london_recorder` exports `cnpg_ha_london_recorder_age_seconds`. Operation and rollback: `docs/architecture/london-site.md`, "History (recorder)".
+
 ## MySQL
 
 One MySQL server serves every MySQL tenant (20 schemas on 2026-10-19, among them nextcloud, forgejo, grafana, uptimekuma, wrongmove, phpipam, roundcubemail and technitium). It is a plain StatefulSet in `stacks/dbaas/modules/dbaas/main.tf`, not an operator or a Helm chart.

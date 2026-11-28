@@ -1844,6 +1844,10 @@ variable "pg_cluster_v18_instances" {
 # CloudProjectRoleUnlimited (above 0) and CloudProjectConnectionsOverCeiling
 # (sum above 20) page.
 #
+# ha_london_recorder (2026-11-28): seconds since ha-london's recorder wrote its
+# newest state row, read in database ha_london (ha_london_db.tf). Alert
+# HomeAssistantLondonHistoryStale (stacks/monitoring) fires above 1 h.
+#
 # The cnpg.io/reload label makes the instances reload a changed ConfigMap without a
 # restart or a re-apply of the Cluster.
 resource "kubernetes_config_map" "pg_custom_queries" {
@@ -1880,6 +1884,14 @@ resource "kubernetes_config_map" "pg_custom_queries" {
           - connlimit_sum:
               usage: "GAUGE"
               description: "Sum of the CONNECTION LIMITs of the LOGIN roles Cloud's cloud_provisioner administers. Cloud keeps it at or under 80."
+      ha_london_recorder:
+        query: "SELECT COALESCE(EXTRACT(EPOCH FROM now()) - MAX(last_updated_ts), 0) AS age_seconds FROM states"
+        primary: true
+        target_databases: ["ha_london"]
+        metrics:
+          - age_seconds:
+              usage: "GAUGE"
+              description: "Seconds since ha-london's recorder wrote its newest state row (ha_london_db.tf). Under 300 in normal running."
     EOT
   }
 }

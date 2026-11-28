@@ -4697,6 +4697,20 @@ serverFiles:
               severity: warning
             annotations:
               summary: "ha-london's newest backup on the Proxmox host (/srv/nfs/ha-london-backup) is over 8 days old or missing; its only other copies are on the Pi's SD card. See docs/architecture/london-site.md, Backups"
+          # ha-london's history lives in Postgres in Sofia (stacks/dbaas,
+          # ha_london_db.tf). The recorder normally writes a state row every
+          # few minutes; the Pi's own watchdog (packages/recorder_watchdog.yaml)
+          # restarts Core after 15 minutes stale once the database answers.
+          # Still stale after an hour means the tunnel is down, the Pi is down,
+          # or the watchdog did not recover it. docs/architecture/london-site.md,
+          # "History (recorder)".
+          - alert: HomeAssistantLondonHistoryStale
+            expr: cnpg_ha_london_recorder_age_seconds > 3600
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "ha-london has recorded no history for {{ $value | humanizeDuration }}; check the tunnel, the Pi and its recorder watchdog. See docs/architecture/london-site.md, History (recorder)"
           - alert: LVMSnapshotStale
             expr: (time() - lvm_snapshot_last_run_timestamp{job="lvm-pvc-snapshot"}) > 108000
             for: 30m
