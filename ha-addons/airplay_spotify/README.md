@@ -1,7 +1,7 @@
 # AirPlay and Spotify (ha-london add-on)
 
 Makes ha-london, the Pi 3 in the London living room, a speaker that phones play
-to. It shows as **Living room** in two places:
+to. It shows as **pi-london** in two places:
 
 - the AirPlay menu of an iPhone or Mac, for YouTube Music, Apple Music,
   Spotify or any other app (shairport-sync, AirPlay 1);

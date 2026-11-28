@@ -1,5 +1,5 @@
 name: AirPlay and Spotify
-version: "1.0.0"
+version: "1.0.1"
 slug: airplay_spotify
 description: >-
   Makes the Pi an AirPlay receiver and a Spotify Connect speaker, so phones
@@ -14,6 +14,6 @@ host_network: true
 audio: true
 homeassistant_api: true
 options:
-  name: Living room
+  name: pi-london
 schema:
   name: str
