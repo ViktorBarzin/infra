@@ -27,7 +27,7 @@ resource "null_resource" "pg_ha_london" {
 
   # The password goes to psql on stdin, so it is not in any process's argv.
   # CONNECTION LIMIT 20: the recorder's writer, its read executor and the
-  # watchdog's SQL sensor use a handful. cnpg_metrics_exporter needs
+  # watchdog's sensor use a handful. cnpg_metrics_exporter needs
   # SELECT on states for the ha_london_recorder query (pg_custom_queries in
   # main.tf); the default privilege gives it SELECT on the tables HA creates
   # after a rebuild, which is the only way to cover a states table that does
