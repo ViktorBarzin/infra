@@ -246,6 +246,8 @@ firewall() {
 	# The robot vacuum camera (stacks/ecovacs-video-proxy): RTSP and its HTTP side.
 	iptables -A london_roles -m set --match-set lr_infra_ha src -d 10.0.20.200 -p tcp --dport 8554 -j RETURN
 	iptables -A london_roles -m set --match-set lr_infra_ha src -d 10.0.20.200 -p tcp --dport 8080 -j RETURN
+	# ha-london's recorder database (stacks/dbaas, ha_london_db.tf).
+	iptables -A london_roles -m set --match-set lr_infra_ha src -d 10.0.20.200 -p tcp --dport 5432 -j RETURN
 	iptables -A london_roles -m set --match-set lr_infra_k8s src -d 10.0.20.0/24 -j RETURN
 	# Media players (the projector's ImmichFrame): the cluster's web services on Traefik.
 	iptables -A london_roles -m set --match-set lr_media src -d "$TRAEFIK_IP" -p tcp --dport 443 -j RETURN

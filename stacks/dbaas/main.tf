@@ -33,6 +33,7 @@ module "dbaas" {
   mysql_forgejo_password       = data.vault_kv_secret_v2.viktor.data["mysql_forgejo_password"]
   mysql_roundcubemail_password = data.vault_kv_secret_v2.viktor.data["mysql_roundcubemail_password"]
   mysql_freshrss_password      = data.vault_kv_secret_v2.viktor.data["mysql_freshrss_password"]
+  pg_ha_london_password        = data.vault_kv_secret_v2.viktor.data["pg_ha_london_password"]
   kube_config_path             = var.kube_config_path
   tier                         = local.tiers.cluster
   # pgvector operand swap (claude-memory hybrid-recall promotion, runbook Phase 2,

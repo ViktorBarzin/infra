@@ -252,6 +252,11 @@ def test_infra_ha_reaches_the_vacuum_camera_stream(env: Env) -> None:
     assert "-A london_roles -m set --match-set lr_infra_ha src -d 10.0.20.200 -p tcp --dport 8080 -j RETURN" in r
 
 
+def test_infra_ha_reaches_postgres_for_the_recorder(env: Env) -> None:
+    env.run("firewall")
+    assert "-A london_roles -m set --match-set lr_infra_ha src -d 10.0.20.200 -p tcp --dport 5432 -j RETURN" in rules(env)
+
+
 def test_enforce_mode_rejects_after_logging(env: Env) -> None:
     (env.root / "conf").write_text("LR_URL=https://wifi.example\nLR_MODE=enforce\n")
     env.run("firewall")
