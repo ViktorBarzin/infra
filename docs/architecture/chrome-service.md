@@ -22,7 +22,14 @@ serves two distinct populations:
    fresh context: it needs the chess.com session Viktor logged in by hand
    via the live view, and attaching to the master profile lets session-cookie
    rotation persist instead of being discarded with a pool pod. It holds
-   the browser for ~20s once a day. The `playback_verifier.py` +
+   the browser for ~20s once a day. **wealth's worker** (`stacks/wealth`
+   `jobs.tf`) is a caller too: its Fidelity connector opens a fresh context
+   per run (the 3rd and 17th), and its Schwab connector (since 2026-11-28,
+   the 20th at 07:50 UK) attaches to the master persistent profile like
+   `chesscom-streak`. Schwab keeps "trust this device" in that profile, not
+   in portable cookies (a fresh context with Schwab's cookies still got the
+   two-step picker), so the connector opens its own tab there and closes
+   only that tab: never the context, the cookies or the session. The `playback_verifier.py` +
    `chrome_browser.py` tree that once sat under
    `stacks/f1-stream/files/backend/` was a vestigial design — the deployed
    tv image (built from `github.com/ViktorBarzin/tv`) does not use this

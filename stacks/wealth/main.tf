@@ -36,8 +36,8 @@ module "app" {
   image_tag          = var.image_tag
   image_pull_secrets = ["ghcr-credentials"]
 
-  # The Fidelity connector in wealth-worker drives chrome-service over CDP
-  # (jobs.tf, FIDELITY_CDP_URL). chrome-service's NetworkPolicy admits it by
+  # The Fidelity and Schwab connectors in wealth-worker drive chrome-service
+  # over CDP (jobs.tf, FIDELITY_CDP_URL and SCHWAB_CDP_URL). chrome-service's NetworkPolicy admits it by
   # namespace name and pod label, so this namespace carries no client label:
   # the web and engine pods get no CDP access.
 
