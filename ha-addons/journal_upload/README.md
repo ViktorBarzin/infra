@@ -25,6 +25,13 @@ survive a reboot. With the cursor kept, a tunnel outage or a reboot sends the
 backlog when the receiver is back. The first run has no cursor and starts at
 the beginning of the current boot.
 
+The uploader rewrites its cursor after every batch, every few seconds. Since
+1.2.0 it writes it to `/run/journal-upload/state` in RAM; the add-on copies
+that to the card file hourly and when it stops (once per boot it seeds the RAM
+file from the card file). On the card that rewrite cost about 0.05 GB a day of
+filesystem journal writes. After a freeze the uploader resumes from the last
+hourly copy; Loki drops lines it already has with the same timestamp.
+
 Stopping the add-on stops the uploader and removes the drop-in.
 
 ## Journal in RAM

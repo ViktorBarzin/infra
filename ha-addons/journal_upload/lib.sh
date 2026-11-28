@@ -4,17 +4,20 @@
 # at our receiver. DynamicUser=no + the static systemd-journal-upload user,
 # because HAOS keeps /var/lib/private on tmpfs: with a dynamic user the cursor
 # state would vanish at every reboot. StateDirectory (systemd/journal-upload)
-# then lands in /var/lib/systemd, which HAOS persists.
-# $1 = receiver URL, $2 = optional cursor to start from (first run only).
+# then lands in /var/lib/systemd, which HAOS persists. The uploader rewrites
+# its cursor after every batch (every few seconds), so it saves to a RAM file
+# that run.sh copies to the card hourly and at stop.
+# $1 = receiver URL, $2 = cursor file, $3 = optional cursor to start from
+# (first run only).
 render_dropin() {
   cursor=""
-  [ -n "${2:-}" ] && cursor=" --cursor=\"$2\""
+  [ -n "${3:-}" ] && cursor=" --cursor=\"$3\""
   printf '%s\n' \
     '[Service]' \
     'DynamicUser=no' \
     'User=systemd-journal-upload' \
     'ExecStart=' \
-    "ExecStart=/usr/lib/systemd/systemd-journal-upload --save-state -u $1$cursor"
+    "ExecStart=/usr/lib/systemd/systemd-journal-upload --save-state=$2 -u $1$cursor"
 }
 
 # The journald drop-in that caps the RAM journal. The add-on keeps the host's

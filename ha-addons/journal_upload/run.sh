@@ -17,6 +17,12 @@ UNIT=systemd-journal-upload.service
 DROPIN_DIR=/run/systemd/system/$UNIT.d
 DROPIN=$DROPIN_DIR/50-homelab.conf
 STATE=/var/lib/systemd/journal-upload/state
+# The uploader rewrites its cursor every few seconds; it does so in RAM, and
+# save_cursor copies it to $STATE on the card hourly and at stop. After a
+# freeze it resumes from the last hourly copy.
+RUN_STATE_DIR=/run/journal-upload
+RUN_STATE=$RUN_STATE_DIR/state
+SAVE_EVERY=60 # loop rounds of 60 s
 JOURNALD_DIR=/run/systemd/journald.conf.d
 JOURNALD_DROPIN=$JOURNALD_DIR/50-homelab.conf
 # journald removes this flag when it writes to RAM and sets it on a flush.
@@ -33,8 +39,20 @@ if ! valid_url "$url"; then
 fi
 
 install_dropin() {
-  render_dropin "$url" "${1:-}" | host sh -c "mkdir -p '$DROPIN_DIR' && cat > '$DROPIN'"
+  render_dropin "$url" "$RUN_STATE" "${1:-}" | host sh -c "mkdir -p '$DROPIN_DIR' && cat > '$DROPIN'"
   host systemctl daemon-reload
+}
+
+# The RAM cursor starts as the card copy (once per boot: /run survives
+# add-on restarts).
+seed_cursor() {
+  host sh -c "mkdir -p '$RUN_STATE_DIR' && chown systemd-journal-upload:systemd-journal-upload '$RUN_STATE_DIR' &&
+    if [ ! -s '$RUN_STATE' ] && [ -s '$STATE' ]; then cp -p '$STATE' '$RUN_STATE'; fi"
+}
+
+save_cursor() {
+  host sh -c "[ -s '$RUN_STATE' ] || exit 0; cmp -s '$RUN_STATE' '$STATE' && exit 0;
+    cp -p '$RUN_STATE' '$STATE.tmp' && mv '$STATE.tmp' '$STATE'"
 }
 
 start_unit() {
@@ -57,6 +75,7 @@ journal_to_ram() {
 cleanup() {
   log "add-on stopping: stopping the uploader, writing the RAM journal to the card"
   host systemctl stop "$UNIT" || true
+  save_cursor || log "could not save the cursor to the card"
   host rm -f "$DROPIN" "$JOURNALD_DROPIN"
   host systemctl daemon-reload || true
   host journalctl --flush || log "journal flush failed"
@@ -64,11 +83,11 @@ cleanup() {
 }
 trap cleanup TERM INT
 
-# The uploader saves its cursor in $STATE after every batch. With no state yet
-# (first install), start from the first entry of the current boot rather than
-# the whole 500 MB journal.
+# With no cursor yet (first install), start from the first entry of the
+# current boot rather than the whole 500 MB journal.
+seed_cursor
 cursor=""
-if ! host test -s "$STATE"; then
+if ! host test -s "$RUN_STATE"; then
   cursor=$(host journalctl -b -o json --no-pager 2>/dev/null | first_cursor)
 fi
 install_dropin "$cursor"
@@ -77,10 +96,15 @@ log "uploading the journal to $url${cursor:+ (first run: from the start of this 
 journal_to_ram || log "could not move the journal to RAM; it stays on the card"
 log "journal kept in RAM (up to $RAM_JOURNAL), written to the card when the add-on stops"
 
+round=0
 while true; do
   sleep 60 &
   wait $! || true
-  if [ -n "$cursor" ] && host test -s "$STATE"; then
+  round=$((round + 1))
+  if [ $((round % SAVE_EVERY)) = 0 ]; then
+    save_cursor || log "could not save the cursor to the card"
+  fi
+  if [ -n "$cursor" ] && host test -s "$RUN_STATE"; then
     cursor=""
     install_dropin ""
     log "cursor saved; later restarts resume from it"

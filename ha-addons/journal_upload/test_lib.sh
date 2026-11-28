@@ -12,15 +12,15 @@ want='[Service]
 DynamicUser=no
 User=systemd-journal-upload
 ExecStart=
-ExecStart=/usr/lib/systemd/systemd-journal-upload --save-state -u http://10.0.20.200:19532'
-check "drop-in without cursor" "$want" "$(render_dropin http://10.0.20.200:19532)"
+ExecStart=/usr/lib/systemd/systemd-journal-upload --save-state=/run/journal-upload/state -u http://10.0.20.200:19532'
+check "drop-in without cursor" "$want" "$(render_dropin http://10.0.20.200:19532 /run/journal-upload/state)"
 
 want='[Service]
 DynamicUser=no
 User=systemd-journal-upload
 ExecStart=
-ExecStart=/usr/lib/systemd/systemd-journal-upload --save-state -u http://10.0.20.200:19532 --cursor="s=abc;i=1;b=x"'
-check "drop-in with first-run cursor" "$want" "$(render_dropin http://10.0.20.200:19532 's=abc;i=1;b=x')"
+ExecStart=/usr/lib/systemd/systemd-journal-upload --save-state=/run/journal-upload/state -u http://10.0.20.200:19532 --cursor="s=abc;i=1;b=x"'
+check "drop-in with first-run cursor" "$want" "$(render_dropin http://10.0.20.200:19532 /run/journal-upload/state 's=abc;i=1;b=x')"
 
 want='[Journal]
 RuntimeMaxUse=48M'
