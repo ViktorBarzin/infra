@@ -17,7 +17,7 @@ The add-on sets two toggles in Home Assistant through the Supervisor API
 
 | Toggle | Set by | On while |
 |---|---|---|
-| `input_boolean.airplay_playing` | shairport-sync session hooks (`playing.sh`) | an AirPlay session plays; off when the sender stops, or 20 s after its packets stop (`session_timeout`) |
+| `input_boolean.airplay_playing` | shairport-sync session hooks (`playing.sh`) | an AirPlay session is open; off when the sender ends it, or after shairport-sync's default `session_timeout` (120 s) when the sender vanishes. 1.0.1 set 20 s; Viktor then had to pick the Pi again after a pause, and 1.0.2 went back to the default |
 | `input_boolean.spotify_playing` | `spotify_watch.sh`, which reads go-librespot's `/status` every 2 s | a track plays; paused counts as off |
 
 `packages/radio.yaml` in the ha-london-config repo combines them with VLC in

@@ -31,7 +31,9 @@ sessioncontrol = {
   run_this_after_play_ends = "/app/playing.sh airplay off";
   wait_for_completion = "no";
   allow_session_interruption = "yes";
-  session_timeout = 20;
+};
+diagnostics = {
+  log_verbosity = 1;
 };
 pa = {
   application_name = "AirPlay";
