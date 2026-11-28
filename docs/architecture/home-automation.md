@@ -52,7 +52,7 @@ Nothing images the VM; the SSD can fail and recovery is a rebuild:
 
 Three local add-ons are built on the box from a repo rather than pulled from an
 add-on store. On ha-london, `local_airplay_spotify` makes the Pi an AirPlay
-receiver and a Spotify Connect speaker named "pi-london", so phones play to
+receiver named "pi-london", so phones and Macs play to
 the Z537 and the Livia strip follows the music; its source, README and
 `deploy.sh` are `ha-addons/airplay_spotify/`, and the Pi builds its image
 itself, because it only installs Alpine packages. Also on ha-london, `local_led_strip` drives the "Livia" LED strip from

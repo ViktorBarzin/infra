@@ -1,12 +1,11 @@
 #!/bin/sh
-# Starts one avahi for mDNS, the AirPlay receiver and the Spotify Connect
-# speaker. If any of them exits, the add-on exits and the Supervisor watchdog
-# starts it again.
+# Starts avahi for mDNS and the AirPlay receiver. If either exits, the add-on
+# exits and the Supervisor watchdog starts it again.
 set -eu
 
 name=$(jq -r .name /data/options.json)
 
-# avahi announces both receivers on the home network only. The Pi's own name
+# avahi announces the receiver on the home network only. The Pi's own name
 # stays with Home Assistant (homeassistant.local).
 cat > /etc/avahi/avahi-daemon.conf <<CONF
 [server]
@@ -40,22 +39,11 @@ pa = {
 };
 CONF
 
-mkdir -p /data/spotify
-cat > /data/spotify/config.yml <<CONF
-device_name: "$name"
-device_type: speaker
-audio_backend: pulseaudio
-zeroconf_enabled: true
-zeroconf_backend: avahi
-credentials:
-  type: zeroconf
-  zeroconf:
-    persist_credentials: true
-server:
-  enabled: true
-  address: 127.0.0.1
-  port: 3678
-CONF
+# Spotify Connect (go-librespot) ran here in 1.0.0-1.0.2. Removed 2026-11-28:
+# Spotify refuses the audio key to third-party Connect speakers for accounts
+# that have not used one in the last year (go-librespot issue 279), and the
+# retries got the account rate-limited. Spotify plays through AirPlay instead.
+rm -rf /data/spotify
 
 mkdir -p /run/dbus
 rm -f /run/dbus/dbus.pid /run/avahi-daemon/pid
@@ -64,16 +52,13 @@ dbus-daemon --system
 avahi-daemon --daemonize --no-chroot
 
 /app/playing.sh airplay off
-/app/playing.sh spotify off
 
 shairport-sync &
 airplay=$!
-go-librespot --config_dir /data/spotify &
-spotify=$!
-/app/spotify_watch.sh &
-watch=$!
+for _ in 1 2 3 4 5; do [ -s /run/avahi-daemon/pid ] && break; sleep 1; done
+avahi=$(cat /run/avahi-daemon/pid)
 
-# Exit as soon as any of them stops.
-while kill -0 "$airplay" "$spotify" "$watch" 2>/dev/null; do sleep 5; done
-echo "a receiver stopped, exiting" >&2
+# Exit as soon as either stops.
+while kill -0 "$airplay" "$avahi" 2>/dev/null; do sleep 5; done
+echo "the AirPlay receiver or avahi stopped, exiting" >&2
 exit 1

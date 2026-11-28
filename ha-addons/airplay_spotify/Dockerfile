@@ -1,12 +1,11 @@
-# go-librespot's own image: Alpine with the daemon, libpulse and avahi.
-FROM ghcr.io/devgianlu/go-librespot:v0.10.7
+FROM alpine:3.23
 
 # shairport-sync is the AirPlay receiver (Alpine builds it with PulseAudio and
-# avahi). dbus lets both receivers announce themselves through one avahi.
-RUN apk add --no-cache shairport-sync dbus curl jq
+# avahi); dbus lets it announce itself through avahi.
+RUN apk add --no-cache shairport-sync avahi dbus curl jq
 
 WORKDIR /app
-COPY run.sh playing.sh spotify_watch.sh ./
-RUN chmod +x run.sh playing.sh spotify_watch.sh
+COPY run.sh playing.sh ./
+RUN chmod +x run.sh playing.sh
 
 CMD ["/app/run.sh"]

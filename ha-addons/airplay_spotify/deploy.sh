@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Copy the AirPlay and Spotify add-on to ha-london and have the Supervisor
-# build and start it. The Pi builds the image itself: the Dockerfile only adds
-# Alpine packages to go-librespot's image, about a minute on the Pi 3.
-# Idempotent. Run from anywhere. The HA side is packages/radio.yaml in the
-# ha-london-config repo (input_boolean.airplay_playing, spotify_playing).
+# Copy the AirPlay receiver add-on to ha-london and have the Supervisor build
+# and start it. The Pi builds the image itself: the Dockerfile only installs
+# Alpine packages, about a minute on the Pi 3. Idempotent. Run from anywhere.
+# The HA side is packages/radio.yaml in the ha-london-config repo
+# (input_boolean.airplay_playing).
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 ssh_ha() { homelab ha ssh --instance london -- "$@"; }
 
-tar -C "$here" -czf - Dockerfile config.yaml run.sh playing.sh spotify_watch.sh \
+tar -C "$here" -czf - Dockerfile config.yaml run.sh playing.sh \
   | ssh_ha 'sudo rm -rf /addons/airplay_spotify && sudo mkdir -p /addons/airplay_spotify && sudo tar -C /addons/airplay_spotify -xzf - && ls /addons/airplay_spotify'
 
 ssh_ha 'bash -s' <<'SH'

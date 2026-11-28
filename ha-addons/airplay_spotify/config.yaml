@@ -1,9 +1,9 @@
-name: AirPlay and Spotify
-version: "1.0.2"
+name: AirPlay receiver
+version: "1.0.3"
 slug: airplay_spotify
 description: >-
-  Makes the Pi an AirPlay receiver and a Spotify Connect speaker, so phones
-  play to the living room speaker and the Livia strip follows the music.
+  Makes the Pi an AirPlay receiver, so phones and Macs play to the living room
+  speaker and the Livia strip follows the music.
 url: https://forgejo.viktorbarzin.me/viktor/infra/src/branch/master/ha-addons/airplay_spotify
 arch:
   - aarch64
