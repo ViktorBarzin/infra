@@ -183,13 +183,16 @@ def make_handler(root: str, token: str, public_url: str, saves: Saves | None = N
             if rest == "manifest.json" and saves and account:
                 self.send_json(account_manifest(account))
                 return
+            m = re.match(r"^subtitles/(movie|series)/([^/]+?)(?:/([^/]+))?\.json$", rest)
+            if m and account:
+                # An install whose manifest still lists subtitles gets an empty
+                # list once its account is off, not an error on every play.
+                vid = urllib.parse.unquote(m.group(2))
+                enabled = subs is not None and account in subs.accounts and STREAM_ID.match(vid)
+                found = subs.listing(m.group(1), vid, parse_extra(m.group(3) or ""), file_base) if subs and enabled else []
+                self.send_json({"subtitles": found})
+                return
             if subs and account in subs.accounts:
-                m = re.match(r"^subtitles/(movie|series)/([^/]+?)(?:/([^/]+))?\.json$", rest)
-                if m:
-                    vid = urllib.parse.unquote(m.group(2))
-                    found = subs.listing(m.group(1), vid, parse_extra(m.group(3) or ""), file_base) if STREAM_ID.match(vid) else []
-                    self.send_json({"subtitles": found})
-                    return
                 m = re.match(r"^sub/([0-9a-f]{16})\.srt$", rest)
                 if m:
                     self.send_subtitle(subs.file(m.group(1)), head)

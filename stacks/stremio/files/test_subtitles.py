@@ -123,8 +123,8 @@ class SubtitlesTest(unittest.TestCase):
         extra = urllib.parse.urlencode({"filename": "The Discovery (2017) 1080p", "videoSize": size}) if size else ""
         path = f"/{TOKEN}/a/{account}/subtitles/{kind}/{urllib.parse.quote(vid)}" + (f"/{extra}" if extra else "") + ".json"
         resp, body = self.get(path)
-        self.assertEqual(resp.status, 200 if account == "viktor" else 404)
-        return json.loads(body)["subtitles"] if resp.status == 200 else None
+        self.assertEqual(resp.status, 200)
+        return json.loads(body)["subtitles"]
 
     def track(self, size):
         [row] = self.listing(size)
@@ -141,7 +141,8 @@ class SubtitlesTest(unittest.TestCase):
         self.assertIn("subtitles", json.loads(body)["resources"])
         _, body = self.get(f"/{TOKEN}/a/emo/manifest.json")
         self.assertNotIn("subtitles", json.loads(body)["resources"])
-        self.assertIsNone(self.listing(1234, account="emo"))
+        self.assertEqual(self.listing(1234, account="emo"), [])  # an old install with the resource
+        self.assertEqual([c for c in self.web.calls if c.startswith(subtitles.OPENSUBTITLES)], [])
 
     def test_a_file_on_our_server_gets_the_synced_subtitle(self):
         self.assertEqual(self.track(1234), SYNCED)
