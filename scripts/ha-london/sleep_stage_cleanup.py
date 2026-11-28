@@ -3,7 +3,9 @@
 
 Runs on ha-london inside the Home Assistant container, hourly, as the command of
 the `command_line` sensor `sensor.sleep_stage_cleanup` (see
-docs/architecture/london-site.md, "Sleep stage cleanup").
+docs/architecture/london-site.md, "Sleep stage cleanup"). The recorder database
+is Postgres in Sofia since 2026-11-28 (`--db-secret recorder_db_url` reads its
+URL from secrets.yaml); a SQLite file path works too.
 
 Why: the iOS companion app (2026.10.3) builds each sleep stage sensor by merging
 that stage's samples across every source. When the Apple Watch and Sleep Cycle
@@ -28,7 +30,8 @@ Safety:
 - Each run that writes saves the original rows to an undo file first.
 - It always prints one JSON line and exits 0, so the sensor shows the status.
 
-Standard library only: the HA container has Python but nothing else we control.
+Standard library only, plus psycopg2 for Postgres: the HA container has Python
+and the driver the recorder itself uses, nothing else we control.
 """
 import argparse
 import contextlib
@@ -36,6 +39,7 @@ import datetime as dt
 import io
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -60,6 +64,71 @@ REQUIRED_COLUMNS = {
     "statistics": {"id", "metadata_id", "start_ts", "mean", "min", "max"},
     "statistics_short_term": {"id", "metadata_id", "start_ts", "mean", "min", "max"},
 }
+
+
+def is_postgres(target):
+    return target.startswith(("postgresql://", "postgres://", "postgresql+psycopg2://"))
+
+
+class Db:
+    """One connection to the recorder database, a SQLite file or a Postgres URL.
+
+    Queries are written with ? marks; on Postgres they become psycopg2's %s.
+    """
+
+    def __init__(self, target):
+        self.postgres = is_postgres(target)
+        if self.postgres:
+            import psycopg2  # in the HA container: the recorder uses it for Postgres
+
+            self.conn = psycopg2.connect(target.replace("postgresql+psycopg2://", "postgresql://", 1))
+        else:
+            # mode=rw: a missing file is an error, never a new empty database.
+            self.conn = sqlite3.connect(f"file:{target}?mode=rw", uri=True, timeout=30)
+
+    def execute(self, sql, params=()):
+        if not self.postgres:
+            return self.conn.execute(sql, params)
+        cur = self.conn.cursor()
+        cur.execute(sql.replace("?", "%s"), params)
+        return cur
+
+    def executescript(self, script):
+        if self.postgres:
+            self.conn.cursor().execute(script)
+        else:
+            self.conn.executescript(script)
+
+    def columns(self, table):
+        if self.postgres:
+            sql = """SELECT column_name FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = ? ORDER BY ordinal_position"""
+            return [r[0] for r in self.execute(sql, (table,))]
+        return [r[1] for r in self.execute(f"PRAGMA table_info({table})")]
+
+    def begin(self):
+        """Start the write transaction. psycopg2 is already in one since the first query."""
+        if not self.postgres:
+            self.execute("BEGIN IMMEDIATE")
+
+    def commit(self):
+        self.conn.commit()
+
+    def rollback(self):
+        self.conn.rollback()
+
+    def close(self):
+        self.conn.close()
+
+
+def read_secret(path, name):
+    """The value of `name: value` in HA's secrets.yaml, None when absent."""
+    pattern = re.compile(rf"^{re.escape(name)}:\s*(.+?)\s*$")
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        m = pattern.match(line)
+        if m:
+            return m.group(1).strip("'\"")
+    return None
 
 
 def as_number(state):
@@ -127,7 +196,7 @@ class Plan:
 
 def check_schema(conn):
     for table, wanted in REQUIRED_COLUMNS.items():
-        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        have = set(conn.columns(table))
         missing = wanted - have
         if missing:
             return f"{table} lacks {sorted(missing)}"
@@ -267,7 +336,8 @@ def close(a, b):
 
 
 def write_undo(conn, plan, undo_dir, now):
-    """Save every row the plan changes as INSERT OR REPLACE statements."""
+    """Save every row the plan changes as upserts (INSERT ... ON CONFLICT), which
+    both SQLite and Postgres replay."""
     path = Path(undo_dir)
     path.mkdir(parents=True, exist_ok=True)
     for old in path.glob("undo-*.sql"):
@@ -278,11 +348,13 @@ def write_undo(conn, plan, undo_dir, now):
     def dump(table, key, ids):
         if not ids:
             return
-        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+        cols = conn.columns(table)
         marks = ",".join("?" * len(ids))
-        for row in conn.execute(f"SELECT * FROM {table} WHERE {key} IN ({marks})", list(ids)):
-            values = ",".join(sql_literal(v) for v in row)
-            lines.append(f"INSERT OR REPLACE INTO {table} ({','.join(cols)}) VALUES ({values});")
+        sets = ", ".join(f"{c} = excluded.{c}" for c in cols if c != key)
+        for row in conn.execute(f"SELECT {','.join(cols)} FROM {table} WHERE {key} IN ({marks})", list(ids)):
+            values = ",".join(sql_literal(v, conn.postgres) for v in row)
+            lines.append(f"INSERT INTO {table} ({','.join(cols)}) VALUES ({values}) "
+                         f"ON CONFLICT ({key}) DO UPDATE SET {sets};")
 
     dump("states", "state_id", list(plan.states))
     for table, _ in STAT_TABLES:
@@ -294,11 +366,12 @@ def write_undo(conn, plan, undo_dir, now):
     return str(target)
 
 
-def sql_literal(value):
+def sql_literal(value, postgres):
     if value is None:
         return "NULL"
-    if isinstance(value, (bytes, bytearray)):
-        return "X'" + value.hex() + "'"
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        hexed = bytes(value).hex()
+        return f"'\\x{hexed}'::bytea" if postgres else f"X'{hexed}'"
     if isinstance(value, (int, float)):
         return repr(value)
     return "'" + str(value).replace("'", "''") + "'"
@@ -307,7 +380,10 @@ def sql_literal(value):
 def run(db_path, prefix, now=None, undo_dir="/config/sleep_stage_cleanup", lookback_hours=72, dry_run=False):
     now = time.time() if now is None else now
     since = now - lookback_hours * 3600
-    conn = sqlite3.connect(db_path, timeout=30)
+    try:
+        conn = Db(db_path)
+    except sqlite3.OperationalError as exc:
+        return {"status": "schema_changed", "detail": f"cannot open {db_path}: {exc}"}
     try:
         problem = check_schema(conn)
         if problem:
@@ -329,7 +405,7 @@ def run(db_path, prefix, now=None, undo_dir="/config/sleep_stage_cleanup", lookb
         if dry_run:
             planned = {sid: state for sid, (state, _) in plan.states.items()}
             return {"status": "dry_run", **summary, "states": planned}
-        conn.execute("BEGIN IMMEDIATE")
+        conn.begin()
         undo = write_undo(conn, plan, undo_dir, now)
         for state_id, (state, changed) in plan.states.items():
             conn.execute("UPDATE states SET state = ?, last_changed_ts = ? WHERE state_id = ?",
@@ -346,7 +422,9 @@ def run(db_path, prefix, now=None, undo_dir="/config/sleep_stage_cleanup", lookb
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--db", default="/config/home-assistant_v2.db")
+    parser.add_argument("--db", default="/config/home-assistant_v2.db", help="SQLite file or Postgres URL")
+    parser.add_argument("--db-secret", help="take the database URL from this secrets.yaml key instead")
+    parser.add_argument("--secrets", default="/config/secrets.yaml")
     parser.add_argument("--prefix", required=True, help="entity id prefix, e.g. sensor.viktor_barzins_iphone_17")
     parser.add_argument("--undo-dir", default="/config/sleep_stage_cleanup")
     parser.add_argument("--lookback-hours", type=float, default=72)
@@ -354,7 +432,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
     started = time.time()
     try:
-        out = run(args.db, args.prefix, undo_dir=args.undo_dir, lookback_hours=args.lookback_hours,
+        db = args.db
+        if args.db_secret:
+            db = read_secret(args.secrets, args.db_secret)
+            if not db:
+                raise ValueError(f"{args.db_secret} not found in {args.secrets}")
+        out = run(db, args.prefix, undo_dir=args.undo_dir, lookback_hours=args.lookback_hours,
                   dry_run=args.dry_run)
     except Exception as exc:  # the sensor must always get a status line
         out = {"status": "error", "detail": f"{type(exc).__name__}: {exc}"}

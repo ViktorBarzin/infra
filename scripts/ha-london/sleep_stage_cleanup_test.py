@@ -3,6 +3,13 @@
 
 Run: python3 scripts/ha-london/sleep_stage_cleanup_test.py
 
+The suite runs on SQLite, and again on Postgres when SLEEP_CLEANUP_PG_URL
+names an empty scratch database (ha-london's recorder is on Postgres since
+2026-11-28). Every Postgres test drops and recreates that database's public
+schema. A throwaway server:
+  docker run -d --rm --name sc-pg -e POSTGRES_PASSWORD=t -p 55432:5432 postgres:17
+  SLEEP_CLEANUP_PG_URL=postgresql://postgres:t@127.0.0.1:55432/postgres python3 ...
+
 The database has the columns of Home Assistant's recorder tables that the job
 reads and writes. Every night here is synthetic; the shapes copy what ha-london
 recorded in November 2026 (see the module docstring).
@@ -11,7 +18,6 @@ import datetime as dt
 import importlib.util
 import json
 import os
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,7 +34,7 @@ ENTITIES = ["sleep_duration", "core_sleep", "deep_sleep", "rem_sleep", "awake"]
 T0 = dt.datetime(2026, 11, 1, tzinfo=dt.UTC).timestamp()
 H = 3600.0
 
-SCHEMA = """
+SCHEMA_SQLITE = """
 CREATE TABLE states_meta (metadata_id INTEGER PRIMARY KEY, entity_id VARCHAR(255));
 CREATE TABLE states (
     state_id INTEGER PRIMARY KEY, entity_id CHAR(0), state VARCHAR(255), attributes CHAR(0),
@@ -50,6 +56,34 @@ CREATE TABLE statistics_short_term (
     last_reset_ts FLOAT, state FLOAT, sum FLOAT, mean_weight FLOAT
 );
 """
+
+
+# The same tables with the column types HA creates on Postgres.
+SCHEMA_PG = """
+CREATE TABLE states_meta (metadata_id SERIAL PRIMARY KEY, entity_id VARCHAR(255));
+CREATE TABLE states (
+    state_id SERIAL PRIMARY KEY, entity_id CHAR(1), state VARCHAR(255), attributes CHAR(1),
+    event_id SMALLINT, last_changed CHAR(1), last_changed_ts DOUBLE PRECISION, last_updated CHAR(1),
+    last_updated_ts DOUBLE PRECISION, old_state_id INTEGER, attributes_id INTEGER, context_id CHAR(1),
+    context_user_id CHAR(1), context_parent_id CHAR(1), origin_idx SMALLINT,
+    context_id_bin BYTEA, context_user_id_bin BYTEA, context_parent_id_bin BYTEA,
+    metadata_id INTEGER, last_reported_ts DOUBLE PRECISION
+);
+CREATE TABLE statistics_meta (id SERIAL PRIMARY KEY, statistic_id VARCHAR(255), source VARCHAR(32));
+CREATE TABLE statistics (
+    id SERIAL PRIMARY KEY, created CHAR(1), created_ts DOUBLE PRECISION, metadata_id INTEGER,
+    start CHAR(1), start_ts DOUBLE PRECISION, mean DOUBLE PRECISION, min DOUBLE PRECISION,
+    max DOUBLE PRECISION, last_reset CHAR(1), last_reset_ts DOUBLE PRECISION, state DOUBLE PRECISION,
+    sum DOUBLE PRECISION, mean_weight DOUBLE PRECISION
+);
+CREATE TABLE statistics_short_term (
+    id SERIAL PRIMARY KEY, created CHAR(1), created_ts DOUBLE PRECISION, metadata_id INTEGER,
+    start CHAR(1), start_ts DOUBLE PRECISION, mean DOUBLE PRECISION, min DOUBLE PRECISION,
+    max DOUBLE PRECISION, last_reset CHAR(1), last_reset_ts DOUBLE PRECISION, state DOUBLE PRECISION,
+    sum DOUBLE PRECISION, mean_weight DOUBLE PRECISION
+);
+"""
+PG_URL = os.environ.get("SLEEP_CLEANUP_PG_URL")
 
 
 def ha_mean(timeline, start, length):
@@ -77,9 +111,11 @@ def ha_mean(timeline, start, length):
 class Recorder:
     """A tiny recorder: writes state rows, then compiles statistics the way HA does."""
 
-    def __init__(self, path):
-        self.conn = sqlite3.connect(path)
-        self.conn.executescript(SCHEMA)
+    def __init__(self, target):
+        if not sc.is_postgres(target):
+            sc.sqlite3.connect(target).close()  # the job opens only an existing file
+        self.conn = sc.Db(target)
+        self.conn.executescript(SCHEMA_PG if sc.is_postgres(target) else SCHEMA_SQLITE)
         self.meta = {}
         self.stat_meta = {}
         for i, name in enumerate(ENTITIES, start=1):
@@ -145,9 +181,12 @@ def night(rec, hours, dur, core, deep, rem, awake):
 class CleanupTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.db = Path(self.tmp.name) / "home-assistant_v2.db"
+        self.db = self.database()
         self.undo = Path(self.tmp.name) / "undo"
-        self.rec = Recorder(self.db)
+        self.rec = Recorder(str(self.db))
+
+    def database(self):
+        return Path(self.tmp.name) / "home-assistant_v2.db"
 
     def tearDown(self):
         self.rec.conn.close()
@@ -333,6 +372,43 @@ class CleanupTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(line)["status"], "ok")
 
+
+
+    def test_a_missing_database_file_is_reported_not_created(self):
+        gone = Path(self.tmp.name) / "gone.db"
+        out = sc.run(db_path=str(gone), prefix=PREFIX, now=T0, undo_dir=str(self.undo))
+        self.assertEqual(out["status"], "schema_changed")
+        self.assertFalse(gone.exists())
+
+
+@unittest.skipUnless(PG_URL, "set SLEEP_CLEANUP_PG_URL to run the suite on Postgres")
+class PostgresCleanupTest(CleanupTest):
+    def database(self):
+        db = sc.Db(PG_URL)
+        db.executescript("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
+        db.commit()
+        db.close()
+        return PG_URL
+
+    def test_a_missing_database_file_is_reported_not_created(self):
+        self.skipTest("SQLite only")
+
+
+class HelpersTest(unittest.TestCase):
+    def test_secret_is_read_from_secrets_yaml(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "secrets.yaml"
+            f.write_text('other: x\nrecorder_db_url: "postgresql://u:p@h:5432/db"\n')
+            self.assertEqual(sc.read_secret(str(f), "recorder_db_url"), "postgresql://u:p@h:5432/db")
+            self.assertIsNone(sc.read_secret(str(f), "missing"))
+
+    def test_driver_suffix_is_dropped_from_the_url(self):
+        self.assertTrue(sc.is_postgres("postgresql+psycopg2://u@h/db"))
+        self.assertFalse(sc.is_postgres("/config/home-assistant_v2.db"))
+
+    def test_bytes_literal_per_database(self):
+        self.assertEqual(sc.sql_literal(b"\x01\xab", postgres=False), "X'01ab'")
+        self.assertEqual(sc.sql_literal(memoryview(b"\x01\xab"), postgres=True), "'\\x01ab'::bytea")
 
 if __name__ == "__main__":
     unittest.main()

@@ -364,12 +364,12 @@ but not submitted: the project's AI policy needs a person to submit it.
 
 | piece | value |
 |---|---|
-| code | `scripts/ha-london/sleep_stage_cleanup.py`, tests in `sleep_stage_cleanup_test.py` next to it (`python3 scripts/ha-london/sleep_stage_cleanup_test.py`). Standard library only |
+| code | `scripts/ha-london/sleep_stage_cleanup.py`, tests in `sleep_stage_cleanup_test.py` next to it (`python3 scripts/ha-london/sleep_stage_cleanup_test.py`; set `SLEEP_CLEANUP_PG_URL` to a scratch Postgres to run them on Postgres too, as the test file explains). Standard library plus psycopg2, which the Core container has for the recorder |
 | deployed copy | `/homeassistant/sleep_stage_cleanup/sleep_stage_cleanup.py` on the Pi, which is `/config/...` inside the Core container |
-| schedule | `command_line` sensor `sensor.sleep_stage_cleanup` in `configuration.yaml`, `scan_interval: 3600`. It runs the job inside the Core container and shows its JSON status: `ok`, `dry_run`, `self_check_failed`, `schema_changed` or `error` |
+| schedule | `command_line` sensor `sensor.sleep_stage_cleanup` in `configuration.yaml`, `scan_interval: 3600`, with `--db-secret recorder_db_url`: the job reads the Postgres URL from `secrets.yaml`, because the history database is Postgres since 2026-11-28. It runs the job inside the Core container and shows its JSON status: `ok`, `dry_run`, `self_check_failed`, `schema_changed` or `error` |
 | sensors it repairs | `sensor.viktor_barzins_iphone_17_{core_sleep,deep_sleep,rem_sleep,awake}`, checked against `_sleep_duration`. Window: the last 72 h |
 | alert | automation `sleep_stage_cleanup_alert`: a push to Viktor's iPhone 17 and an HA notification when the status is not `ok` for 10 minutes, or there was no run for 3 hours. It does not use `notify.viktorbarzin`, because that Slack bot is not in its default channel (`not_in_channel`, 2026-11-12) |
-| undo | each run that writes saves the original rows to `/homeassistant/sleep_stage_cleanup/undo-<UTC time>.sql`, kept 30 days. To undo a run: `sudo sqlite3 /homeassistant/home-assistant_v2.db < <file>` |
+| undo | each run that writes saves the original rows to `/homeassistant/sleep_stage_cleanup/undo-<UTC time>.sql`, kept 30 days. The file holds upserts (`INSERT ... ON CONFLICT DO UPDATE`). To undo a run: `psql "$URL" -f <file>`, with the URL from `recorder_db_url`, or paste it into `homelab k8s db` as the `ha_london` role. Files before 2026-11-28 are SQLite `INSERT OR REPLACE` and no longer apply |
 | cost | about 1-2 s a run on the Pi; 3,736 statistics rows are checked on each run |
 
 How it decides, per phone update:
