@@ -17,6 +17,15 @@ render_dropin() {
     "ExecStart=/usr/lib/systemd/systemd-journal-upload --save-state -u $1$cursor"
 }
 
+# The journald drop-in that caps the RAM journal. The add-on keeps the host's
+# journal in RAM (journalctl --relinquish-var) so the SD card is not written
+# for every log line; Loki holds the logs. RuntimeMaxUse is the RAM buffer
+# that covers a receiver outage: the journal grows ~11 MB/day on ha-london.
+# $1 = size, e.g. 48M.
+render_journald_dropin() {
+  printf '%s\n' '[Journal]' "RuntimeMaxUse=$1"
+}
+
 # The url option from the add-on's options.json, empty when unset.
 option_url() { jq -r '.url // empty' "$1"; }
 

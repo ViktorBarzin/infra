@@ -22,6 +22,10 @@ ExecStart=
 ExecStart=/usr/lib/systemd/systemd-journal-upload --save-state -u http://10.0.20.200:19532 --cursor="s=abc;i=1;b=x"'
 check "drop-in with first-run cursor" "$want" "$(render_dropin http://10.0.20.200:19532 's=abc;i=1;b=x')"
 
+want='[Journal]
+RuntimeMaxUse=48M'
+check "journald drop-in caps the RAM journal" "$want" "$(render_journald_dropin 48M)"
+
 tmp=$(mktemp -d)
 printf '{"url": "http://10.0.20.200:19532"}' > "$tmp/options.json"
 check "url from options" "http://10.0.20.200:19532" "$(option_url "$tmp/options.json")"

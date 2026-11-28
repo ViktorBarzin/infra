@@ -27,6 +27,29 @@ the beginning of the current boot.
 
 Stopping the add-on stops the uploader and removes the drop-in.
 
+## Journal in RAM
+
+Since 1.1.0 the add-on also keeps the host's journal in RAM instead of on the
+SD card, as the cluster nodes and the Proxmox host do. Loki has the logs; the
+card copy cost about 0.5 GB of writes a day on ha-london for about 1.9 MB of
+log text, because journald rewrites scattered pages of its file every 30 s.
+
+- At start it runs `journalctl --relinquish-var`, writes
+  `/run/systemd/journald.conf.d/50-homelab.conf` (`RuntimeMaxUse=48M`) and
+  restarts journald once to read it. The uploader reads the RAM journal the
+  same way it read the card.
+- Every 60 s, if journald has gone back to the card (the
+  `/run/systemd/journal/flushed` flag is set), it relinquishes again.
+- At stop, which a clean reboot does before journald stops, it runs
+  `journalctl --flush`: the RAM journal goes to the card, and journald writes
+  there again. The upload cursor then sends those entries after the reboot.
+  `timeout: 60` in `config.yaml` gives the flush time.
+
+48 MB holds about 4 days at ha-london's ~11 MB a day; past that, journald drops
+the oldest entries, uploaded or not. A freeze or a power cut loses whatever the
+uploader had not sent yet. The first minute or two of each boot, before the
+add-on starts, still goes to the card.
+
 The receiver is the `alloy-journal` pod in `stacks/monitoring`
 (`alloy_journal.tf`), at `http://10.0.20.200:19532` over the WireGuard tunnel.
 Its `journal-remote` container writes the upload to journal files and Alloy
@@ -71,6 +94,11 @@ amd64), then run `./deploy.sh`. It waits for the tag, copies the add-on to
 ```sh
 homelab logs query '{job="systemd-journal", host="ha-london"}' --since 10m
 homelab ha ssh --instance london -- 'sudo docker run --rm --privileged --pid=host --entrypoint nsenter docker:29.1.3-cli -t 1 -m -- systemctl status systemd-journal-upload'
+```
+
+```sh
+# journal in RAM: flushed absent, RAM journal growing, card journal mtime old
+homelab ha ssh --instance london -- 'sudo docker run --rm --privileged --pid=host --entrypoint nsenter docker:29.8.2-cli -t 1 -m -- sh -c "ls /run/systemd/journal/flushed; du -sh /run/log/journal; ls -l /var/log/journal/*/system.journal"'
 ```
 
 Tests for the drop-in rendering: `sh test_lib.sh`.
