@@ -1,0 +1,19 @@
+# ffsubsync and its dependencies, pinned to the set tested on 2026-11-28
+# (Undercover S6E2: offset found from a 10-minute sample in 4 s).
+ffsubsync==0.5.1
+auditok==0.1.5
+chardet==7.7.0
+charset-normalizer==3.5.3
+faust-cchardet==3.2.0
+ffmpeg-python==0.2.0
+future==1.0.0
+markdown-it-py==4.3.0
+mdurl==0.1.2
+numpy==2.5.5
+pygments==2.21.0
+pysubs2==1.9.1
+rich==15.0.0
+srt==3.5.3
+tqdm==4.70.1
+typing-extensions==4.16.0
+webrtcvad-wheels==2.0.14.post1
