@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 plan: true
 ---
 
@@ -43,9 +43,10 @@ edges:
   - {from: aio, to: rd, state: same}
   - {from: img, to: lib, state: new}
 checks:
-  - {node: lib, text: "unit tests: file match by size, sync result cached, original served when the sync fails", status: open}
-  - {node: proj, text: "a Real-Debrid film plays with English (synced) chosen by itself, in time with the speech", status: open}
-  - {node: proj, text: Undercover S6E2 from our server plays with the 9.9 s offset gone, status: open}
+  - {node: lib, text: "unit tests: file match by size, sync result cached, original served when the sync fails", status: passed}
+  - {node: proj, text: "Undercover S6E2 from our server shows the synced lines in time on a Stremio TV (emo's BRAVIA; the projector was off the network)", status: passed}
+  - {node: proj, text: "automatic selection of English (synced): the TV app puts OpenSubtitles v3 first, so it is a pick by hand", status: failed}
+  - {node: rd, text: a Real-Debrid file found by size and synced on a device, status: open}
 left_out:
   - emo's account (his TV has automatic subtitle selection off)
   - streams from P2P via Sofia (the addon cannot read their file yet)
@@ -85,7 +86,7 @@ left_out:
 
 When Stremio asks for subtitles, the addon starts the sync and answers at once with a link to "English (synced)". That link waits for the sync, at most 30 seconds. A sync that fails, or a file the addon cannot find, gives the original subtitle on the same link. The addon keeps each result, so the second play starts with no wait.
 
-The addon must be above OpenSubtitles in the shared account's addon list, so that Stremio picks its track first. The first device check confirms the projector waits for the link and picks the synced track.
+The device check on emo's TV showed that the Stremio TV app lists OpenSubtitles v3 first in the English group, whatever the addon order. Automatic selection therefore picks OpenSubtitles. Viktor chose to keep every subtitle source, so the synced track is one pick by hand: English, then Our server.
 
 ## Order of work
 
@@ -94,7 +95,7 @@ caption: every step can be undone by a revert and an apply
 steps:
   - {when: step 1, what: "images/stremio-library and its GitHub Actions build", rollback: revert}
   - {when: step 2, what: "subtitles resource, file match, sync worker, cache, tests; library on the new image", rollback: revert and apply stacks/stremio}
-  - {when: step 3, what: "move Our server above the subtitle addons on the shared account", rollback: restore the old addon order}
+  - {when: step 3, what: "refresh the Our server manifest (1.2.0) on the shared account; it already sits above the subtitle addons", rollback: none needed}
   - {when: step 4, what: "device checks on the projector", rollback: none needed}
 ```
 
@@ -103,7 +104,7 @@ steps:
 ```config
 - {key: library image, where: stacks/stremio/library.tf, old: "python:3.15.2-alpine", new: "ghcr.io/viktorbarzin/stremio-library"}
 - {key: viktor manifest resources, where: stacks/stremio/files/library.py, old: "stream, catalog", new: "stream, catalog, subtitles"}
-- {key: addon order, where: shared stremio@ addon collection, old: "Our server at 4", new: "Our server above OpenSubtitles and AIOStreams"}
+- {key: Our server manifest, where: shared stremio@ addon collection, old: "1.1.0, catalog and stream", new: "1.2.0, with subtitles"}
 ```
 
 ## Commands
