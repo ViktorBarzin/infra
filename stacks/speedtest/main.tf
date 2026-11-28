@@ -124,7 +124,7 @@ resource "kubernetes_deployment" "speedtest" {
       }
       spec {
         container {
-          image = "lscr.io/linuxserver/speedtest-tracker:1.15.1"
+          image = "lscr.io/linuxserver/speedtest-tracker:1.15.2"
           volume_mount {
             name       = "php2shell-mitigation"
             mount_path = "/etc/php85/conf.d/zz-php2shell.ini"
