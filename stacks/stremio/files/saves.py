@@ -475,7 +475,16 @@ class RealDebrid:
         self.lock = threading.Lock()  # one request at a time
 
     def call(self, method: str, path: str, form: dict[str, str] | None = None) -> dict:
-        endpoint = re.sub(r"/[A-Z0-9]{6,}$", "/<id>", path)
+        data = self.request(method, path, form)
+        return data if isinstance(data, dict) else {}
+
+    def downloads(self) -> list[dict]:
+        """Links unrestricted under this account, newest first (AIOStreams' plays too)."""
+        data = self.request("GET", "/downloads?limit=100")
+        return [d for d in data if isinstance(d, dict)] if isinstance(data, list) else []
+
+    def request(self, method: str, path: str, form: dict[str, str] | None = None) -> dict | list:
+        endpoint = re.sub(r"/[A-Z0-9]{6,}$", "/<id>", path.split("?")[0])
         if not self.key:
             raise Stop("no Real-Debrid key")
         with self.lock:
@@ -491,7 +500,7 @@ class RealDebrid:
             raise Refused(f"Real-Debrid {method} {endpoint}: infringing_file")
         if status >= 400:
             raise ServiceError(f"Real-Debrid {method} {endpoint} answered {status} {error}")
-        return data if isinstance(data, dict) else {}
+        return data if isinstance(data, (dict, list)) else {}
 
     def add_magnet(self, magnet: str) -> str:
         return str(self.call("POST", "/torrents/addMagnet", {"magnet": magnet})["id"])

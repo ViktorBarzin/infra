@@ -64,8 +64,9 @@ resource "kubernetes_config_map" "library" {
     namespace = kubernetes_namespace.stremio.metadata[0].name
   }
   data = {
-    "library.py" = file("${path.module}/files/library.py")
-    "saves.py"   = file("${path.module}/files/saves.py")
+    "library.py"   = file("${path.module}/files/library.py")
+    "saves.py"     = file("${path.module}/files/saves.py")
+    "subtitles.py" = file("${path.module}/files/subtitles.py")
   }
 }
 
@@ -134,7 +135,7 @@ resource "kubernetes_deployment" "library" {
       metadata {
         labels = { app = "stremio-library" }
         annotations = {
-          "checksum/code" = sha256(join("", [file("${path.module}/files/library.py"), file("${path.module}/files/saves.py")]))
+          "checksum/code" = sha256(join("", [for f in ["library.py", "saves.py", "subtitles.py"] : file("${path.module}/files/${f}")]))
         }
       }
       spec {
@@ -145,8 +146,10 @@ resource "kubernetes_deployment" "library" {
           fs_group        = 65534 # writes /data/saves.db
         }
         container {
-          name    = "library"
-          image   = "docker.io/library/python:3.15.2-alpine"
+          name = "library"
+          # Python with ffmpeg and ffsubsync (images/stremio-library), tagged
+          # with the commit that built it.
+          image   = "ghcr.io/viktorbarzin/stremio-library:dc3e0f61a6d4022261b062996bd2cb98199309cc"
           command = ["python3", "-u", "/app/library.py"]
           env {
             name  = "LIBRARY_DIR"
@@ -212,6 +215,13 @@ resource "kubernetes_deployment" "library" {
             value = "viktor:tt1909015:6:1"
           }
           env {
+            # Accounts whose manifest adds the subtitles resource: "English
+            # (synced)", timed to the sound of the playing file (subtitles.py).
+            # emo's TV has automatic subtitle selection off, so not his yet.
+            name  = "SUBTITLES_ACCOUNTS"
+            value = "viktor"
+          }
+          env {
             name = "LIBRARY_TOKEN"
             value_from {
               secret_key_ref {
@@ -266,13 +276,14 @@ resource "kubernetes_deployment" "library" {
           resources {
             # Python stdlib server; each stream (a file, or a Real-Debrid copy
             # proxied through Sofia) is a thread copying 1 MiB chunks, plus the
-            # saves worker.
+            # saves worker. A subtitle sync (one at a time) adds ffmpeg, about
+            # 75 MB, then ffsubsync, about 135 MB, for about 10 s.
             requests = {
               cpu    = "20m"
-              memory = "64Mi"
+              memory = "96Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "640Mi"
             }
           }
         }
